@@ -108,7 +108,7 @@ public static partial class UiWidgets
         new("key", UiPropType.String, "Workflow transition key, e.g. delete-payment.") { Required = true },
         new("text", UiPropType.String, "Button label, e.g. Sil."),
         new("icon", UiPropType.String, "Material icon name, e.g. delete."),
-        new("style", UiPropType.Enum) { Values = ["primary", "secondary", "light", "danger"] },
+        new("style", UiPropType.Enum) { Values = ["primary", "secondary", "success", "warning", "light", "danger"] },
         new("input", UiPropType.TemplateMap, "Transition input built from row/data, e.g. { \"reference\": \"{{ row.reference }}\" }."),
     ];
 
@@ -120,6 +120,7 @@ public static partial class UiWidgets
             new("source", UiPropType.Expression, "Expression returning an array, e.g. data.items.") { Required = true },
             new("empty", UiPropType.String, "Text shown when the array is empty."),
             new("rowTransition", UiPropType.Object, "Optional workflow transition button shown on each item when the transition is available.") { Properties = RowTransitionProps },
+            new("rowTransitions", UiPropType.Array, "Optional workflow transition buttons shown on each item when the transitions are available.") { Properties = RowTransitionProps },
         ],
     };
 

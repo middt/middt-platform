@@ -112,8 +112,7 @@
               "partialPayment[-1].paidAt": "now",
               "partialPayment[-1].recordedBy": "user.Name",
               "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")",
-              "recordedBy": "user.Name"
+              "payment.reference": "data.partialPayment.Last(\"reference\")"
             }
           }
         },
@@ -150,16 +149,49 @@
                 }
               }
             },
-            "into": "deletedPayment[]",
             "set": {
-              "deletedPayment[-1].amount": "data.partialPayment.Find(\"reference\", input.reference).amount",
               "partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)",
+              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"Hatalı ödeme kaydı düzeltildi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
               "paidAmount": "data.partialPayment.Sum(\"amount\")",
               "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
               "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")",
-              "deletedPayment[-1].deletedBy": "user.Name",
-              "deletedPayment[-1].deletedAt": "now"
+              "payment.reference": "data.partialPayment.Last(\"reference\")"
+            }
+          }
+        },
+        {
+          "key": "patch-payment",
+          "title": "Ödeme Kaydını Sil / Düzenle (JSON Patch)",
+          "target": "$self",
+          "style": "warning",
+          "icon": "edit_note",
+          "toolbar": false,
+          "roles": [ "manager" ],
+          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
+          "input": {
+            "format": "jsonPatch",
+            "into": "partialPayment",
+            "rule": "data.partialPayment.Sum(\"amount\") <= data.total",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [ "amount" ],
+                "properties": {
+                  "amount": { "type": "number", "minimum": 0 },
+                  "reference": { "type": "string", "maxLength": 60 },
+                  "paidAt": { "type": "string" },
+                  "recordedBy": { "type": "string" }
+                }
+              }
+            },
+            "set": {
+              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"JSON Patch ile silindi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
+              "paidAmount": "data.partialPayment.Sum(\"amount\")",
+              "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
+              "payment.amount": "data.paidAmount",
+              "payment.reference": "data.partialPayment.Last(\"reference\")"
             }
           }
         },
@@ -276,8 +308,7 @@
               "partialPayment[-1].paidAt": "now",
               "partialPayment[-1].recordedBy": "user.Name",
               "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")",
-              "recordedBy": "user.Name"
+              "payment.reference": "data.partialPayment.Last(\"reference\")"
             }
           }
         },
@@ -314,16 +345,49 @@
                 }
               }
             },
-            "into": "deletedPayment[]",
             "set": {
-              "deletedPayment[-1].amount": "data.partialPayment.Find(\"reference\", input.reference).amount",
               "partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)",
+              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"Hatalı ödeme kaydı düzeltildi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
               "paidAmount": "data.partialPayment.Sum(\"amount\")",
               "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
               "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")",
-              "deletedPayment[-1].deletedBy": "user.Name",
-              "deletedPayment[-1].deletedAt": "now"
+              "payment.reference": "data.partialPayment.Last(\"reference\")"
+            }
+          }
+        },
+        {
+          "key": "patch-payment",
+          "title": "Ödeme Kaydını Sil / Düzenle (JSON Patch)",
+          "target": "$self",
+          "style": "warning",
+          "icon": "edit_note",
+          "toolbar": false,
+          "roles": [ "manager" ],
+          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
+          "input": {
+            "format": "jsonPatch",
+            "into": "partialPayment",
+            "rule": "data.partialPayment.Sum(\"amount\") <= data.total",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [ "amount" ],
+                "properties": {
+                  "amount": { "type": "number", "minimum": 0 },
+                  "reference": { "type": "string", "maxLength": 60 },
+                  "paidAt": { "type": "string" },
+                  "recordedBy": { "type": "string" }
+                }
+              }
+            },
+            "set": {
+              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"JSON Patch ile silindi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
+              "paidAmount": "data.partialPayment.Sum(\"amount\")",
+              "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
+              "payment.amount": "data.paidAmount",
+              "payment.reference": "data.partialPayment.Last(\"reference\")"
             }
           }
         },

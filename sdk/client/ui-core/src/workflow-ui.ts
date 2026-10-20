@@ -384,7 +384,7 @@ export function workflowTransitionInput(
   transition: AvailableTransitionModel,
   value: WorkflowData | null,
 ): WorkflowData | null {
-  if (!workflowTransitionIsPatch(transition)) {
+  if (!workflowTransitionIsPatch(transition) || (value !== null && Array.isArray(value['patch']))) {
     return value;
   }
 

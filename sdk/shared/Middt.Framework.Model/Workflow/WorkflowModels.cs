@@ -92,6 +92,9 @@ public sealed class AvailableTransitionModel
     /// <summary>Optional Material icon name for transition buttons.</summary>
     public string? Icon { get; set; }
 
+    /// <summary>Whether the transition is shown as a button in the top instance toolbar (<c>true</c> by default).</summary>
+    public bool Toolbar { get; set; } = true;
+
     /// <summary>JSON Schema of the expected request body, when the transition takes input.</summary>
     public JsonObject? InputSchema { get; set; }
 

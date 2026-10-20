@@ -93,6 +93,8 @@ export interface AvailableTransitionModel {
   style?: string | null;
   /** Optional Material icon name for transition buttons. */
   icon?: string | null;
+  /** Whether the transition is shown as a button in the top instance toolbar (`true` by default). */
+  toolbar?: boolean;
   /** JSON Schema of the expected request body, when the transition takes input. */
   inputSchema?: WorkflowData | null;
   /** Name of a registered input form component that replaces the schema generated form, if any. */

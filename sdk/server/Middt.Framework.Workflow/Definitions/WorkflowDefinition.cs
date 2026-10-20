@@ -181,6 +181,9 @@ public sealed class TransitionDefinition
     /// <summary>Optional Material icon name for transition buttons; defaults to target state subtype icon.</summary>
     public string? Icon { get; set; }
 
+    /// <summary>Whether this manual transition is shown as a button in the top instance toolbar (<c>true</c> by default; set to <c>false</c> when triggered only from layout widgets such as <c>rowTransitions</c>).</summary>
+    public bool Toolbar { get; set; } = true;
+
     /// <summary>
     /// Boolean expression. Automatic transitions: taken when true (e.g. <c>data.amount &gt; 5000</c>).
     /// Manual transitions: availability condition – the transition is only offered/executable when true.

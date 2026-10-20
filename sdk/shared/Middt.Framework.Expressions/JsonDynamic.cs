@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Dynamic;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -13,7 +14,52 @@ namespace Middt.Framework.Expressions;
 /// </summary>
 public sealed class JsonDynamic(JsonObject? node) : DynamicObject
 {
+    private static readonly ConditionalWeakTable<JsonObject, HashSet<string>> FormattedLabels = new();
+    private static readonly ConditionalWeakTable<JsonArray, JsonArray> RemovedItemsTable = new();
+
     public JsonObject? Node { get; } = node;
+
+    internal static void RegisterRemovedItems(JsonArray resultArray, JsonArray removedItems)
+    {
+        if (removedItems.Count > 0)
+        {
+            RemovedItemsTable.AddOrUpdate(resultArray, removedItems);
+        }
+    }
+
+    /// <summary>Returns the elements removed when producing <paramref name="resultArray"/> via <c>Remove</c>, <c>RemoveAll</c> or <c>RemoveAt</c>, if any.</summary>
+    public static JsonArray? GetRemovedItems(JsonArray resultArray) =>
+        RemovedItemsTable.TryGetValue(resultArray, out var removed) ? removed : null;
+
+    /// <summary>
+    /// Associates a dynamically rendered <c>x-enumFrom</c> label with <paramref name="node"/> so array helpers
+    /// (<c>Any</c>, <c>Find</c>, <c>Remove</c>) match the exact item selected from a formatted dropdown regardless of template format.
+    /// </summary>
+    public static void RegisterFormattedLabel(JsonObject node, string label)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        if (!string.IsNullOrEmpty(label))
+        {
+            var set = FormattedLabels.GetOrCreateValue(node);
+            lock (set)
+            {
+                set.Add(label);
+            }
+        }
+    }
+
+    internal static bool HasFormattedLabel(JsonObject node, string label)
+    {
+        if (FormattedLabels.TryGetValue(node, out var set))
+        {
+            lock (set)
+            {
+                return set.Contains(label);
+            }
+        }
+
+        return false;
+    }
 
     public override bool TryGetMember(GetMemberBinder binder, out object? result)
     {
@@ -25,6 +71,20 @@ public sealed class JsonDynamic(JsonObject? node) : DynamicObject
     {
         result = indexes is [string key] && Node is not null && Node.TryGetPropertyValue(key, out var value) ? Unwrap(value) : null;
         return true;
+    }
+
+    public override bool TryInvokeMember(InvokeMemberBinder binder, object?[]? args, out object? result)
+    {
+        if (binder.Name == "With" && args is [string field, var val] && Node is not null)
+        {
+            var clone = (JsonObject)Node.DeepClone();
+            clone[field] = JsonPath.ToNode(val);
+            result = new JsonDynamic(clone);
+            return true;
+        }
+
+        result = null;
+        return false;
     }
 
     public override IEnumerable<string> GetDynamicMemberNames() => Node?.Select(p => p.Key) ?? [];
@@ -102,9 +162,7 @@ public sealed class JsonDynamicArray(JsonArray node) : DynamicObject, IEnumerabl
                 return true;
 
             case "Any" when args is [string field, var target]:
-                result = IsHashIndexCandidate(target)
-                    ? TryParseHashIndex(target, Node.Count, out _)
-                    : Node.OfType<JsonObject>().Any(obj => Matches(obj[field], target));
+                result = FindMatchingIndex(field, target) >= 0;
                 return true;
 
             case "Contains" when args.Length == 1:
@@ -112,9 +170,9 @@ public sealed class JsonDynamicArray(JsonArray node) : DynamicObject, IEnumerabl
                 return true;
 
             case "Find" when args is [string field, var target]:
-                result = TryParseHashIndex(target, Node.Count, out var findIdx)
+                result = FindMatchingIndex(field, target) is >= 0 and var findIdx
                     ? JsonDynamic.Unwrap(Node[findIdx])
-                    : JsonDynamic.Unwrap(Node.OfType<JsonObject>().LastOrDefault(obj => Matches(obj[field], target)));
+                    : null;
                 return true;
 
             case "Sum" when args is [string field]:
@@ -138,22 +196,14 @@ public sealed class JsonDynamicArray(JsonArray node) : DynamicObject, IEnumerabl
             case "Remove" when args is [string field, var target]:
             {
                 var clone = (JsonArray)Node.DeepClone();
-                if (TryParseHashIndex(target, clone.Count, out var removeIdx))
+                var removed = new JsonArray();
+                if (FindMatchingIndex(field, target) is >= 0 and var removeIdx)
                 {
+                    removed.Add(clone[removeIdx]?.DeepClone());
                     clone.RemoveAt(removeIdx);
                 }
-                else if (!IsHashIndexCandidate(target))
-                {
-                    for (var i = clone.Count - 1; i >= 0; i--)
-                    {
-                        if (clone[i] is JsonObject obj && Matches(obj[field], target))
-                        {
-                            clone.RemoveAt(i);
-                            break;
-                        }
-                    }
-                }
 
+                JsonDynamic.RegisterRemovedItems(clone, removed);
                 result = new JsonDynamicArray(clone);
                 return true;
             }
@@ -161,14 +211,17 @@ public sealed class JsonDynamicArray(JsonArray node) : DynamicObject, IEnumerabl
             case "RemoveAll" when args is [string field, var target]:
             {
                 var clone = (JsonArray)Node.DeepClone();
+                var removed = new JsonArray();
                 for (var i = clone.Count - 1; i >= 0; i--)
                 {
                     if (clone[i] is JsonObject obj && Matches(obj[field], target))
                     {
+                        removed.Insert(0, clone[i]?.DeepClone());
                         clone.RemoveAt(i);
                     }
                 }
 
+                JsonDynamic.RegisterRemovedItems(clone, removed);
                 result = new JsonDynamicArray(clone);
                 return true;
             }
@@ -176,11 +229,14 @@ public sealed class JsonDynamicArray(JsonArray node) : DynamicObject, IEnumerabl
             case "RemoveAt" when args.Length == 1:
             {
                 var clone = (JsonArray)Node.DeepClone();
+                var removed = new JsonArray();
                 if (TryResolveIndex(args[0], clone.Count, out var index))
                 {
+                    removed.Add(clone[index]?.DeepClone());
                     clone.RemoveAt(index);
                 }
 
+                JsonDynamic.RegisterRemovedItems(clone, removed);
                 result = new JsonDynamicArray(clone);
                 return true;
             }
@@ -192,6 +248,18 @@ public sealed class JsonDynamicArray(JsonArray node) : DynamicObject, IEnumerabl
             case "Last" when args is [string field]:
                 result = Node.Count > 0 && Node[^1] is JsonObject lastObj ? JsonDynamic.Unwrap(lastObj[field]) : null;
                 return true;
+
+            case "With" when args is [string field, var val]:
+            {
+                var clone = (JsonArray)Node.DeepClone();
+                foreach (var obj in clone.OfType<JsonObject>())
+                {
+                    obj[field] = JsonPath.ToNode(val);
+                }
+
+                result = new JsonDynamicArray(clone);
+                return true;
+            }
 
             default:
                 result = null;
@@ -228,46 +296,34 @@ public sealed class JsonDynamicArray(JsonArray node) : DynamicObject, IEnumerabl
         return false;
     }
 
-    private static bool IsHashIndexCandidate(object? raw)
+    private int FindMatchingIndex(string field, object? target)
     {
-        var text = raw switch
+        var text = target switch
         {
             string s => s,
             JsonValue v when v.TryGetValue<string>(out var s) => s,
             _ => null,
         };
-        return text is { Length: >= 2 } && text[0] == '#' && char.IsAsciiDigit(text[1]);
-    }
-
-    private static bool TryParseHashIndex(object? raw, int count, out int index)
-    {
-        var text = raw switch
+        if (!string.IsNullOrEmpty(text))
         {
-            string s => s,
-            JsonValue v when v.TryGetValue<string>(out var s) => s,
-            _ => null,
-        };
-        if (!string.IsNullOrEmpty(text) && text[0] == '#')
-        {
-            var len = 0;
-            while (1 + len < text.Length && char.IsAsciiDigit(text[1 + len]))
+            for (var i = 0; i < Node.Count; i++)
             {
-                len++;
-            }
-
-            if (len > 0 && int.TryParse(text.AsSpan(1, len), CultureInfo.InvariantCulture, out var oneBased))
-            {
-                var zeroBased = oneBased - 1;
-                if (zeroBased >= 0 && zeroBased < count)
+                if (Node[i] is JsonObject obj && JsonDynamic.HasFormattedLabel(obj, text))
                 {
-                    index = zeroBased;
-                    return true;
+                    return i;
                 }
             }
         }
 
-        index = -1;
-        return false;
+        for (var i = Node.Count - 1; i >= 0; i--)
+        {
+            if (Node[i] is JsonObject obj && Matches(obj[field], target))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private static bool Matches(JsonNode? node, object? target)

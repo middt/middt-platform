@@ -302,19 +302,20 @@ POST /api/workflows/invoice-collection/instances/{id}/transitions/update-billing
 ```
 
 - **Paths are relative to `into`**, which is required: the patch can only change the part of the data the transition
-  owns (`data.billingContact` above), never fields written by tasks or other transitions. `schema` is required too and
-  validates that part after the patch.
-- **Operations**: `add`, `remove`, `replace`, `move`, `copy`, `test`; array indexes and `-` (append) work as in the RFC.
+  owns (`data.billingContact` for an object schema, or an array like `data.partialPayment` when `schema.type` is `"array"`), never fields written by tasks or other transitions. `schema` is required too and
+  validates that part after the patch; if `input.rule` is also declared, it is evaluated against the patched `data` and rolls back with 409 if false (for example, `patch-payment` in [invoice-collection.json](demo/Middt.Demo.Api/Workflows/invoice-collection.json) validates `data.partialPayment.Sum("amount") <= data.total`).
+- **Operations**: `add`, `remove`, `replace`, `move`, `copy`, `test`; array indexes (`/0`, `/1`, …) and `-` (append) work as in the RFC both on nested arrays and when `into` itself points to a root array.
   The patch is atomic – applied completely or not at all. An invalid operation or a result the schema rejects answers
-  400, a failed `test` 409 (an optimistic check: "only change the phone if it is still the one I saw"); either way the
+  400, a failed `test` or `input.rule` 409 (an optimistic check: "only change the phone or remove the payment if it is still the one I saw"); either way the
   instance stays as it was and Active.
 - **Body**: a bare JSON array over HTTP; programmatic callers pass `{ "patch": [ … ] }` (that is also how it travels inside
-  the engine). `set` expressions, tasks and the rest of the transition run as usual.
+  the engine). `set` expressions, tasks and the rest of the transition run as usual; in `set` expressions, `input.removed`
+  is a `JsonArray` of all values removed by `remove` operations in the patch or by `.Remove(...)` / `.RemoveAll(...)` / `.RemoveAt(...)` expressions (and objects/arrays support `.With("field", value)` to append enriched audit records into a history array like `deletedPayment[]`).
 - **History**: the client's patch is the transition input, so it is stored in the history row's `Input`; with
   `history: delta` the row's `Patch` holds the resulting change from the data root (`/billingContact/phone`).
-- **Frontends**: `AvailableTransitionModel.InputFormat` is `jsonPatch`. Blazor and Angular open the form filled with the
+- **Frontends**: `AvailableTransitionModel.InputFormat` is `jsonPatch`. Transitions declare `"toolbar": true/false` (default `true`) to control whether their button appears in the top action bar. For object schemas, Blazor and Angular open the form filled with the
   current values at `into` and send the difference as a patch (`WorkflowUi.TransitionInput` / ui-core
-  `workflowTransitionInput`); a cleared field becomes `remove`.
+  `workflowTransitionInput`); a cleared field becomes `remove`. For array schemas (`schema.type: "array"`), row-level actions in the `list` widget (`rowTransition` / `rowTransitions`) can send a pre-built `{ "patch": [ { "op": "test", ... }, { "op": "remove", "path": "/{{ row.rowNumber - 1 }}" } ] }` directly.
 - **Not allowed** on the start transition, on event transitions (messages carry objects), with `sensitive` properties or
   asynchronously (`?async=true`) – a rejected patch must reach the caller.
 - The implementation is `JsonPatch` in `Middt.Framework.Expressions` (`ApplyStrict`, `Diff`); the TypeScript `jsonPatchDiff`

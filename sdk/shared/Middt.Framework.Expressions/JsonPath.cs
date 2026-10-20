@@ -45,6 +45,10 @@ public static class JsonPath
     public static void Set(JsonObject root, string path, JsonNode? value)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
+        if (value is null && (path.Contains("[]", StringComparison.Ordinal) || path.Contains("[-1]", StringComparison.Ordinal)))
+        {
+            return;
+        }
 
         var segments = path.Split('.');
         var current = root;
@@ -99,6 +103,11 @@ public static class JsonPath
         var cloned = value?.Parent is null ? value : value.DeepClone();
         if (leaf.EndsWith("[]", StringComparison.Ordinal))
         {
+            if (cloned is null || (cloned is JsonArray emptyArr && emptyArr.Count == 0))
+            {
+                return;
+            }
+
             var arrayKey = leaf[..^2];
             if (current[arrayKey] is not JsonArray arr)
             {
@@ -106,7 +115,18 @@ public static class JsonPath
                 current[arrayKey] = arr;
             }
 
-            arr.Add(cloned);
+            if (cloned is JsonArray itemsToAppend)
+            {
+                foreach (var item in itemsToAppend.ToList())
+                {
+                    itemsToAppend.Remove(item);
+                    arr.Add(item);
+                }
+            }
+            else
+            {
+                arr.Add(cloned);
+            }
         }
         else if (leaf.EndsWith("[-1]", StringComparison.Ordinal))
         {
@@ -170,7 +190,7 @@ public static class JsonPath
         null => null,
         JsonNode node => node.DeepClone(),
         JsonDynamic dyn => dyn.Node?.DeepClone(),
-        JsonDynamicArray arr => arr.Node.DeepClone(),
+        JsonDynamicArray arr => CloneDynamicArray(arr),
         string s => JsonValue.Create(s),
         bool b => JsonValue.Create(b),
         decimal d => JsonValue.Create(d),
@@ -185,6 +205,17 @@ public static class JsonPath
         IEnumerable sequence => new JsonArray([.. sequence.Cast<object?>().Select(ToNode)]),
         _ => JsonSerializer.SerializeToNode(value, value.GetType()),
     };
+
+    private static JsonArray CloneDynamicArray(JsonDynamicArray arr)
+    {
+        var clone = (JsonArray)arr.Node.DeepClone();
+        if (JsonDynamic.GetRemovedItems(arr.Node) is { } removed)
+        {
+            JsonDynamic.RegisterRemovedItems(clone, removed);
+        }
+
+        return clone;
+    }
 
     public static JsonObject ParseObject(string? json) =>
         string.IsNullOrWhiteSpace(json) ? [] : JsonNode.Parse(json) as JsonObject ?? [];

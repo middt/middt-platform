@@ -274,9 +274,9 @@ public partial class WorkflowInstanceDetail
     /// <summary>Whether a step form is rendered inside the screen (wizard).</summary>
     private bool ShowStepForm => stepTransition is not null && instance is not null;
 
-    /// <summary>Transitions shown as buttons: all available ones except the inline step transition.</summary>
+    /// <summary>Transitions shown as buttons: all available ones with <see cref="AvailableTransitionModel.Toolbar"/> enabled except the inline step transition.</summary>
     private IEnumerable<AvailableTransitionModel> ButtonTransitions =>
-        instance?.AvailableTransitions.Where(t => !ReferenceEquals(t, stepTransition)) ?? [];
+        instance?.AvailableTransitions.Where(t => !ReferenceEquals(t, stepTransition) && t.Toolbar) ?? [];
 
     /// <summary>Next to a step form, transitions without input (e.g. "Geri") run directly; others open their dialog.</summary>
     private bool RunsDirectly(AvailableTransitionModel transition) => ShowStepForm && !HasInput(transition);

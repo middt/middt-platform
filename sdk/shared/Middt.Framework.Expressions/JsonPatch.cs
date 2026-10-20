@@ -127,15 +127,38 @@ public static class JsonPatch
     /// atomic: on the first failing operation a <see cref="JsonPatchException"/> is thrown and <paramref name="document"/>
     /// is left as it was. The document root cannot be replaced or removed (it stays an object).
     /// </summary>
-    public static void ApplyStrict(JsonObject document, JsonArray patch)
+    public static void ApplyStrict(JsonObject document, JsonArray patch) =>
+        ApplyStrict((JsonNode)document, patch);
+
+    /// <summary>
+    /// Applies a client supplied <paramref name="patch"/> to <paramref name="document"/> (<see cref="JsonObject"/> or
+    /// <see cref="JsonArray"/>) following RFC 6902. The patch is atomic: on the first failing operation a
+    /// <see cref="JsonPatchException"/> is thrown and <paramref name="document"/> is left as it was.
+    /// </summary>
+    public static void ApplyStrict(JsonNode document, JsonArray patch) =>
+        ApplyStrict(document, patch, out _);
+
+    /// <summary>
+    /// Applies a client supplied <paramref name="patch"/> to <paramref name="document"/> (<see cref="JsonObject"/> or
+    /// <see cref="JsonArray"/>) following RFC 6902 and collects values removed by <c>remove</c> operations in
+    /// <paramref name="removed"/>. The patch is atomic: on the first failing operation a <see cref="JsonPatchException"/>
+    /// is thrown and <paramref name="document"/> is left as it was.
+    /// </summary>
+    public static void ApplyStrict(JsonNode document, JsonArray patch, out JsonArray removed)
     {
         ArgumentNullException.ThrowIfNull(document);
+        if (document is not (JsonObject or JsonArray))
+        {
+            throw new JsonPatchException("the target of a JSON Patch must be an object or an array.");
+        }
+
         if (Validate(patch) is { Count: > 0 } errors)
         {
             throw new JsonPatchException(string.Join(" ", errors));
         }
 
-        var working = (JsonObject)document.DeepClone();
+        removed = [];
+        var working = document.DeepClone();
         for (var i = 0; i < patch.Count; i++)
         {
             var operation = (JsonObject)patch[i]!;
@@ -150,7 +173,13 @@ public static class JsonPatch
                         Add(working, path, operation["value"]?.DeepClone());
                         break;
                     case "remove":
+                        var removedNode = Get(working, path)?.DeepClone();
                         Remove(working, path);
+                        if (removedNode is not null)
+                        {
+                            removed.Add(removedNode);
+                        }
+
                         break;
                     case "replace":
                         Replace(working, path, operation["value"]?.DeepClone());
@@ -184,17 +213,29 @@ public static class JsonPatch
             }
         }
 
-        document.Clear();
-        foreach (var (name, value) in working.ToList())
+        if (document is JsonObject targetObj && working is JsonObject workingObj)
         {
-            working.Remove(name);
-            document[name] = value;
+            targetObj.Clear();
+            foreach (var (name, value) in workingObj.ToList())
+            {
+                workingObj.Remove(name);
+                targetObj[name] = value;
+            }
+        }
+        else if (document is JsonArray targetArr && working is JsonArray workingArr)
+        {
+            targetArr.Clear();
+            foreach (var item in workingArr.ToList())
+            {
+                workingArr.Remove(item);
+                targetArr.Add(item);
+            }
         }
     }
 
     // ───────────────────────────── strict helpers ─────────────────────────────
 
-    private static JsonNode? Get(JsonObject root, List<string> path)
+    private static JsonNode? Get(JsonNode root, List<string> path)
     {
         JsonNode? current = root;
         for (var i = 0; i < path.Count; i++)
@@ -211,7 +252,7 @@ public static class JsonPatch
         return current;
     }
 
-    private static JsonNode Parent(JsonObject root, List<string> path)
+    private static JsonNode Parent(JsonNode root, List<string> path)
     {
         if (path.Count == 0)
         {
@@ -223,7 +264,7 @@ public static class JsonPatch
             : throw new JsonPatchException($"the parent of '{Pointer(path)}' is not an object or an array.");
     }
 
-    private static void Add(JsonObject root, List<string> path, JsonNode? value)
+    private static void Add(JsonNode root, List<string> path, JsonNode? value)
     {
         var parent = Parent(root, path);
         var name = path[^1];
@@ -240,7 +281,7 @@ public static class JsonPatch
     }
 
     /// <summary>Replaces an existing value in place (members keep their position).</summary>
-    private static void Replace(JsonObject root, List<string> path, JsonNode? value)
+    private static void Replace(JsonNode root, List<string> path, JsonNode? value)
     {
         var parent = Parent(root, path);
         var name = path[^1];
@@ -260,7 +301,7 @@ public static class JsonPatch
         array[index] = value;
     }
 
-    private static void Remove(JsonObject root, List<string> path)
+    private static void Remove(JsonNode root, List<string> path)
     {
         var parent = Parent(root, path);
         var name = path[^1];

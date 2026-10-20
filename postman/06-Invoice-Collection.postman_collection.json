@@ -671,7 +671,102 @@
           }
         },
         {
-          "name": "5D. Fazla Ödeme Denemesi - 8.000 ₺ (409 beklenir - kalan: 7.500 ₺)",
+          "name": "5D. Kısmi Ödeme Kaydet - 1.500 ₺ (JSON Patch Silme Testi İçin -> ödenen: 6.500 ₺)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP status 200\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200]);",
+                  "});",
+                  "pm.test(\"paidAmount = 6500, partialPayment.length = 2\", function () {",
+                  "    const d = pm.response.json().data;",
+                  "    pm.expect(d.data.paidAmount).to.eql(6500);",
+                  "    pm.expect(d.data.partialPayment.length).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiUrl}}/api/workflows/invoice-collection/instances/{{invoiceInstanceId}}/transitions/record-payment",
+            "description": "RFC 6902 JSON Patch ile silme (`patch-payment`) senaryosunu test etmek için 2. sıraya (`/1`) 1.500 ₺ tutarında (`EFT-PATCH-SIL`) bir kısmi ödeme ekler.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1500,\n  \"reference\": \"EFT-PATCH-SIL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "5E. Ödeme Kaydını JSON Patch ile Sil (PATCH patch-payment: test + remove /1 -> kalan tekrar: 7.500 ₺)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP status 200\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200]);",
+                  "});",
+                  "pm.test(\"JSON Patch ile 2. ödeme (/1) silindi, paidAmount = 5000, remainingAmount = 7500\", function () {",
+                  "    const d = pm.response.json().data;",
+                  "    pm.expect(d.state).to.eql(\"awaiting-payment\");",
+                  "    pm.expect(d.data.paidAmount).to.eql(5000);",
+                  "    pm.expect(d.data.remainingAmount).to.eql(7500);",
+                  "    pm.expect(d.data.partialPayment.length).to.eql(1);",
+                  "    pm.expect(d.data.deletedPayment.length).to.eql(2);",
+                  "    pm.expect(d.data.deletedPayment[1].reference).to.eql(\"EFT-PATCH-SIL\");",
+                  "    pm.expect(d.data.deletedPayment[1].amount).to.eql(1500);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json-patch+json"
+              }
+            ],
+            "url": "{{apiUrl}}/api/workflows/invoice-collection/instances/{{invoiceInstanceId}}/transitions/patch-payment",
+            "description": "`patch-payment` (`input.format: \"jsonPatch\"`, `into: \"partialPayment\"`) geçişine doğrudan RFC 6902 JSON Patch dizisi göndererek `/1` indeksindeki ödemenin referansını `test` ile doğrular ve `remove` ile diziden çıkarır; ardından `paidAmount` ve `remainingAmount` otomatik yeniden hesaplanır.",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  { \"op\": \"test\",   \"path\": \"/1/reference\", \"value\": \"EFT-PATCH-SIL\" },\n  { \"op\": \"remove\", \"path\": \"/1\" }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "5F. Fazla Ödeme Denemesi - 8.000 ₺ (409 beklenir - kalan: 7.500 ₺)",
           "event": [
             {
               "listen": "test",

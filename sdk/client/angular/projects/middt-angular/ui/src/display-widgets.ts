@@ -152,15 +152,17 @@ const MAX_LIST_ITEMS = 1000;
         @for (item of items(); track $index) {
           <li>
             <middt-ui-node-list [nodes]="node().children" [context]="item" />
-            @if (rowTransition(); as tr) {
+            @if (rowTransitions().length > 0) {
               <div class="middt-ui-toolbar">
-                <button mat-stroked-button type="button" [class.middt-ui-danger]="tr.style === 'danger'"
-                        [attr.data-transition]="tr.key" (click)="executeRowTransition(tr, item)">
-                  @if (tr.icon) {
-                    <mat-icon>{{ tr.icon }}</mat-icon>
-                  }
-                  {{ tr.text }}
-                </button>
+                @for (tr of rowTransitions(); track tr.key) {
+                  <button mat-stroked-button type="button" [class.middt-ui-danger]="tr.style === 'danger'"
+                          [attr.data-transition]="tr.key" (click)="executeRowTransition(tr, item)">
+                    @if (tr.icon) {
+                      <mat-icon>{{ tr.icon }}</mat-icon>
+                    }
+                    {{ tr.text }}
+                  </button>
+                }
               </div>
             }
           </li>
@@ -200,21 +202,40 @@ export class UiListWidget extends UiWidgetBase {
       : [];
   });
 
-  protected readonly rowTransition = computed(() => {
+  protected readonly rowTransitions = computed(() => {
     const context = this.context();
-    const obj = UiProps.object(this.node(), 'rowTransition');
-    const key = obj === null ? null : UiFieldJson.getString(obj, 'key');
-    if (obj === null || key === null || !context.canExecuteTransition(key)) {
-      return null;
+    const node = this.node();
+    const candidates: Record<string, unknown>[] = [];
+    const single = UiProps.object(node, 'rowTransition');
+    if (single !== null) {
+      candidates.push(single);
     }
 
-    return {
-      key,
-      text: UiFieldJson.getString(obj, 'text') ?? key,
-      icon: UiFieldJson.getString(obj, 'icon'),
-      style: UiFieldJson.getString(obj, 'style') ?? 'primary',
-      inputTemplate: isJsonObject(obj['input']) ? obj['input'] : null,
-    };
+    const multiple = UiProps.array(node, 'rowTransitions');
+    if (multiple !== null) {
+      for (const item of multiple) {
+        if (isJsonObject(item)) {
+          candidates.push(item);
+        }
+      }
+    }
+
+    return candidates
+      .map(obj => {
+        const key = UiFieldJson.getString(obj, 'key');
+        if (key === null || !context.canExecuteTransition(key)) {
+          return null;
+        }
+
+        return {
+          key,
+          text: UiFieldJson.getString(obj, 'text') ?? key,
+          icon: UiFieldJson.getString(obj, 'icon'),
+          style: UiFieldJson.getString(obj, 'style') ?? 'primary',
+          inputTemplate: isJsonObject(obj['input']) ? obj['input'] : null,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
   });
 
   protected executeRowTransition(

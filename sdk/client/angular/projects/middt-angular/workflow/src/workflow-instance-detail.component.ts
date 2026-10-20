@@ -154,10 +154,10 @@ export class MiddtWorkflowInstanceDetailComponent {
 
   protected readonly pendingHasInput = computed(() => schemaHasInput(this.pendingTransition()?.inputSchema));
 
-  /** Transitions shown as buttons: all available ones except the inline step transition. */
+  /** Transitions shown as buttons: all available ones with `toolbar` enabled except the inline step transition. */
   protected readonly buttonTransitions = computed(() => {
     const step = this.stepTransition();
-    return (this.instance()?.availableTransitions ?? []).filter(t => t !== step);
+    return (this.instance()?.availableTransitions ?? []).filter(t => t !== step && t.toolbar !== false);
   });
   /** Next to a step form, transitions without input (e.g. "Geri") run directly; others open their dialog. */
   protected readonly directTransitions = computed(() => this.buttonTransitions().filter(t => this.#runsDirectly(t)));

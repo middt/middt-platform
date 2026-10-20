@@ -227,7 +227,7 @@ public static class WorkflowUi
     /// </summary>
     public static JsonObject? TransitionInput(JsonObject? data, AvailableTransitionModel transition, JsonObject? value)
     {
-        if (!IsPatch(transition) || value is null)
+        if (!IsPatch(transition) || value is null || value["patch"] is JsonArray)
         {
             return value;
         }

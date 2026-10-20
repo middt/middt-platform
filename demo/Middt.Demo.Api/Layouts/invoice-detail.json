@@ -3,7 +3,7 @@
   "key": "invoice-detail",
   "title": "Fatura Tahsilat Durumu",
   "kind": "view",
-  "version": 5,
+  "version": 6,
   "body": [
     {
       "widget": "alert",
@@ -56,16 +56,30 @@
         {
           "widget": "list",
           "source": "data.partialPayment",
-          "rowTransition": {
-            "key": "delete-payment",
-            "text": "Sil",
-            "icon": "delete",
-            "style": "danger",
-            "input": {
-              "reference": "#{{ row.rowNumber }} - {{ row.amount }} ₺ ({{ row.reference }})",
-              "reason": "Hatalı kısmi ödeme satırı silindi."
+          "rowTransitions": [
+            {
+              "key": "delete-payment",
+              "text": "Sil (Kayıtlı)",
+              "icon": "delete",
+              "style": "danger",
+              "input": {
+                "reference": "#{{ row.rowNumber }} - {{ row.amount }} ₺ ({{ row.reference }})",
+                "reason": "Hatalı kısmi ödeme satırı silindi."
+              }
+            },
+            {
+              "key": "patch-payment",
+              "text": "Sil (JSON Patch)",
+              "icon": "delete_sweep",
+              "style": "warning",
+              "input": {
+                "patch": [
+                  { "op": "test", "path": "/{{ row.rowNumber - 1 }}/reference", "value": "{{ row.reference }}" },
+                  { "op": "remove", "path": "/{{ row.rowNumber - 1 }}" }
+                ]
+              }
             }
-          },
+          ],
           "children": [
             {
               "widget": "fields",

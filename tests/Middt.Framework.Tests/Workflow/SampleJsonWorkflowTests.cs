@@ -455,9 +455,9 @@ public sealed class SampleJsonWorkflowTests
         contactUpdated.Data["billingContact"]!.ToJsonString().Should().Be("""{"email":"finans@deniz.com","phone":"02125551111"}""");
         contactUpdated.Data["contactUpdatedBy"]!.GetValue<string>().Should().Be("alice@test.com");
 
-        // Without a message source the same steps are buttons for a manager; delete-payment is hidden before any payment exists.
+        // Without a message source the same steps are buttons for a manager; delete-payment and patch-payment are hidden before any payment exists.
         (await host.GetAsync(invoice.Id, Alice)).AvailableTransitions.Select(t => t.Key)
-            .Should().Contain(["record-payment", "cancel-invoice"]).And.NotContain(["payment-received", "delete-payment"]);
+            .Should().Contain(["record-payment", "cancel-invoice"]).And.NotContain(["payment-received", "delete-payment", "patch-payment"]);
         var afterFirstPartial = await host.TransitionAsync(invoice.Id, "record-payment", new { amount = 5000, reference = "EFT-0101" }, Alice);
         afterFirstPartial.State.Should().Be("awaiting-payment");
         afterFirstPartial.Data["paidAmount"]!.GetValue<decimal>().Should().Be(5000m);
@@ -497,6 +497,37 @@ public sealed class SampleJsonWorkflowTests
         afterDeleteWrong.Data["deletedPayment"]![1]!["amount"]!.GetValue<decimal>().Should().Be(3000m);
         afterDeleteWrong.Data["deletedPayment"]![1]!["deletedBy"]!.GetValue<string>().Should().Be("alice@test.com");
 
+        // Also test 'patch-payment' (input.format: jsonPatch on the partialPayment array):
+        // Add another payment, then remove it via RFC 6902 JSON Patch (test + remove), and verify failed test / overpay rule return 409.
+        var beforePatch = await host.TransitionAsync(invoice.Id, "record-payment", new { amount = 1500, reference = "EFT-PATCH-DEL" }, Alice);
+        beforePatch.Data["paidAmount"]!.GetValue<decimal>().Should().Be(6500m);
+        beforePatch.Data["partialPayment"]!.AsArray().Should().HaveCount(2);
+
+        var patchTestMismatch = () => host.TransitionAsync(invoice.Id, "patch-payment", new JsonObject
+        {
+            ["patch"] = JsonNode.Parse("""[ { "op": "test", "path": "/1/reference", "value": "YANLIS-REF" }, { "op": "remove", "path": "/1" } ]"""),
+        }, Alice);
+        await patchTestMismatch.Should().ThrowAsync<WorkflowConflictException>();
+
+        var patchOverpay = () => host.TransitionAsync(invoice.Id, "patch-payment", new JsonObject
+        {
+            ["patch"] = JsonNode.Parse("""[ { "op": "replace", "path": "/0/amount", "value": 50000 } ]"""),
+        }, Alice);
+        await patchOverpay.Should().ThrowAsync<WorkflowConflictException>();
+
+        var afterPatchRemove = await host.TransitionAsync(invoice.Id, "patch-payment", new JsonObject
+        {
+            ["patch"] = JsonNode.Parse("""[ { "op": "test", "path": "/1/reference", "value": "EFT-PATCH-DEL" }, { "op": "remove", "path": "/1" } ]"""),
+        }, Alice);
+        afterPatchRemove.Data["paidAmount"]!.GetValue<decimal>().Should().Be(5000m);
+        afterPatchRemove.Data["remainingAmount"]!.GetValue<decimal>().Should().Be(7500m);
+        afterPatchRemove.Data["partialPayment"]!.AsArray().Should().ContainSingle();
+        afterPatchRemove.Data["deletedPayment"]!.AsArray().Should().HaveCount(3);
+        afterPatchRemove.Data["deletedPayment"]![2]!["reference"]!.GetValue<string>().Should().Be("EFT-PATCH-DEL");
+        afterPatchRemove.Data["deletedPayment"]![2]!["amount"]!.GetValue<decimal>().Should().Be(1500m);
+        afterPatchRemove.Data["deletedPayment"]![2]!["reason"]!.GetValue<string>().Should().Be("JSON Patch ile silindi.");
+        afterPatchRemove.Data["deletedPayment"]![2]!["deletedBy"]!.GetValue<string>().Should().Be("alice@test.com");
+
         // Overpaying (e.g., 12500 or 8000 when remainingAmount is 7500) is rejected with WorkflowConflictException.
         var overpayFull = () => host.TransitionAsync(invoice.Id, "record-payment", new { amount = 12500, reference = "EFT-OVER" }, Alice);
         await overpayFull.Should().ThrowAsync<WorkflowConflictException>();
@@ -515,7 +546,8 @@ public sealed class SampleJsonWorkflowTests
 
         (await host.HistoryAsync(invoice.Id)).Select(h => h.TransitionKey).Should().Equal(
             "start", "update-billing-contact", "update-billing-contact",
-            "record-payment", "record-payment", "record-payment", "delete-payment", "delete-payment", "record-payment",
+            "record-payment", "record-payment", "record-payment", "delete-payment", "delete-payment",
+            "record-payment", "patch-payment", "record-payment",
             "payment-completed", "$background", "reconciled");
     }
 

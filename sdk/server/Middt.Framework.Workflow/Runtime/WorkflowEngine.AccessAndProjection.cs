@@ -73,14 +73,16 @@ public sealed partial class WorkflowEngine
     /// <summary>Input condition of a manual transition (<c>input.rule</c>), evaluated when input is submitted.</summary>
     private bool IsInputRuleSatisfied(TransitionDefinition transition, WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user, JsonObject input)
     {
-        if (string.IsNullOrWhiteSpace(transition.Input?.Rule))
+        if (string.IsNullOrWhiteSpace(transition.Input?.Rule) || transition.Input.Format == InputFormat.JsonPatch)
         {
             return true;
         }
 
         try
         {
-            return expressions.EvaluateCondition(transition.Input.Rule, RuleScope(definition, instance, data, user, input));
+            var scope = RuleScope(definition, instance, data, user, input);
+            AttachEnumFromLabels(transition.Input.Schema, scope);
+            return expressions.EvaluateCondition(transition.Input.Rule, scope);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -289,6 +291,7 @@ public sealed partial class WorkflowEngine
                     Target = t.Target,
                     Style = string.IsNullOrWhiteSpace(t.Style) ? null : t.Style,
                     Icon = string.IsNullOrWhiteSpace(t.Icon) ? null : t.Icon,
+                    Toolbar = t.Toolbar,
                     InputSchema = ProjectInputSchema(t.Input?.Schema, scope),
                     View = string.IsNullOrWhiteSpace(t.View?.Component) ? null : t.View.Component,
                     Inline = t.View?.Inline == true,
@@ -379,6 +382,22 @@ public sealed partial class WorkflowEngine
         return clone;
     }
 
+    internal void AttachEnumFromLabels(JsonObject? schema, ExpressionScope scope)
+    {
+        if (schema?["properties"] is not JsonObject properties)
+        {
+            return;
+        }
+
+        foreach (var (_, propNode) in properties)
+        {
+            if (propNode is JsonObject prop && prop["x-enumFrom"] is { } enumFromNode)
+            {
+                _ = ResolveEnumFrom(enumFromNode, scope);
+            }
+        }
+    }
+
     private List<string> ResolveEnumFrom(JsonNode enumFromNode, ExpressionScope scope)
     {
         if (enumFromNode is JsonObject specObj
@@ -392,7 +411,7 @@ public sealed partial class WorkflowEngine
             }
 
             var format = specObj["format"] is JsonValue fmtVal && fmtVal.TryGetValue<string>(out var fmt) ? fmt : null;
-            var formatted = new List<string>(objArr.Count);
+            var entries = new List<(JsonObject? Item, string Label)>(objArr.Count);
             for (var i = 0; i < objArr.Count; i++)
             {
                 var current = objArr[i];
@@ -414,7 +433,7 @@ public sealed partial class WorkflowEngine
                     var rendered = expressions.RenderText(format, itemScope);
                     if (!string.IsNullOrWhiteSpace(rendered))
                     {
-                        formatted.Add(rendered);
+                        entries.Add((current as JsonObject, rendered));
                     }
                 }
                 else
@@ -422,12 +441,12 @@ public sealed partial class WorkflowEngine
                     var text = current is JsonValue v && v.TryGetValue<string>(out var s) ? s : current?.ToString();
                     if (!string.IsNullOrWhiteSpace(text))
                     {
-                        formatted.Add(text);
+                        entries.Add((current as JsonObject, text));
                     }
                 }
             }
 
-            return EnsureUniqueEnumValues(formatted);
+            return FinalizeEnumEntries(entries);
         }
 
         if (enumFromNode is JsonValue pathVal
@@ -442,25 +461,39 @@ public sealed partial class WorkflowEngine
                 return [];
             }
 
-            var rawValues = new List<string>(arr.Count);
+            var entries = new List<(JsonObject? Item, string Label)>(arr.Count);
             foreach (var item in arr)
             {
                 var raw = fieldName is not null && item is JsonObject itemObj ? itemObj[fieldName] : item;
                 var text = raw is JsonValue val && val.TryGetValue<string>(out var s) ? s : raw?.ToString();
                 if (!string.IsNullOrWhiteSpace(text))
                 {
-                    rawValues.Add(text);
+                    entries.Add((item as JsonObject, text));
                 }
             }
 
-            return EnsureUniqueEnumValues(rawValues);
+            return FinalizeEnumEntries(entries);
         }
 
         return [];
     }
 
-    private static List<string> EnsureUniqueEnumValues(List<string> values) =>
-        values.Distinct(StringComparer.Ordinal).Count() == values.Count
-            ? values
-            : [.. values.Select((v, i) => v.StartsWith('#') ? v : $"#{i + 1} - {v}")];
+    private static List<string> FinalizeEnumEntries(List<(JsonObject? Item, string Label)> entries)
+    {
+        var hasDuplicates = entries.Select(e => e.Label).Distinct(StringComparer.Ordinal).Count() != entries.Count;
+        var result = new List<string>(entries.Count);
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var (item, rawLabel) = entries[i];
+            var label = hasDuplicates ? $"{i + 1} - {rawLabel}" : rawLabel;
+            if (item is not null)
+            {
+                JsonDynamic.RegisterFormattedLabel(item, label);
+            }
+
+            result.Add(label);
+        }
+
+        return result;
+    }
 }

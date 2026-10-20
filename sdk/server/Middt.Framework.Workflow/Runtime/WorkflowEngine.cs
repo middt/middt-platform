@@ -1303,9 +1303,11 @@ public sealed partial class WorkflowEngine(
             return; // no declared input: the body is never written into instance data
         }
 
+        var scopeInput = input is not null ? (JsonObject)input.DeepClone() : [];
+        scopeInput["removed"] = new JsonArray();
         if (definition.Format == InputFormat.JsonPatch)
         {
-            ApplyPatchInput(run, definition, input);
+            scopeInput["removed"] = ApplyPatchInput(run, definition, input);
         }
         else if (definition.Schema is not null
             && WorkflowHttpInput.ExtractBody(input, definition.Schema) is { } target
@@ -1315,9 +1317,16 @@ public sealed partial class WorkflowEngine(
             JsonPath.Merge(run.Data, persistable, definition.Into);
         }
 
+        AttachEnumFromLabels(definition.Schema, Scope(run, scopeInput));
         foreach (var (path, expression) in definition.Set)
         {
-            JsonPath.Set(run.Data, path, expressions.EvaluateToNode(expression, Scope(run, input)));
+            var value = expressions.EvaluateToNode(expression, Scope(run, scopeInput));
+            if (value is JsonArray updatedArr && JsonDynamic.GetRemovedItems(updatedArr) is { Count: > 0 } removedByExpr)
+            {
+                scopeInput["removed"] = removedByExpr.DeepClone();
+            }
+
+            JsonPath.Set(run.Data, path, value);
         }
     }
 
@@ -1325,13 +1334,18 @@ public sealed partial class WorkflowEngine(
     /// <c>input.format: jsonPatch</c>: applies the client's patch to the data at <c>into</c> (atomically), validates the result
     /// with the schema and writes it back. A failed <c>test</c> operation is a conflict (409), anything else a 400.
     /// </summary>
-    private static void ApplyPatchInput(Run run, InputDefinition definition, JsonObject? input)
+    private JsonArray ApplyPatchInput(Run run, InputDefinition definition, JsonObject? input)
     {
         var patch = (JsonArray)WorkflowHttpInput.ExtractBody(input, definition.Schema)![PatchProperty]!;
-        var target = JsonPath.Get(run.Data, definition.Into) is JsonObject current ? (JsonObject)current.DeepClone() : [];
+        var currentNode = JsonPath.Get(run.Data, definition.Into);
+        var isArraySchema = string.Equals(definition.Schema?["type"]?.GetValue<string>(), "array", StringComparison.Ordinal);
+        JsonNode target = isArraySchema
+            ? (currentNode is JsonArray currentArr ? (JsonArray)currentArr.DeepClone() : new JsonArray())
+            : (currentNode is JsonObject currentObj ? (JsonObject)currentObj.DeepClone() : new JsonObject());
+        JsonArray removed;
         try
         {
-            JsonPatch.ApplyStrict(target, patch);
+            JsonPatch.ApplyStrict(target, patch, out removed);
         }
         catch (JsonPatchException ex) when (ex.IsTestFailure)
         {
@@ -1348,7 +1362,16 @@ public sealed partial class WorkflowEngine(
             throw new WorkflowValidationException(errors);
         }
 
+        var previous = currentNode?.DeepClone();
         JsonPath.Set(run.Data, definition.Into!, target);
+        if (!string.IsNullOrWhiteSpace(definition.Rule)
+            && !expressions.EvaluateCondition(definition.Rule, Scope(run, input)))
+        {
+            JsonPath.Set(run.Data, definition.Into!, previous);
+            throw new WorkflowConflictException($"Transition is not available in state '{run.Instance.State}'.");
+        }
+
+        return removed;
     }
 
     /// <summary>Body property that carries a JSON Patch (<c>{ "patch": [...] }</c>; a bare array body is wrapped into it).</summary>

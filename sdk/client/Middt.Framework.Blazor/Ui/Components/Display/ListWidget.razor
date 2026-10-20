@@ -8,7 +8,7 @@
     }
     else
     {
-        var rowTransition = RowTransition();
+        var rowTransitions = RowTransitions();
         <ul class="middt-ui-list">
             @for (var i = 0; i < items.Count; i++)
             {
@@ -21,11 +21,14 @@
                 var rowContext = Context.With(UiExpressions.Row, item);
                 <li>
                     <UiNodeList Nodes="Node.Children" Context="@rowContext" />
-                    @if (rowTransition is { } tr)
+                    @if (rowTransitions.Count > 0)
                     {
                         <div class="middt-ui-toolbar rz-mt-1">
-                            <RadzenButton Text="@tr.Text" Icon="@tr.Icon" ButtonStyle="@tr.Style" Size="ButtonSize.Small"
-                                          Click="@(() => ExecuteRowTransitionAsync(tr, rowContext))" data-transition="@tr.Key" />
+                            @foreach (var tr in rowTransitions)
+                            {
+                                <RadzenButton Text="@tr.Text" Icon="@tr.Icon" ButtonStyle="@tr.Style" Size="ButtonSize.Small"
+                                              Click="@(() => ExecuteRowTransitionAsync(tr, rowContext))" data-transition="@tr.Key" />
+                            }
                         </div>
                     }
                 </li>
@@ -51,10 +54,31 @@
         }
     }
 
-    private RowTransitionSpec? RowTransition()
+    private List<RowTransitionSpec> RowTransitions()
     {
-        if (Node.ObjectProp("rowTransition") is not { } obj
-            || UiFieldJson.GetString(obj, "key") is not { Length: > 0 } key
+        var specs = new List<RowTransitionSpec>();
+        if (Node.ObjectProp("rowTransition") is { } single && ParseRowTransition(single) is { } singleSpec)
+        {
+            specs.Add(singleSpec);
+        }
+
+        if (Node.ArrayProp("rowTransitions") is { } multiple)
+        {
+            foreach (var item in multiple.OfType<JsonObject>())
+            {
+                if (ParseRowTransition(item) is { } spec)
+                {
+                    specs.Add(spec);
+                }
+            }
+        }
+
+        return specs;
+    }
+
+    private RowTransitionSpec? ParseRowTransition(JsonObject obj)
+    {
+        if (UiFieldJson.GetString(obj, "key") is not { Length: > 0 } key
             || !Context.CanExecuteTransition(key))
         {
             return null;
@@ -65,6 +89,8 @@
         var style = UiFieldJson.GetString(obj, "style") switch
         {
             "danger" => ButtonStyle.Danger,
+            "warning" => ButtonStyle.Warning,
+            "success" => ButtonStyle.Success,
             "secondary" => ButtonStyle.Secondary,
             "light" => ButtonStyle.Light,
             _ => ButtonStyle.Primary,
