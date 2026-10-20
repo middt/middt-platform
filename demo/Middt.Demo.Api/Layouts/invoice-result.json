@@ -3,7 +3,7 @@
   "key": "invoice-result",
   "title": "Fatura Tahsilat Sonucu",
   "kind": "view",
-  "version": 2,
+  "version": 3,
   "body": [
     {
       "widget": "alert",
@@ -39,7 +39,7 @@
     {
       "widget": "section",
       "title": "Kısmi Ödemeler",
-      "visibleWhen": "data.partialPayment != null",
+      "visibleWhen": "data.partialPayment != null && data.partialPayment.Count > 0",
       "children": [
         {
           "widget": "list",

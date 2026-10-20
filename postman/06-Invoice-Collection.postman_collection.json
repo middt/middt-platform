@@ -577,7 +577,100 @@
           }
         },
         {
-          "name": "5B. Fazla Ödeme Denemesi - 8.000 ₺ (409 beklenir - kalan: 7.500 ₺)",
+          "name": "5B. Hatalı Ödeme Kaydı Ekle - 3.000 ₺ (record-payment -> awaiting-payment, kalan: 4.500 ₺)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP status 200\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200]);",
+                  "});",
+                  "pm.test(\"paidAmount = 8000, remainingAmount = 4500\", function () {",
+                  "    const d = pm.response.json().data;",
+                  "    pm.expect(d.data.paidAmount).to.eql(8000);",
+                  "    pm.expect(d.data.remainingAmount).to.eql(4500);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiUrl}}/api/workflows/invoice-collection/instances/{{invoiceInstanceId}}/transitions/record-payment",
+            "description": "Silme (`delete-payment`) senaryosunu test etmek için yanlışlıkla girilmiş 3.000 ₺ tutarında (`EFT-YANLIS-01`) bir kısmi ödeme ekler.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 3000,\n  \"reference\": \"EFT-YANLIS-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "5C. Hatalı Ödeme Kaydını Sil (delete-payment -> awaiting-payment, kalan tekrar: 7.500 ₺)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP status 200\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200]);",
+                  "});",
+                  "pm.test(\"Hatalı ödeme silindi, paidAmount = 5000, remainingAmount = 7500\", function () {",
+                  "    const d = pm.response.json().data;",
+                  "    pm.expect(d.state).to.eql(\"awaiting-payment\");",
+                  "    pm.expect(d.data.paidAmount).to.eql(5000);",
+                  "    pm.expect(d.data.remainingAmount).to.eql(7500);",
+                  "    pm.expect(d.data.partialPayment.length).to.eql(1);",
+                  "    pm.expect(d.data.lastDeletedPayment.reference).to.eql(\"EFT-YANLIS-01\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiUrl}}/api/workflows/invoice-collection/instances/{{invoiceInstanceId}}/transitions/delete-payment",
+            "description": "`delete-payment` geçişi `EFT-YANLIS-01` referanslı kısmi ödemeyi `data.partialPayment.Remove(\"reference\", input.reference)` ile diziden çıkarır, `paidAmount` (`Sum(\"amount\")`) ve `remainingAmount` alanlarını yeniden hesaplar ve silme bilgisini `data.lastDeletedPayment` altına kaydeder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"EFT-YANLIS-01\",\n  \"reason\": \"Hatalı ödeme kaydı düzeltildi.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "5D. Fazla Ödeme Denemesi - 8.000 ₺ (409 beklenir - kalan: 7.500 ₺)",
           "event": [
             {
               "listen": "test",

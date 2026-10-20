@@ -455,13 +455,44 @@ public sealed class SampleJsonWorkflowTests
         contactUpdated.Data["billingContact"]!.ToJsonString().Should().Be("""{"email":"finans@deniz.com","phone":"02125551111"}""");
         contactUpdated.Data["contactUpdatedBy"]!.GetValue<string>().Should().Be("alice@test.com");
 
-        // Without a message source the same steps are buttons for a manager.
+        // Without a message source the same steps are buttons for a manager; delete-payment is hidden before any payment exists.
         (await host.GetAsync(invoice.Id, Alice)).AvailableTransitions.Select(t => t.Key)
-            .Should().Contain(["record-payment", "cancel-invoice"]).And.NotContain(["payment-received"]);
+            .Should().Contain(["record-payment", "cancel-invoice"]).And.NotContain(["payment-received", "delete-payment"]);
         var afterFirstPartial = await host.TransitionAsync(invoice.Id, "record-payment", new { amount = 5000, reference = "EFT-0101" }, Alice);
         afterFirstPartial.State.Should().Be("awaiting-payment");
         afterFirstPartial.Data["paidAmount"]!.GetValue<decimal>().Should().Be(5000m);
         afterFirstPartial.Data["remainingAmount"]!.GetValue<decimal>().Should().Be(7500m);
+
+        // A mistakenly entered partial payment can be deleted via 'delete-payment' (with dynamic enum options from partialPayment.reference).
+        // Even if two payments share the same reference ("EFT-0101"), every payment row appears distinctly in the dropdown.
+        var afterDuplicateRefPartial = await host.TransitionAsync(invoice.Id, "record-payment", new { amount = 2000, reference = "EFT-0101" }, Alice);
+        var afterWrongPartial = await host.TransitionAsync(invoice.Id, "record-payment", new { amount = 3000, reference = "EFT-WRONG" }, Alice);
+        afterWrongPartial.Data["paidAmount"]!.GetValue<decimal>().Should().Be(10000m);
+        afterWrongPartial.Data["remainingAmount"]!.GetValue<decimal>().Should().Be(2500m);
+        var deleteTransition = afterWrongPartial.AvailableTransitions.Single(t => t.Key == "delete-payment");
+        deleteTransition.InputSchema!["properties"]!["reference"]!["enum"]!.AsArray()
+            .Select(v => v!.GetValue<string>()).Should().Equal(
+                "#1 - 5000 ₺ (EFT-0101)",
+                "#2 - 2000 ₺ (EFT-0101)",
+                "#3 - 3000 ₺ (EFT-WRONG)");
+        deleteTransition.InputSchema["properties"]!["reference"]!["default"]!.GetValue<string>().Should().Be("#3 - 3000 ₺ (EFT-WRONG)");
+
+        var deleteNonExistent = () => host.TransitionAsync(invoice.Id, "delete-payment", new { reference = "EFT-NOPE" }, Alice);
+        await deleteNonExistent.Should().ThrowAsync<WorkflowConflictException>();
+
+        // Delete the 2nd payment (#2 - 2000 ₺) by its dropdown label, then delete the 3rd payment by its plain reference ("EFT-WRONG").
+        var afterDeleteSecond = await host.TransitionAsync(invoice.Id, "delete-payment", new { reference = "#2 - 2000 ₺ (EFT-0101)", reason = "Mükerrer kayıt silindi" }, Alice);
+        afterDeleteSecond.Data["paidAmount"]!.GetValue<decimal>().Should().Be(8000m);
+        afterDeleteSecond.Data["partialPayment"]!.AsArray().Should().HaveCount(2);
+
+        var afterDeleteWrong = await host.TransitionAsync(invoice.Id, "delete-payment", new { reference = "EFT-WRONG", reason = "Hatalı tutar girildi" }, Alice);
+        afterDeleteWrong.State.Should().Be("awaiting-payment");
+        afterDeleteWrong.Data["paidAmount"]!.GetValue<decimal>().Should().Be(5000m);
+        afterDeleteWrong.Data["remainingAmount"]!.GetValue<decimal>().Should().Be(7500m);
+        afterDeleteWrong.Data["payment"]!["reference"]!.GetValue<string>().Should().Be("EFT-0101");
+        afterDeleteWrong.Data["partialPayment"]!.AsArray().Should().ContainSingle();
+        afterDeleteWrong.Data["lastDeletedPayment"]!["reference"]!.GetValue<string>().Should().Be("EFT-WRONG");
+        afterDeleteWrong.Data["lastDeletedPayment"]!["deletedBy"]!.GetValue<string>().Should().Be("alice@test.com");
 
         // Overpaying (e.g., 12500 or 8000 when remainingAmount is 7500) is rejected with WorkflowConflictException.
         var overpayFull = () => host.TransitionAsync(invoice.Id, "record-payment", new { amount = 12500, reference = "EFT-OVER" }, Alice);
@@ -480,7 +511,9 @@ public sealed class SampleJsonWorkflowTests
         (await host.GetAsync(invoice.Id)).State.Should().Be("paid");
 
         (await host.HistoryAsync(invoice.Id)).Select(h => h.TransitionKey).Should().Equal(
-            "start", "update-billing-contact", "update-billing-contact", "record-payment", "record-payment", "payment-completed", "$background", "reconciled");
+            "start", "update-billing-contact", "update-billing-contact",
+            "record-payment", "record-payment", "record-payment", "delete-payment", "delete-payment", "record-payment",
+            "payment-completed", "$background", "reconciled");
     }
 
     [Fact]

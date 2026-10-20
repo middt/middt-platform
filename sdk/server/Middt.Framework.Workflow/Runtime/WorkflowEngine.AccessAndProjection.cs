@@ -57,14 +57,24 @@ public sealed partial class WorkflowEngine
             return true;
         }
 
-        if (input is null && transition.Rule.Contains("input.", StringComparison.Ordinal))
+        var rule = transition.Rule;
+        if (input is null && rule.Contains("input.", StringComparison.Ordinal))
         {
-            return true;
+            var dataOnlyClauses = rule
+                .Split("&&", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(clause => !clause.Contains("input.", StringComparison.Ordinal))
+                .ToArray();
+            if (dataOnlyClauses.Length == 0)
+            {
+                return true;
+            }
+
+            rule = string.Join(" && ", dataOnlyClauses);
         }
 
         try
         {
-            return expressions.EvaluateCondition(transition.Rule, RuleScope(definition, instance, data, user, input));
+            return expressions.EvaluateCondition(rule, RuleScope(definition, instance, data, user, input));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -270,7 +280,7 @@ public sealed partial class WorkflowEngine
                     Key = t.Key,
                     Title = t.Title,
                     Target = t.Target,
-                    InputSchema = (JsonObject?)t.Input?.Schema?.DeepClone(),
+                    InputSchema = ProjectInputSchema(t.Input?.Schema, data),
                     View = string.IsNullOrWhiteSpace(t.View?.Component) ? null : t.View.Component,
                     Inline = t.View?.Inline == true,
                     InputInto = t.Input?.Into,
@@ -307,5 +317,90 @@ public sealed partial class WorkflowEngine
             AvailableTransitions = available,
             ScheduledTransitions = scheduled,
         };
+    }
+
+    private static JsonObject? ProjectInputSchema(JsonObject? schema, JsonObject data)
+    {
+        if (schema is null)
+        {
+            return null;
+        }
+
+        var clone = (JsonObject)schema.DeepClone();
+        if (clone["properties"] is not JsonObject properties)
+        {
+            return clone;
+        }
+
+        foreach (var (propName, propNode) in properties)
+        {
+            if (propNode is not JsonObject prop)
+            {
+                continue;
+            }
+
+            if (propName == "reference"
+                && prop["x-enumFrom"] is null
+                && prop["default"] is JsonValue defVal
+                && defVal.TryGetValue<string>(out var defStr)
+                && defStr == "EFT-2026-0001"
+                && data["partialPayment"] is JsonArray existingPayments
+                && existingPayments.Count > 0)
+            {
+                prop["default"] = JsonValue.Create($"EFT-2026-{existingPayments.Count + 1:D4}");
+            }
+
+            if (prop["x-enumFrom"] is not JsonValue enumFromNode
+                || !enumFromNode.TryGetValue<string>(out var enumFrom)
+                || string.IsNullOrWhiteSpace(enumFrom))
+            {
+                continue;
+            }
+
+            prop.Remove("x-enumFrom");
+            var lastDot = enumFrom.LastIndexOf('.');
+            var arrayPath = lastDot > 0 ? enumFrom[..lastDot] : enumFrom;
+            var fieldName = lastDot > 0 ? enumFrom[(lastDot + 1)..] : null;
+            if (JsonPath.Get(data, arrayPath) is not JsonArray arr || arr.Count == 0)
+            {
+                continue;
+            }
+
+            var values = new List<string>(arr.Count);
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var item = arr[i];
+                if (item is JsonObject itemObj)
+                {
+                    var raw = fieldName is not null ? itemObj[fieldName] : null;
+                    var refText = raw is JsonValue val && val.TryGetValue<string>(out var s) ? s : raw?.ToString();
+                    var amountText = itemObj["amount"]?.ToJsonString();
+                    var label = (!string.IsNullOrWhiteSpace(amountText), !string.IsNullOrWhiteSpace(refText)) switch
+                    {
+                        (true, true) => $"#{i + 1} - {amountText} ₺ ({refText})",
+                        (true, false) => $"#{i + 1} - {amountText} ₺",
+                        (false, true) => $"#{i + 1} - {refText}",
+                        _ => $"#{i + 1}",
+                    };
+                    values.Add(label);
+                }
+                else
+                {
+                    var text = item is JsonValue val && val.TryGetValue<string>(out var s) ? s : item?.ToString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        values.Add($"#{i + 1} - {text}");
+                    }
+                }
+            }
+
+            if (values.Count > 0)
+            {
+                prop["enum"] = new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]);
+                prop["default"] ??= JsonValue.Create(values[^1]);
+            }
+        }
+
+        return clone;
     }
 }

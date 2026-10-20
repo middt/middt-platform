@@ -170,6 +170,7 @@ public static class JsonPath
         null => null,
         JsonNode node => node.DeepClone(),
         JsonDynamic dyn => dyn.Node?.DeepClone(),
+        JsonDynamicArray arr => arr.Node.DeepClone(),
         string s => JsonValue.Create(s),
         bool b => JsonValue.Create(b),
         decimal d => JsonValue.Create(d),
