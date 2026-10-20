@@ -13,7 +13,7 @@ namespace Middt.Framework.Workflow.Runtime;
 /// <summary>Authorization, transition availability, and response projection for workflow instances.</summary>
 public sealed partial class WorkflowEngine
 {
-    private TransitionDefinition FindManualTransition(WorkflowDefinition definition, WorkflowInstance instance, string key, WorkflowUser user)
+    private TransitionDefinition FindManualTransition(WorkflowDefinition definition, WorkflowInstance instance, string key, WorkflowUser user, JsonObject? input = null)
     {
         if (instance.IsTerminal)
         {
@@ -39,20 +39,32 @@ public sealed partial class WorkflowEngine
             throw new WorkflowConflictException("The instance is waiting for a subflow to finish.");
         }
 
+        ValidateInput(transition, input);
+
+        if (!IsRuleSatisfied(transition, definition, instance, data, user, input ?? []))
+        {
+            throw new WorkflowConflictException($"Transition '{key}' is not available for the current data.");
+        }
+
         return transition;
     }
 
     /// <summary>Availability condition of a manual transition (<c>rule</c>); evaluation errors make it unavailable.</summary>
-    private bool IsRuleSatisfied(TransitionDefinition transition, WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user)
+    private bool IsRuleSatisfied(TransitionDefinition transition, WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user, JsonObject? input = null)
     {
         if (transition.Trigger != TriggerType.Manual || string.IsNullOrWhiteSpace(transition.Rule))
         {
             return true;
         }
 
+        if (input is null && transition.Rule.Contains("input.", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         try
         {
-            return expressions.EvaluateCondition(transition.Rule, RuleScope(definition, instance, data, user));
+            return expressions.EvaluateCondition(transition.Rule, RuleScope(definition, instance, data, user, input));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -61,9 +73,10 @@ public sealed partial class WorkflowEngine
         }
     }
 
-    private ExpressionScope RuleScope(WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user) => new()
+    private ExpressionScope RuleScope(WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user, JsonObject? input = null) => new()
     {
         Data = data,
+        Input = input,
         User = user,
         Now = time.GetUtcNow(),
         Instance = new JsonObject
