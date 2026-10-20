@@ -40,7 +40,7 @@ identity/Middt.Identity           OAuth2/OIDC server – ONE runnable service (n
 demo/                             100% backend-driven JSON demo (KYC, credit, order orchestration)
   Middt.Demo.AppHost              Aspire orchestration
   Middt.Demo.ServiceDefaults      Aspire OpenTelemetry & health defaults
-  Middt.Demo.Api                  API + Layouts/*.json + Workflows/*.json seeds (zero hardcoded domain views/tables)
+  Middt.Demo.Api                  API + Layouts/*.json + Workflows/*.json + Seeds/*.json seeds (zero hardcoded domain views/tables)
   Middt.Demo.Blazor               Blazor demo (:8080)
   Middt.Demo.Angular              Angular BFF host (:8081)
   angular-app/                    Angular demo SPA workspace

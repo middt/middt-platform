@@ -491,8 +491,11 @@ public sealed class SampleJsonWorkflowTests
         afterDeleteWrong.Data["remainingAmount"]!.GetValue<decimal>().Should().Be(7500m);
         afterDeleteWrong.Data["payment"]!["reference"]!.GetValue<string>().Should().Be("EFT-0101");
         afterDeleteWrong.Data["partialPayment"]!.AsArray().Should().ContainSingle();
-        afterDeleteWrong.Data["lastDeletedPayment"]!["reference"]!.GetValue<string>().Should().Be("EFT-WRONG");
-        afterDeleteWrong.Data["lastDeletedPayment"]!["deletedBy"]!.GetValue<string>().Should().Be("alice@test.com");
+        afterDeleteWrong.Data["deletedPayment"]!.AsArray().Should().HaveCount(2);
+        afterDeleteWrong.Data["deletedPayment"]![0]!["amount"]!.GetValue<decimal>().Should().Be(2000m);
+        afterDeleteWrong.Data["deletedPayment"]![1]!["reference"]!.GetValue<string>().Should().Be("EFT-WRONG");
+        afterDeleteWrong.Data["deletedPayment"]![1]!["amount"]!.GetValue<decimal>().Should().Be(3000m);
+        afterDeleteWrong.Data["deletedPayment"]![1]!["deletedBy"]!.GetValue<string>().Should().Be("alice@test.com");
 
         // Overpaying (e.g., 12500 or 8000 when remainingAmount is 7500) is rejected with WorkflowConflictException.
         var overpayFull = () => host.TransitionAsync(invoice.Id, "record-payment", new { amount = 12500, reference = "EFT-OVER" }, Alice);

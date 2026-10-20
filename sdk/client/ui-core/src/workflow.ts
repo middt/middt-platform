@@ -65,6 +65,10 @@ export interface WorkflowTransitionModel {
   target: string;
   /** `Manual`, `Automatic`, `Scheduled`, … */
   trigger: string;
+  /** Optional button style (`primary`, `secondary`, `success`, `warning`, `danger`, `light`). */
+  style?: string | null;
+  /** Optional Material icon name for transition buttons. */
+  icon?: string | null;
 }
 
 /** States and transitions of a workflow (e.g. for diagrams). */
@@ -85,6 +89,10 @@ export interface AvailableTransitionModel {
   key: string;
   title?: string | null;
   target: string;
+  /** Optional button style (`primary`, `secondary`, `success`, `warning`, `danger`, `light`). */
+  style?: string | null;
+  /** Optional Material icon name for transition buttons. */
+  icon?: string | null;
   /** JSON Schema of the expected request body, when the transition takes input. */
   inputSchema?: WorkflowData | null;
   /** Name of a registered input form component that replaces the schema generated form, if any. */

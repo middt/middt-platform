@@ -175,6 +175,12 @@ public sealed class TransitionDefinition
 
     public string? Title { get; set; }
 
+    /// <summary>Optional button style (<c>primary</c>, <c>secondary</c>, <c>success</c>, <c>warning</c>, <c>danger</c>, <c>light</c>); defaults to target state subtype.</summary>
+    public string? Style { get; set; }
+
+    /// <summary>Optional Material icon name for transition buttons; defaults to target state subtype icon.</summary>
+    public string? Icon { get; set; }
+
     /// <summary>
     /// Boolean expression. Automatic transitions: taken when true (e.g. <c>data.amount &gt; 5000</c>).
     /// Manual transitions: availability condition – the transition is only offered/executable when true.
@@ -279,6 +285,9 @@ public sealed class InputDefinition
 
     /// <summary>Data path the validated body is merged into (empty = root).</summary>
     public string? Into { get; set; }
+
+    /// <summary>Optional boolean expression validating the submitted input against instance data (e.g. <c>input.amount &lt;= data.remainingAmount</c>).</summary>
+    public string? Rule { get; set; }
 
     /// <summary>Extra values computed with expressions after the merge, e.g. <c>{ "approvedBy": "user.name" }</c>.</summary>
     public Dictionary<string, string> Set { get; set; } = [];

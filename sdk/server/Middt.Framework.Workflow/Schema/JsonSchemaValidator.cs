@@ -104,9 +104,14 @@ public static partial class JsonSchemaValidator
             }
             else if (keyword == EnumFromKeyword)
             {
-                if (value is not JsonValue ev || !ev.TryGetValue<string>(out var ef) || string.IsNullOrWhiteSpace(ef))
+                var validString = value is JsonValue ev && ev.TryGetValue<string>(out var ef) && !string.IsNullOrWhiteSpace(ef);
+                var validObject = value is JsonObject eo
+                    && eo["source"] is JsonValue sv && sv.TryGetValue<string>(out var src) && !string.IsNullOrWhiteSpace(src)
+                    && (eo["format"] is null || (eo["format"] is JsonValue fv && fv.TryGetValue<string>(out var fmt) && !string.IsNullOrWhiteSpace(fmt)))
+                    && eo.All(kv => kv.Key is "source" or "format");
+                if (!validString && !validObject)
                 {
-                    yield return $"{path}.{keyword}: must be a non-empty string path ('<arrayPath>.<field>').";
+                    yield return $"{path}.{keyword}: must be a non-empty string path ('<arrayPath>.<field>') or an object '{{ \"source\": \"...\", \"format\": \"...\" }}'.";
                 }
             }
             else if (!SupportedKeywords.Contains(keyword))

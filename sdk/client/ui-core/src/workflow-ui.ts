@@ -155,16 +155,23 @@ export function schemaHasInput(schema: WorkflowData | null | undefined): boolean
   return isObject(properties) && Object.keys(properties).length > 0;
 }
 
-export type WorkflowTransitionStyle = 'success' | 'danger' | 'light' | 'primary';
+export type WorkflowTransitionStyle = 'primary' | 'secondary' | 'success' | 'warning' | 'danger' | 'light';
 
 function targetSubType(definition: WorkflowDefinitionModel | null | undefined, target: string): string | undefined {
   return definition?.states.find(s => s.key === target)?.subType;
 }
 
-/** Button style of a transition by the sub type of its target state. */
+/** Button style of a transition by its explicit `style` or the sub type of its target state. */
 export function workflowTransitionStyle(definition: WorkflowDefinitionModel | null | undefined, transition: AvailableTransitionModel): WorkflowTransitionStyle {
-  if (transition.key.startsWith('delete-')) {
-    return 'danger';
+  if (
+    transition.style === 'primary' ||
+    transition.style === 'secondary' ||
+    transition.style === 'success' ||
+    transition.style === 'warning' ||
+    transition.style === 'danger' ||
+    transition.style === 'light'
+  ) {
+    return transition.style;
   }
 
   switch (targetSubType(definition, transition.target)) {
@@ -180,10 +187,10 @@ export function workflowTransitionStyle(definition: WorkflowDefinitionModel | nu
   }
 }
 
-/** Material icon of a transition by the sub type of its target state. */
+/** Material icon of a transition by its explicit `icon` or the sub type of its target state. */
 export function workflowTransitionIcon(definition: WorkflowDefinitionModel | null | undefined, transition: AvailableTransitionModel): string {
-  if (transition.key.startsWith('delete-')) {
-    return 'delete';
+  if (typeof transition.icon === 'string' && transition.icon.trim() !== '') {
+    return transition.icon.trim();
   }
 
   switch (targetSubType(definition, transition.target)) {

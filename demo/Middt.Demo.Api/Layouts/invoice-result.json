@@ -3,7 +3,7 @@
   "key": "invoice-result",
   "title": "Fatura Tahsilat Sonucu",
   "kind": "view",
-  "version": 3,
+  "version": 4,
   "body": [
     {
       "widget": "alert",
@@ -48,10 +48,34 @@
             {
               "widget": "fields",
               "items": [
+                { "label": "Ödeme No", "value": "#{{ row.rowNumber }}", "visibleWhen": "row.rowNumber != null" },
                 { "label": "Ödenen Tutar", "value": "{{ row.amount }}", "format": "N2" },
                 { "label": "Banka Referansı", "value": "{{ row.reference }}", "visibleWhen": "row.reference != null" },
                 { "label": "Kaydeden", "value": "{{ row.recordedBy }}", "visibleWhen": "row.recordedBy != null" },
                 { "label": "Ödeme Zamanı", "value": "{{ row.paidAt }}", "format": "g", "visibleWhen": "row.paidAt != null" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "Silinen Ödemeler",
+      "visibleWhen": "data.deletedPayment != null && data.deletedPayment.Count > 0",
+      "children": [
+        {
+          "widget": "list",
+          "source": "data.deletedPayment",
+          "children": [
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "Silinen Ödeme", "value": "{{ row.reference }}" },
+                { "label": "Tutar", "value": "{{ row.amount }}", "format": "N2", "visibleWhen": "row.amount != null" },
+                { "label": "Silme Nedeni", "value": "{{ row.reason }}", "visibleWhen": "row.reason != null" },
+                { "label": "Silen Kullanıcı", "value": "{{ row.deletedBy }}", "visibleWhen": "row.deletedBy != null" },
+                { "label": "Silinme Zamanı", "value": "{{ row.deletedAt }}", "format": "g", "visibleWhen": "row.deletedAt != null" }
               ]
             }
           ]

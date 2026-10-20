@@ -371,7 +371,6 @@ public static class MiddtApiExtensions
         }
 
         var contentTypes = new FileExtensionContentTypeProvider();
-        contentTypes.Mappings[".alp"] = "application/octet-stream";
 
         app.UseStaticFiles(new StaticFileOptions
         {

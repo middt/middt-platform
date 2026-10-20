@@ -1,0 +1,24 @@
+[
+  {
+    "workflow": "customer-onboarding",
+    "data": {
+      "fullName": "Ahmet Yılmaz",
+      "identityNumber": "12345678901",
+      "email": "ahmet.yilmaz@ornek.com",
+      "phone": "05321234567",
+      "segment": "Bireysel",
+      "monthlyIncome": 85000
+    }
+  },
+  {
+    "workflow": "customer-onboarding",
+    "data": {
+      "fullName": "Anadolu Lojistik A.Ş.",
+      "identityNumber": "98765432109",
+      "email": "finans@anadolulojistik.com",
+      "phone": "02124440123",
+      "segment": "Kurumsal",
+      "monthlyIncome": 450000
+    }
+  }
+]

@@ -41,7 +41,9 @@ public sealed partial class WorkflowEngine
 
         ValidateInput(transition, input);
 
-        if (!IsRuleSatisfied(transition, definition, instance, data, user, input ?? []))
+        var body = Endpoints.WorkflowHttpInput.ExtractBody(input, transition.Input?.Schema) ?? input ?? [];
+        if (!IsRuleSatisfied(transition, definition, instance, data, user, body)
+            || !IsInputRuleSatisfied(transition, definition, instance, data, user, body))
         {
             throw new WorkflowConflictException($"Transition '{key}' is not available for the current data.");
         }
@@ -57,24 +59,28 @@ public sealed partial class WorkflowEngine
             return true;
         }
 
-        var rule = transition.Rule;
-        if (input is null && rule.Contains("input.", StringComparison.Ordinal))
+        try
         {
-            var dataOnlyClauses = rule
-                .Split("&&", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(clause => !clause.Contains("input.", StringComparison.Ordinal))
-                .ToArray();
-            if (dataOnlyClauses.Length == 0)
-            {
-                return true;
-            }
+            return expressions.EvaluateCondition(transition.Rule, RuleScope(definition, instance, data, user, input));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogRuleFailed(logger, ex, transition.Key, instance.Id);
+            return false;
+        }
+    }
 
-            rule = string.Join(" && ", dataOnlyClauses);
+    /// <summary>Input condition of a manual transition (<c>input.rule</c>), evaluated when input is submitted.</summary>
+    private bool IsInputRuleSatisfied(TransitionDefinition transition, WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user, JsonObject input)
+    {
+        if (string.IsNullOrWhiteSpace(transition.Input?.Rule))
+        {
+            return true;
         }
 
         try
         {
-            return expressions.EvaluateCondition(rule, RuleScope(definition, instance, data, user, input));
+            return expressions.EvaluateCondition(transition.Input.Rule, RuleScope(definition, instance, data, user, input));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -270,6 +276,7 @@ public sealed partial class WorkflowEngine
         var state = definition.FindState(instance.State);
 
         var data = JsonPath.ParseObject(instance.Data);
+        var scope = RuleScope(definition, instance, data, user);
         var available = instance.Status == WorkflowInstanceStatus.Active
             ? AvailableIn(definition, instance.State)
                 .Where(t => t.Trigger == TriggerType.Manual && CanExecute(t, definition, instance, data, user))
@@ -280,7 +287,9 @@ public sealed partial class WorkflowEngine
                     Key = t.Key,
                     Title = t.Title,
                     Target = t.Target,
-                    InputSchema = ProjectInputSchema(t.Input?.Schema, data),
+                    Style = string.IsNullOrWhiteSpace(t.Style) ? null : t.Style,
+                    Icon = string.IsNullOrWhiteSpace(t.Icon) ? null : t.Icon,
+                    InputSchema = ProjectInputSchema(t.Input?.Schema, scope),
                     View = string.IsNullOrWhiteSpace(t.View?.Component) ? null : t.View.Component,
                     Inline = t.View?.Inline == true,
                     InputInto = t.Input?.Into,
@@ -319,7 +328,7 @@ public sealed partial class WorkflowEngine
         };
     }
 
-    private static JsonObject? ProjectInputSchema(JsonObject? schema, JsonObject data)
+    private JsonObject? ProjectInputSchema(JsonObject? schema, ExpressionScope scope)
     {
         if (schema is null)
         {
@@ -332,68 +341,34 @@ public sealed partial class WorkflowEngine
             return clone;
         }
 
-        foreach (var (propName, propNode) in properties)
+        foreach (var (_, propNode) in properties)
         {
             if (propNode is not JsonObject prop)
             {
                 continue;
             }
 
-            if (propName == "reference"
-                && prop["x-enumFrom"] is null
-                && prop["default"] is JsonValue defVal
+            if (prop["default"] is JsonValue defVal
                 && defVal.TryGetValue<string>(out var defStr)
-                && defStr == "EFT-2026-0001"
-                && data["partialPayment"] is JsonArray existingPayments
-                && existingPayments.Count > 0)
+                && ExpressionEvaluator.IsTemplate(defStr))
             {
-                prop["default"] = JsonValue.Create($"EFT-2026-{existingPayments.Count + 1:D4}");
+                try
+                {
+                    prop["default"] = expressions.Render(defVal, scope);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // keep static template when evaluation fails
+                }
             }
 
-            if (prop["x-enumFrom"] is not JsonValue enumFromNode
-                || !enumFromNode.TryGetValue<string>(out var enumFrom)
-                || string.IsNullOrWhiteSpace(enumFrom))
+            if (prop["x-enumFrom"] is not { } enumFromNode)
             {
                 continue;
             }
 
             prop.Remove("x-enumFrom");
-            var lastDot = enumFrom.LastIndexOf('.');
-            var arrayPath = lastDot > 0 ? enumFrom[..lastDot] : enumFrom;
-            var fieldName = lastDot > 0 ? enumFrom[(lastDot + 1)..] : null;
-            if (JsonPath.Get(data, arrayPath) is not JsonArray arr || arr.Count == 0)
-            {
-                continue;
-            }
-
-            var values = new List<string>(arr.Count);
-            for (var i = 0; i < arr.Count; i++)
-            {
-                var item = arr[i];
-                if (item is JsonObject itemObj)
-                {
-                    var raw = fieldName is not null ? itemObj[fieldName] : null;
-                    var refText = raw is JsonValue val && val.TryGetValue<string>(out var s) ? s : raw?.ToString();
-                    var amountText = itemObj["amount"]?.ToJsonString();
-                    var label = (!string.IsNullOrWhiteSpace(amountText), !string.IsNullOrWhiteSpace(refText)) switch
-                    {
-                        (true, true) => $"#{i + 1} - {amountText} ₺ ({refText})",
-                        (true, false) => $"#{i + 1} - {amountText} ₺",
-                        (false, true) => $"#{i + 1} - {refText}",
-                        _ => $"#{i + 1}",
-                    };
-                    values.Add(label);
-                }
-                else
-                {
-                    var text = item is JsonValue val && val.TryGetValue<string>(out var s) ? s : item?.ToString();
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        values.Add($"#{i + 1} - {text}");
-                    }
-                }
-            }
-
+            var values = ResolveEnumFrom(enumFromNode, scope);
             if (values.Count > 0)
             {
                 prop["enum"] = new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]);
@@ -403,4 +378,89 @@ public sealed partial class WorkflowEngine
 
         return clone;
     }
+
+    private List<string> ResolveEnumFrom(JsonNode enumFromNode, ExpressionScope scope)
+    {
+        if (enumFromNode is JsonObject specObj
+            && specObj["source"] is JsonValue srcVal
+            && srcVal.TryGetValue<string>(out var sourcePath)
+            && !string.IsNullOrWhiteSpace(sourcePath))
+        {
+            if (JsonPath.Get(scope.Data, sourcePath) is not JsonArray objArr || objArr.Count == 0)
+            {
+                return [];
+            }
+
+            var format = specObj["format"] is JsonValue fmtVal && fmtVal.TryGetValue<string>(out var fmt) ? fmt : null;
+            var formatted = new List<string>(objArr.Count);
+            for (var i = 0; i < objArr.Count; i++)
+            {
+                var current = objArr[i];
+                if (!string.IsNullOrWhiteSpace(format))
+                {
+                    var itemObj = current is JsonObject jo
+                        ? (JsonObject)jo.DeepClone()
+                        : new JsonObject { ["value"] = current?.DeepClone() };
+                    itemObj["rowNumber"] ??= i + 1;
+                    var itemScope = new ExpressionScope
+                    {
+                        Data = scope.Data,
+                        Instance = scope.Instance,
+                        User = scope.User,
+                        Now = scope.Now,
+                        Item = itemObj,
+                        Index = i,
+                    };
+                    var rendered = expressions.RenderText(format, itemScope);
+                    if (!string.IsNullOrWhiteSpace(rendered))
+                    {
+                        formatted.Add(rendered);
+                    }
+                }
+                else
+                {
+                    var text = current is JsonValue v && v.TryGetValue<string>(out var s) ? s : current?.ToString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        formatted.Add(text);
+                    }
+                }
+            }
+
+            return EnsureUniqueEnumValues(formatted);
+        }
+
+        if (enumFromNode is JsonValue pathVal
+            && pathVal.TryGetValue<string>(out var enumFrom)
+            && !string.IsNullOrWhiteSpace(enumFrom))
+        {
+            var lastDot = enumFrom.LastIndexOf('.');
+            var arrayPath = lastDot > 0 ? enumFrom[..lastDot] : enumFrom;
+            var fieldName = lastDot > 0 ? enumFrom[(lastDot + 1)..] : null;
+            if (JsonPath.Get(scope.Data, arrayPath) is not JsonArray arr || arr.Count == 0)
+            {
+                return [];
+            }
+
+            var rawValues = new List<string>(arr.Count);
+            foreach (var item in arr)
+            {
+                var raw = fieldName is not null && item is JsonObject itemObj ? itemObj[fieldName] : item;
+                var text = raw is JsonValue val && val.TryGetValue<string>(out var s) ? s : raw?.ToString();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    rawValues.Add(text);
+                }
+            }
+
+            return EnsureUniqueEnumValues(rawValues);
+        }
+
+        return [];
+    }
+
+    private static List<string> EnsureUniqueEnumValues(List<string> values) =>
+        values.Distinct(StringComparer.Ordinal).Count() == values.Count
+            ? values
+            : [.. values.Select((v, i) => v.StartsWith('#') ? v : $"#{i + 1} - {v}")];
 }

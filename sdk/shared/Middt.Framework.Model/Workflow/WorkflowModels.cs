@@ -61,6 +61,8 @@ public sealed class WorkflowTransitionModel
     public string? From { get; set; }
     public string Target { get; set; } = string.Empty;
     public string Trigger { get; set; } = string.Empty;
+    public string? Style { get; set; }
+    public string? Icon { get; set; }
 }
 
 /// <summary>States and transitions of a workflow (e.g. for diagrams).</summary>
@@ -83,6 +85,12 @@ public sealed class AvailableTransitionModel
     public string Key { get; set; } = string.Empty;
     public string? Title { get; set; }
     public string Target { get; set; } = string.Empty;
+
+    /// <summary>Optional button style (<c>primary</c>, <c>secondary</c>, <c>success</c>, <c>warning</c>, <c>danger</c>, <c>light</c>).</summary>
+    public string? Style { get; set; }
+
+    /// <summary>Optional Material icon name for transition buttons.</summary>
+    public string? Icon { get; set; }
 
     /// <summary>JSON Schema of the expected request body, when the transition takes input.</summary>
     public JsonObject? InputSchema { get; set; }

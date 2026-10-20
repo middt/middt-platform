@@ -38,8 +38,7 @@ builder.Services.AddMiddtRebus(
 builder.Services.AddMiddtRebusHandlersFromAssemblyOf<WorkflowNotificationHandler>();
 builder.Services.AddHostedService<RabbitMqQueueInitializer>();
 
-var dbConnectionString = builder.Configuration.GetConnectionString("WorkflowDb")
-    ?? builder.Configuration.GetConnectionString("BikeStores");
+var dbConnectionString = builder.Configuration.GetConnectionString("WorkflowDb");
 
 // Workflow engine: JSON definitions from ./Workflows, all domain data stored in WorkflowInstanceData.Data JSONB ("wf" schema).
 builder.Services.AddMiddtWorkflow(workflow =>

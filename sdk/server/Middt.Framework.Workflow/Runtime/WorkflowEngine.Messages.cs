@@ -214,7 +214,7 @@ public sealed partial class WorkflowEngine
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(transition.Rule))
+            if (string.IsNullOrWhiteSpace(transition.Rule) && string.IsNullOrWhiteSpace(transition.Input?.Rule))
             {
                 return transition;
             }
@@ -237,7 +237,9 @@ public sealed partial class WorkflowEngine
 
             try
             {
-                if (expressions.EvaluateCondition(transition.Rule, scope))
+                var ruleOk = string.IsNullOrWhiteSpace(transition.Rule) || expressions.EvaluateCondition(transition.Rule, scope);
+                var inputRuleOk = string.IsNullOrWhiteSpace(transition.Input?.Rule) || expressions.EvaluateCondition(transition.Input.Rule, scope);
+                if (ruleOk && inputRuleOk)
                 {
                     return transition;
                 }

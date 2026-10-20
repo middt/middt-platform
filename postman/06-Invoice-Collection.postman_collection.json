@@ -638,7 +638,8 @@
                   "    pm.expect(d.data.paidAmount).to.eql(5000);",
                   "    pm.expect(d.data.remainingAmount).to.eql(7500);",
                   "    pm.expect(d.data.partialPayment.length).to.eql(1);",
-                  "    pm.expect(d.data.lastDeletedPayment.reference).to.eql(\"EFT-YANLIS-01\");",
+                  "    pm.expect(d.data.deletedPayment.length).to.eql(1);",
+                  "    pm.expect(d.data.deletedPayment[0].reference).to.eql(\"EFT-YANLIS-01\");",
                   "});"
                 ]
               }
@@ -657,7 +658,7 @@
               }
             ],
             "url": "{{apiUrl}}/api/workflows/invoice-collection/instances/{{invoiceInstanceId}}/transitions/delete-payment",
-            "description": "`delete-payment` geçişi `EFT-YANLIS-01` referanslı kısmi ödemeyi `data.partialPayment.Remove(\"reference\", input.reference)` ile diziden çıkarır, `paidAmount` (`Sum(\"amount\")`) ve `remainingAmount` alanlarını yeniden hesaplar ve silme bilgisini `data.lastDeletedPayment` altına kaydeder.",
+            "description": "`delete-payment` geçişi `EFT-YANLIS-01` referanslı kısmi ödemeyi `data.partialPayment.Remove(\"reference\", input.reference)` ile diziden çıkarır, `paidAmount` (`Sum(\"amount\")`) ve `remainingAmount` alanlarını yeniden hesaplar ve silinen ödemeyi `data.deletedPayment` dizisine (`into: \"deletedPayment[]\"`) kaydeder.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"reference\": \"EFT-YANLIS-01\",\n  \"reason\": \"Hatalı ödeme kaydı düzeltildi.\"\n}",

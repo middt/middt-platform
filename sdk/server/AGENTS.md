@@ -10,7 +10,10 @@ Common · Api · Workflow · Ui.Server · Rebus. **Must not reference any client
 
 ## Workflow (`Middt.Framework.Workflow`)
 - Definitions are JSON (`demo/Middt.Demo.Api/Workflows`), validated at startup by `WorkflowRegistry`
-  (`WorkflowDefinitionValidator`) – add validation for every new definition property.
+  (`WorkflowDefinitionValidator`) – add validation for every new definition property (including transition `style`/`icon` and `input.rule` expressions).
+- State availability vs. input guard: `transition.rule` evaluates whether a transition is available in the current state (`data`, `instance`, `user`, `now`), whereas `transition.input.rule` evaluates when a transition is executed or an event message is delivered (`input`, `data`, `instance`, `user`, `now`).
+- Errors shown to callers are hidden unless `ExposeErrorDetails`; the `http` task never follows redirects, honours
+  `AllowedHttpHosts`, and resolves root-relative URLs (`/api/...`) against `MiddtWorkflowOptions.DefaultHttpBaseUrl` – keep all of these.
 - `WorkflowEngine` runs transitions with an optimistic claim (Busy + revision), automatic chains, subflows, jobs
   (`WorkflowJobProcessor`), history and incidents. Keep round trips low (there is a test pinning the command count).
 - Persist the pending command in the Busy claim. Final state, history and follow-up jobs commit together; event

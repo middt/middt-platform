@@ -577,19 +577,26 @@ public partial class WorkflowInstanceDetail
         definition?.States.FirstOrDefault(s => s.Key == transition.Target)?.SubType;
 
     private ButtonStyle TransitionStyle(AvailableTransitionModel transition) =>
-        transition.Key.StartsWith("delete-", StringComparison.Ordinal)
-            ? ButtonStyle.Danger
-            : TargetSubType(transition) switch
+        transition.Style switch
+        {
+            "primary" => ButtonStyle.Primary,
+            "secondary" => ButtonStyle.Secondary,
+            "success" => ButtonStyle.Success,
+            "warning" => ButtonStyle.Warning,
+            "danger" => ButtonStyle.Danger,
+            "light" => ButtonStyle.Light,
+            _ => TargetSubType(transition) switch
             {
                 "Success" => ButtonStyle.Success,
                 "Error" => ButtonStyle.Danger,
                 "Cancelled" or "Timeout" => ButtonStyle.Light,
                 _ => ButtonStyle.Primary,
-            };
+            },
+        };
 
     private string TransitionIcon(AvailableTransitionModel transition) =>
-        transition.Key.StartsWith("delete-", StringComparison.Ordinal)
-            ? "delete"
+        !string.IsNullOrWhiteSpace(transition.Icon)
+            ? transition.Icon
             : TargetSubType(transition) switch
             {
                 "Success" => "check_circle",

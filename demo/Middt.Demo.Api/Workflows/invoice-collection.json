@@ -64,8 +64,9 @@
           "target": "$self",
           "trigger": "Event",
           "event": "payment.received",
-          "rule": "input.amount <= data.remainingAmount",
+          "rule": "data.remainingAmount > 0",
           "input": {
+            "rule": "input.amount <= data.remainingAmount",
             "schema": {
               "type": "object",
               "additionalProperties": false,
@@ -91,15 +92,16 @@
           "title": "Ödeme Kaydet",
           "target": "$self",
           "roles": [ "manager" ],
-          "rule": "input.amount <= data.remainingAmount",
+          "rule": "data.remainingAmount > 0",
           "input": {
+            "rule": "input.amount <= data.remainingAmount",
             "schema": {
               "type": "object",
               "additionalProperties": false,
               "required": [ "amount" ],
               "properties": {
                 "amount": { "type": "number", "minimum": 0, "title": "Ödenen Tutar (₺)", "default": 5000 },
-                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı", "default": "EFT-2026-0001" }
+                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı", "default": "EFT-2026-000{{ data.partialPayment != null ? data.partialPayment.Count + 1 : 1 }}" }
               }
             },
             "into": "partialPayment[]",
@@ -119,9 +121,12 @@
           "key": "delete-payment",
           "title": "Ödeme Kaydını Sil",
           "target": "$self",
+          "style": "danger",
+          "icon": "delete",
           "roles": [ "manager" ],
-          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0 && data.partialPayment.Any(\"reference\", input.reference)",
+          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
           "input": {
+            "rule": "data.partialPayment.Any(\"reference\", input.reference)",
             "schema": {
               "type": "object",
               "additionalProperties": false,
@@ -132,7 +137,10 @@
                   "minLength": 1,
                   "maxLength": 120,
                   "title": "Silinecek Ödeme",
-                  "x-enumFrom": "partialPayment.reference"
+                  "x-enumFrom": {
+                    "source": "partialPayment",
+                    "format": "#{{ item.rowNumber }} - {{ item.amount }} ₺ ({{ item.reference }})"
+                  }
                 },
                 "reason": {
                   "type": "string",
@@ -142,15 +150,16 @@
                 }
               }
             },
-            "into": "lastDeletedPayment",
+            "into": "deletedPayment[]",
             "set": {
+              "deletedPayment[-1].amount": "data.partialPayment.Find(\"reference\", input.reference).amount",
               "partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)",
               "paidAmount": "data.partialPayment.Sum(\"amount\")",
               "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
               "payment.amount": "data.paidAmount",
               "payment.reference": "data.partialPayment.Last(\"reference\")",
-              "lastDeletedPayment.deletedBy": "user.Name",
-              "lastDeletedPayment.deletedAt": "now"
+              "deletedPayment[-1].deletedBy": "user.Name",
+              "deletedPayment[-1].deletedAt": "now"
             }
           }
         },
@@ -219,8 +228,9 @@
           "target": "$self",
           "trigger": "Event",
           "event": "payment.received",
-          "rule": "input.amount <= data.remainingAmount",
+          "rule": "data.remainingAmount > 0",
           "input": {
+            "rule": "input.amount <= data.remainingAmount",
             "schema": {
               "type": "object",
               "additionalProperties": false,
@@ -246,15 +256,16 @@
           "title": "Gecikmeli Ödeme Kaydet",
           "target": "$self",
           "roles": [ "manager" ],
-          "rule": "input.amount <= data.remainingAmount",
+          "rule": "data.remainingAmount > 0",
           "input": {
+            "rule": "input.amount <= data.remainingAmount",
             "schema": {
               "type": "object",
               "additionalProperties": false,
               "required": [ "amount" ],
               "properties": {
                 "amount": { "type": "number", "minimum": 0, "title": "Ödenen Tutar (₺)", "default": 5000 },
-                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı", "default": "EFT-2026-0001" }
+                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı", "default": "EFT-2026-000{{ data.partialPayment != null ? data.partialPayment.Count + 1 : 1 }}" }
               }
             },
             "into": "partialPayment[]",
@@ -274,9 +285,12 @@
           "key": "delete-payment",
           "title": "Ödeme Kaydını Sil",
           "target": "$self",
+          "style": "danger",
+          "icon": "delete",
           "roles": [ "manager" ],
-          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0 && data.partialPayment.Any(\"reference\", input.reference)",
+          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
           "input": {
+            "rule": "data.partialPayment.Any(\"reference\", input.reference)",
             "schema": {
               "type": "object",
               "additionalProperties": false,
@@ -287,7 +301,10 @@
                   "minLength": 1,
                   "maxLength": 120,
                   "title": "Silinecek Ödeme",
-                  "x-enumFrom": "partialPayment.reference"
+                  "x-enumFrom": {
+                    "source": "partialPayment",
+                    "format": "#{{ item.rowNumber }} - {{ item.amount }} ₺ ({{ item.reference }})"
+                  }
                 },
                 "reason": {
                   "type": "string",
@@ -297,15 +314,16 @@
                 }
               }
             },
-            "into": "lastDeletedPayment",
+            "into": "deletedPayment[]",
             "set": {
+              "deletedPayment[-1].amount": "data.partialPayment.Find(\"reference\", input.reference).amount",
               "partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)",
               "paidAmount": "data.partialPayment.Sum(\"amount\")",
               "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
               "payment.amount": "data.paidAmount",
               "payment.reference": "data.partialPayment.Last(\"reference\")",
-              "lastDeletedPayment.deletedBy": "user.Name",
-              "lastDeletedPayment.deletedAt": "now"
+              "deletedPayment[-1].deletedBy": "user.Name",
+              "deletedPayment[-1].deletedAt": "now"
             }
           }
         },
@@ -348,7 +366,7 @@
           },
           "config": {
             "method": "POST",
-            "url": "http://127.0.0.1:8080/api/v1/InvoiceCollection/ping",
+            "url": "/api/v1/InvoiceCollection/ping",
             "body": {
               "invoiceNo": "{{ data.invoiceNo }}",
               "amount": "{{ data.payment.amount }}",

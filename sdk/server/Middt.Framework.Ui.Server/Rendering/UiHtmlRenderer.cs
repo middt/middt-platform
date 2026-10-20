@@ -208,10 +208,18 @@ public sealed class UiHtmlRenderer(UiWidgetCatalog catalog, IOptions<MiddtUiOpti
         }
 
         html.Raw("<ul class=\"middt-ui-list\">");
+        var rowIndex = 0;
         foreach (var item in items.Take(MaxListItems))
         {
+            rowIndex++;
+            var cloned = item?.DeepClone();
+            if (cloned is JsonObject itemObj && itemObj["rowNumber"] is null)
+            {
+                itemObj["rowNumber"] = rowIndex;
+            }
+
             html.Raw("<li>");
-            Nodes(node.Children, context.With(UiExpressions.Row, item?.DeepClone()), html);
+            Nodes(node.Children, context.With(UiExpressions.Row, cloned), html);
             html.Raw("</li>");
         }
 

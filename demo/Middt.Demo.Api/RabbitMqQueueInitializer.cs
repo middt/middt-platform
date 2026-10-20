@@ -1,20 +1,27 @@
+using Middt.Framework.Workflow.Definitions;
 using RabbitMQ.Client;
 
 namespace Middt.Demo.Api;
 
 /// <summary>
-/// Pre-declares sample queues in RabbitMQ so that messaging demo workflows can send and defer messages.
+/// Pre-declares queues referenced by workflow definitions (or configured under <c>RabbitMq:Queues</c>) in RabbitMQ so that
+/// messaging workflows can send and defer messages.
 /// </summary>
 public sealed class RabbitMqQueueInitializer(
     IConfiguration configuration,
+    WorkflowRegistry registry,
     ILogger<RabbitMqQueueInitializer> logger) : BackgroundService
 {
-    private static readonly string[] RequiredQueues = ["order-processing", "order-reminders"];
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var messaging = configuration.GetConnectionString("messaging");
         if (string.IsNullOrWhiteSpace(messaging))
+        {
+            return;
+        }
+
+        var queues = DiscoverQueues();
+        if (queues.Count == 0)
         {
             return;
         }
@@ -28,7 +35,7 @@ public sealed class RabbitMqQueueInitializer(
                 await using var connection = await factory.CreateConnectionAsync(stoppingToken);
                 await using var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
 
-                foreach (var queue in RequiredQueues)
+                foreach (var queue in queues)
                 {
                     await channel.QueueDeclareAsync(
                         queue: queue,
@@ -38,7 +45,7 @@ public sealed class RabbitMqQueueInitializer(
                         cancellationToken: stoppingToken);
                 }
 
-                logger.LogInformation("Sample RabbitMQ queues declared successfully: {Queues}", string.Join(", ", RequiredQueues));
+                logger.LogInformation("RabbitMQ queues declared successfully: {Queues}", string.Join(", ", queues));
                 return;
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
@@ -47,5 +54,35 @@ public sealed class RabbitMqQueueInitializer(
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
         }
+    }
+
+    private HashSet<string> DiscoverQueues()
+    {
+        var queues = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var configured in configuration.GetSection("RabbitMq:Queues").Get<string[]>() ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                queues.Add(configured.Trim());
+            }
+        }
+
+        foreach (var wf in registry.Latest)
+        {
+            var tasks = wf.Start.OnExecute
+                .Concat(wf.States.SelectMany(s => s.OnEntry.Concat(s.OnExit).Concat(s.Transitions.SelectMany(t => t.OnExecute))))
+                .Concat(wf.SharedTransitions.SelectMany(t => t.OnExecute));
+            foreach (var task in tasks)
+            {
+                if (task.Task is "rabbitmq" or "rabbit" or "rabbit-publish" or "rabbitPublish"
+                    && task.Config["queue"]?.GetValue<string>() is { Length: > 0 } q
+                    && !q.Contains("{{", StringComparison.Ordinal))
+                {
+                    queues.Add(q);
+                }
+            }
+        }
+
+        return queues;
     }
 }

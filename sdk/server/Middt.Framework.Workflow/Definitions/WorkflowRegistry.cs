@@ -522,9 +522,19 @@ internal static class WorkflowDefinitionValidator
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(t.Style) && t.Style is not ("primary" or "secondary" or "success" or "warning" or "danger" or "light"))
+        {
+            yield return $"{where}: style must be one of primary, secondary, success, warning, danger, light.";
+        }
+
         if (!string.IsNullOrWhiteSpace(t.Rule) && expressions.Validate(t.Rule) is { } ruleError)
         {
             yield return $"{where}: rule: {ruleError}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(t.Input?.Rule) && expressions.Validate(t.Input.Rule) is { } inputRuleError)
+        {
+            yield return $"{where}: input.rule: {inputRuleError}";
         }
 
         if (t.Input?.Schema is { } schema)

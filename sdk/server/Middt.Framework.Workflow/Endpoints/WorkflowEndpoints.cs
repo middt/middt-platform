@@ -226,6 +226,8 @@ public static class WorkflowEndpoints
                     From = x.From,
                     Target = x.Transition.Target,
                     Trigger = x.Transition.Trigger.ToString(),
+                    Style = string.IsNullOrWhiteSpace(x.Transition.Style) ? null : x.Transition.Style,
+                    Icon = string.IsNullOrWhiteSpace(x.Transition.Icon) ? null : x.Transition.Icon,
                 })
                 .ToList(),
         };

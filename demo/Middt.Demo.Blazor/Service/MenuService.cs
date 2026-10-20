@@ -79,7 +79,9 @@ public sealed class MenuService(UiApiClient uiClient, WorkflowApiClient workflow
 
         layoutItems = [.. (response.Data ?? [])
             .Where(l => l.Menu is not null)
-            .Select(l => new MenuItem { Name = l.Menu!.Title ?? l.Title ?? l.Key, Path = $"/ui/{l.Key}", Icon = l.Menu.Icon, Title = l.Title })];
+            .OrderBy(l => l.Menu!.Order)
+            .ThenBy(l => l.Menu!.Title ?? l.Title ?? l.Key)
+            .Select(l => new MenuItem { Name = l.Menu!.Title ?? l.Title ?? l.Key, Path = $"/ui/{l.Key}", Icon = l.Menu.Icon ?? "article", Title = l.Title })];
         Changed?.Invoke();
     }
 

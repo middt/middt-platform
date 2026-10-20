@@ -48,12 +48,15 @@ public sealed class HttpTask : IWorkflowTask
             yield break;
         }
 
-        var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
-        var authorityEnd = schemeEnd < 0 ? -1 : url.IndexOfAny(['/', '?', '#'], schemeEnd + 3);
-        var authority = schemeEnd < 0 ? url : url[..(authorityEnd < 0 ? url.Length : authorityEnd)];
-        if (schemeEnd < 0 || authority.Contains("{{", StringComparison.Ordinal))
+        if (!url.StartsWith('/'))
         {
-            yield return "http: 'url' must be absolute and must not contain placeholders in the scheme or host.";
+            var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
+            var authorityEnd = schemeEnd < 0 ? -1 : url.IndexOfAny(['/', '?', '#'], schemeEnd + 3);
+            var authority = schemeEnd < 0 ? url : url[..(authorityEnd < 0 ? url.Length : authorityEnd)];
+            if (schemeEnd < 0 || authority.Contains("{{", StringComparison.Ordinal))
+            {
+                yield return "http: 'url' must be absolute and must not contain placeholders in the scheme or host.";
+            }
         }
 
         foreach (var error in expressions.ValidateTemplate(task.Config["url"])
@@ -70,9 +73,12 @@ public sealed class HttpTask : IWorkflowTask
     {
         var config = context.Config;
         var method = new HttpMethod(config["method"]?.GetValue<string>()?.ToUpperInvariant() ?? "GET");
-        var baseUri = RenderUrl(config["url"]!.GetValue<string>(), context);
+        var clientName = config["client"]?.GetValue<string>() ?? DefaultClientName;
+        var client = context.Services.GetRequiredService<IHttpClientFactory>().CreateClient(clientName);
+        var wfOptions = context.Services.GetRequiredService<IOptions<MiddtWorkflowOptions>>().Value;
+        var baseUri = RenderUrl(config["url"]!.GetValue<string>(), context, client.BaseAddress ?? wfOptions.DefaultHttpBaseUrl);
 
-        var allowedHosts = context.Services.GetRequiredService<IOptions<MiddtWorkflowOptions>>().Value.AllowedHttpHosts;
+        var allowedHosts = wfOptions.AllowedHttpHosts;
         if (allowedHosts.Count > 0 && !allowedHosts.Contains(baseUri.Host))
         {
             throw new WorkflowTaskException($"http: host '{baseUri.Host}' is not in MiddtWorkflowOptions.AllowedHttpHosts.");
@@ -133,9 +139,6 @@ public sealed class HttpTask : IWorkflowTask
             request.Content = new StringContent(bodyString, Encoding.UTF8);
             request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
         }
-
-        var clientName = config["client"]?.GetValue<string>() ?? DefaultClientName;
-        var client = context.Services.GetRequiredService<IHttpClientFactory>().CreateClient(clientName);
 
         var timeoutSec = config["timeoutSeconds"]?.GetValue<int>() ?? 30;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -269,11 +272,15 @@ public sealed class HttpTask : IWorkflowTask
         return new Uri(sb.ToString(), UriKind.Absolute);
     }
 
-    private static Uri RenderUrl(string template, WorkflowTaskContext context)
+    private static readonly Uri DefaultLocalBaseUri = new("http://127.0.0.1:8080");
+
+    private static Uri RenderUrl(string template, WorkflowTaskContext context, Uri? baseAddress)
     {
         // Each placeholder value is escaped: data cannot inject path segments, query parameters or a different host.
         var rendered = System.Text.RegularExpressions.Regex.Replace(template, @"\{\{\s*(.+?)\s*\}\}", m =>
             Uri.EscapeDataString(Convert.ToString(context.Expressions.Evaluate(m.Groups[1].Value, context.Scope), CultureInfo.InvariantCulture) ?? string.Empty));
-        return new Uri(rendered, UriKind.Absolute);
+        return rendered.StartsWith('/')
+            ? new Uri(baseAddress ?? DefaultLocalBaseUri, rendered)
+            : new Uri(rendered, UriKind.Absolute);
     }
 }

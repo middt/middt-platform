@@ -399,12 +399,30 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
     }
 
     private static string SortKey(JsonObject item, string property) =>
-        item[property] switch
+        GetCaseInsensitive(item, property) switch
         {
             JsonValue v when v.TryGetValue<decimal>(out var d) => d.ToString("000000000000000.0000", CultureInfo.InvariantCulture),
             JsonNode n => n.ToString(),
             null => string.Empty,
         };
+
+    private static JsonNode? GetCaseInsensitive(JsonObject item, string property)
+    {
+        if (item.TryGetPropertyValue(property, out var exact))
+        {
+            return exact;
+        }
+
+        foreach (var (key, value) in item)
+        {
+            if (string.Equals(key, property, StringComparison.OrdinalIgnoreCase))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
 
     private string? ResolveWorkflowKey(string entity)
     {

@@ -54,6 +54,7 @@ export class MenuService {
     if (isSuccess(uiResponse)) {
       this.#layoutItems.set((uiResponse.data ?? [])
         .filter(layout => layout.menu)
+        .sort((a, b) => ((a.menu?.order ?? 0) - (b.menu?.order ?? 0)) || (a.menu?.title ?? a.title ?? a.key).localeCompare(b.menu?.title ?? b.title ?? b.key))
         .map(layout => ({ name: layout.menu?.title ?? layout.title ?? layout.key, path: `/ui/${layout.key}`, icon: layout.menu?.icon ?? 'article' })));
     }
   }
