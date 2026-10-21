@@ -7,7 +7,7 @@ Bu klasör, **Middt Framework** üzerindeki tüm iş akışlarını (`Workflows`
 | Dosya | Açıklama |
 |---|---|
 | [`Middt.Local.postman_environment.json`](./Middt.Local.postman_environment.json) | Docker Compose yerel ortam değişkenleri (`apiUrl: http://localhost:8180`, `idpUrl: http://localhost:8083`, `clientId: middt-postman` ve otomatik doldurulan token/instance değişkenleri). |
-| [`Middt-All-Workflows.postman_collection.json`](./Middt-All-Workflows.postman_collection.json) | **Tek pakette tüm akışlar**: Kimlik doğrulama + dinamik veri sorguları + 6 iş akışının tamamı. |
+| [`Middt-All-Workflows.postman_collection.json`](./Middt-All-Workflows.postman_collection.json) | **Tek pakette temel akışlar**: Kimlik doğrulama + dinamik veri sorguları + `01`–`06` iş akışları (`ai-dispute-resolution` akışı `/workflow/ai-dispute-resolution` veya `POST /api/workflows/ai-dispute-resolution/instances` üzerinden test edilebilir). |
 | [`01-Customer-Onboarding.postman_collection.json`](./01-Customer-Onboarding.postman_collection.json) | **Müşteri Kaydı & KYC (`customer-onboarding`)**: Otomatik onay, manuel KYC incelemesi, not ekleme, gelir güncelleme ve hesap kapatma. |
 | [`02-Risk-Limit-Eval.postman_collection.json`](./02-Risk-Limit-Eval.postman_collection.json) | **Risk & Limit Değerlendirme (`risk-limit-eval`)**: Otomatik onay, manuel underwriting incelemesi ve otomatik red senaryoları. |
 | [`03-Credit-Allocation.postman_collection.json`](./03-Credit-Allocation.postman_collection.json) | **Kredi Tahsis & 4-Göz Onay (`credit-allocation`)**: `loadWorkflow`, `SubFlow` (`risk-limit-eval` geçiş iletimi), teminat yeniden hesaplama (`$self` reenter) ve 2 farklı yönetici ile **4-Göz (`denyRoles: ["$previousUser"]`)** onayı. |

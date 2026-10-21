@@ -44,7 +44,7 @@ public sealed class RebusTask : IWorkflowTask
 
         if (action is "defer" or "deferLocal" or "defer-local")
         {
-            var hasDelay = config["delay"] is not null || config["deferSeconds"] is not null || config["delaySeconds"] is not null;
+            var hasDelay = config["delay"] is not null || config["deferSeconds"] is not null || config["delaySeconds"] is not null || config["delayMinutes"] is not null;
             if (!hasDelay)
             {
                 yield return "rebus: 'delay' (e.g. '00:05:00', '10m', '30s') or 'deferSeconds' is required for defer actions.";
@@ -68,7 +68,9 @@ public sealed class RebusTask : IWorkflowTask
             }
         }
 
-        foreach (var error in expressions.ValidateTemplate(config["type"])
+        foreach (var error in expressions.ValidateTemplate(config["action"])
+                     .Concat(expressions.ValidateTemplate(config["op"]))
+                     .Concat(expressions.ValidateTemplate(config["type"]))
                      .Concat(expressions.ValidateTemplate(config["messageType"]))
                      .Concat(expressions.ValidateTemplate(config["topic"]))
                      .Concat(expressions.ValidateTemplate(config["queue"]))
@@ -231,16 +233,20 @@ public sealed class RebusTask : IWorkflowTask
         }
     }
 
-    private static string DetermineAction(TaskDefinition task)
+    private static string DetermineAction(TaskDefinition task) =>
+        ResolveActionName(task.Config["action"]?.GetValue<string>() ?? task.Config["op"]?.GetValue<string>(), task.Task);
+
+    private static string DetermineAction(WorkflowTaskContext context) =>
+        ResolveActionName(context.RenderText("action") ?? context.RenderText("op"), context.Task.Task);
+
+    private static string ResolveActionName(string? configuredAction, string taskName)
     {
-        var configuredAction = task.Config["action"]?.GetValue<string>() ?? task.Config["op"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(configuredAction))
         {
             return configuredAction;
         }
 
-        var taskName = task.Task.ToLowerInvariant();
-        return taskName switch
+        return taskName.ToLowerInvariant() switch
         {
             "rebus-send" or "rebussend" => "send",
             "rebus-send-local" or "rebussendlocal" => "sendLocal",
@@ -248,28 +254,7 @@ public sealed class RebusTask : IWorkflowTask
             "rebus-defer-local" or "rebusdeferlocal" => "deferLocal",
             "rebus-subscribe" or "rebussubscribe" => "subscribe",
             "rebus-unsubscribe" or "rebusunsubscribe" => "unsubscribe",
-            _ => "publish"
-        };
-    }
-
-    private static string DetermineAction(WorkflowTaskContext context)
-    {
-        var configuredAction = context.RenderText("action") ?? context.RenderText("op");
-        if (!string.IsNullOrWhiteSpace(configuredAction))
-        {
-            return configuredAction;
-        }
-
-        var taskName = context.Task.Task.ToLowerInvariant();
-        return taskName switch
-        {
-            "rebus-send" or "rebussend" => "send",
-            "rebus-send-local" or "rebussendlocal" => "sendLocal",
-            "rebus-defer" or "rebusdefer" => "defer",
-            "rebus-defer-local" or "rebusdeferlocal" => "deferLocal",
-            "rebus-subscribe" or "rebussubscribe" => "subscribe",
-            "rebus-unsubscribe" or "rebusunsubscribe" => "unsubscribe",
-            _ => "publish"
+            _ => "publish",
         };
     }
 

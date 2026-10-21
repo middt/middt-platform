@@ -2,13 +2,16 @@ using System.Text.Json.Nodes;
 
 namespace Middt.Framework.Workflow.Expressions;
 
-/// <summary>Values available to expressions: <c>data</c>, <c>input</c>, <c>result</c>, <c>child</c>, <c>user</c>, <c>instance</c>, <c>now</c>.</summary>
+/// <summary>Values available to expressions: <c>data</c>, <c>input</c>, <c>args</c>, <c>result</c>, <c>child</c>, <c>user</c>, <c>instance</c>, <c>now</c>.</summary>
 public sealed class ExpressionScope
 {
     public JsonObject Data { get; init; } = [];
 
     /// <summary>Request body of the current transition.</summary>
     public JsonObject? Input { get; init; }
+
+    /// <summary>Arguments passed when a workflow task or expression is invoked as an AI Agent tool (defaults to <see cref="Input"/>).</summary>
+    public JsonObject? Args { get; init; }
 
     /// <summary>Response of the task being mapped (e.g. HTTP response body).</summary>
     public JsonNode? Result { get; init; }

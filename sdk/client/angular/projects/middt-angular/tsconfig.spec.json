@@ -8,8 +8,7 @@
     "paths": {
       "@middt/angular/core": ["./core/src/public-api.ts"],
       "@middt/angular/ui": ["./ui/src/public-api.ts"],
-      "@middt/angular/workflow": ["./workflow/src/public-api.ts"],
-      "@middt/angular/signalr": ["./signalr/src/public-api.ts"]
+      "@middt/angular/workflow": ["./workflow/src/public-api.ts"]
     }
   },
   "include": ["src/**/*.d.ts", "src/**/*.spec.ts"]

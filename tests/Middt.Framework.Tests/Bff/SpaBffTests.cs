@@ -96,7 +96,6 @@ public sealed class SpaBffTests(SpaBffHostFixture fixture) : IClassFixture<SpaBf
 
     [Theory]
     [InlineData("/api/items")]
-    [InlineData("/hubs/notifications/negotiate")]
     public async Task Anonymous_api_call_gets_401_not_a_login_redirect(string path)
     {
         var browser = Host.CreateBrowser();
@@ -368,7 +367,7 @@ public sealed class SpaBffTests(SpaBffHostFixture fixture) : IClassFixture<SpaBf
             }
         };
 
-        var connect = () => client.ConnectAsync(new Uri("ws://localhost/hubs/notifications"), Ct);
+        var connect = () => client.ConnectAsync(new Uri("ws://localhost/api/notifications"), Ct);
 
         (await connect.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("403");
         ForwardedCount(Host).Should().Be(before);
@@ -390,11 +389,11 @@ public sealed class SpaBffTests(SpaBffHostFixture fixture) : IClassFixture<SpaBf
             request.Headers.Origin = "http://localhost";
         };
 
-        var connect = () => client.ConnectAsync(new Uri("ws://localhost/hubs/notifications?id=1"), Ct);
+        var connect = () => client.ConnectAsync(new Uri("ws://localhost/api/notifications?id=1"), Ct);
 
         (await connect.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().NotContain("403");
         var forwarded = host.Api.Requests.Should().ContainSingle().Subject;
-        forwarded.Uri.Should().Be("/hubs/notifications?id=1");
+        forwarded.Uri.Should().Be("/api/notifications?id=1");
         forwarded.Bearer.Should().Be(accessToken);
         host.Api.Headers.Single().Should().NotContainKey("Cookie");
     }

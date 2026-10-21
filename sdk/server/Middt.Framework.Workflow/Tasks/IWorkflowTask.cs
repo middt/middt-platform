@@ -54,10 +54,10 @@ public sealed class WorkflowTaskContext
     public string? BusinessKey { get; init; }
 
     /// <summary>Sets the instance's business key (wired by the engine, see the <c>setKey</c> task).</summary>
-    internal Func<string, CancellationToken, Task>? SetBusinessKey { get; init; }
+    public Func<string, CancellationToken, Task>? SetBusinessKey { get; init; }
 
     /// <summary>Starts another workflow (wired by the engine).</summary>
-    internal Func<string, JsonObject, string?, CancellationToken, Task<Guid>>? StartWorkflow { get; init; }
+    public Func<string, JsonObject, string?, CancellationToken, Task<Guid>>? StartWorkflow { get; init; }
 }
 
 /// <summary>Publishes workflow messages (<c>publish</c> task); register an implementation, e.g. on Rebus.</summary>

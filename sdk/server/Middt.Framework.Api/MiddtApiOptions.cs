@@ -25,9 +25,6 @@ public sealed class MiddtApiOptions
 
     public string StaticFilesRequestPath { get; set; } = "/Files";
 
-    /// <summary>Requests under this path may pass the JWT as <c>access_token</c> query parameter (SignalR WebSockets).</summary>
-    public string HubPathPrefix { get; set; } = "/hubs";
-
     /// <summary>
     /// Brotli/Gzip compression (fastest level) of JSON and text responses, also over HTTPS. Turn off when a reverse proxy
     /// compresses already.

@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.DataProtection;
 using Middt.Framework.Bff.DependencyInjection;
 
-// Backend-for-frontend of the Angular demo (../app): serves the SPA, the login/logout pages
-// and proxies /api and /hubs to Middt.Demo.Api with the session's token – the browser never sees a token.
+// Backend-for-frontend of the Angular demo (../angular-app): serves the SPA, the login/logout pages
+// and proxies /api to Middt.Demo.Api with the session's token – the browser never sees a token.
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, WebRootPath = SpaWebRoot() });
 
 builder.AddServiceDefaults();

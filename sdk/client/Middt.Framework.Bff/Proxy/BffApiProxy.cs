@@ -11,7 +11,7 @@ using Yarp.ReverseProxy.Transforms;
 namespace Middt.Framework.Bff.Proxy;
 
 /// <summary>
-/// Forwards <c>/api/**</c> and <c>/hubs/**</c> (SignalR incl. WebSockets) to the API with the session's access token
+/// Forwards <c>/api/**</c> to the API with the session's access token
 /// (YARP). Browser cookies are not forwarded. CSRF: API calls must carry the <see cref="CsrfHeader"/> header (a cross-site
 /// page cannot add it without a CORS preflight); WebSocket upgrades must come from the same origin. Paths matching
 /// <see cref="MiddtBffOptions.ProxyDeniedPaths"/> (default: the token endpoints) are answered with 404 and never forwarded.
@@ -34,7 +34,7 @@ public static class BffApiProxy
 
         services.AddReverseProxy()
             .LoadFromMemory(
-                [Route("middt-api", "/api/{**catch-all}"), Route("middt-hubs", "/hubs/{**catch-all}")],
+                [Route("middt-api", "/api/{**catch-all}")],
                 [new ClusterConfig
                 {
                     ClusterId = ClusterId,

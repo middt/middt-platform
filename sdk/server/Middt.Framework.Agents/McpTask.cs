@@ -78,6 +78,7 @@ public sealed class McpTask : IWorkflowTask
 
         foreach (var error in expressions.ValidateTemplate(config["server"])
                      .Concat(expressions.ValidateTemplate(config["action"]))
+                     .Concat(expressions.ValidateTemplate(config["op"]))
                      .Concat(expressions.ValidateTemplate(config["tool"]))
                      .Concat(expressions.ValidateTemplate(config["name"]))
                      .Concat(expressions.ValidateTemplate(config["uri"]))
@@ -92,6 +93,7 @@ public sealed class McpTask : IWorkflowTask
 
     public async Task ExecuteAsync(WorkflowTaskContext context, CancellationToken cancellationToken)
     {
+        using var _ = WorkflowTaskAmbientContext.Enter(context);
         var mcpClient = context.Services.GetService<IMiddtMcpClient>()
             ?? throw new WorkflowTaskException("mcp task requires IMiddtMcpClient (call services.AddMiddtAgents(...)).");
 
@@ -161,31 +163,20 @@ public sealed class McpTask : IWorkflowTask
         }
     }
 
-    private static string DetermineAction(TaskDefinition task)
+    private static string DetermineAction(TaskDefinition task) =>
+        ResolveActionName(task.Config["action"]?.GetValue<string>() ?? task.Config["op"]?.GetValue<string>(), task.Task);
+
+    private static string DetermineAction(WorkflowTaskContext context) =>
+        ResolveActionName(context.RenderText("action") ?? context.RenderText("op"), context.Task.Task);
+
+    private static string ResolveActionName(string? configured, string taskName)
     {
-        var configured = task.Config["action"]?.GetValue<string>() ?? task.Config["op"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(configured))
         {
             return configured.Trim().ToLowerInvariant();
         }
 
-        return task.Task.ToLowerInvariant() switch
-        {
-            "mcp-resource" or "mcpresource" => "readresource",
-            "mcp-prompt" or "mcpprompt" => "getprompt",
-            _ => "calltool",
-        };
-    }
-
-    private static string DetermineAction(WorkflowTaskContext context)
-    {
-        var configured = context.RenderText("action") ?? context.RenderText("op");
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return configured.Trim().ToLowerInvariant();
-        }
-
-        return context.Task.Task.ToLowerInvariant() switch
+        return taskName.ToLowerInvariant() switch
         {
             "mcp-resource" or "mcpresource" => "readresource",
             "mcp-prompt" or "mcpprompt" => "getprompt",

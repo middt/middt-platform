@@ -279,6 +279,33 @@
       "step": 2,
       "transitions": [
         {
+          "key": "run-multi-agent-committee",
+          "title": "AI Fraud Komitesi (Multi-Agent)",
+          "target": "$self",
+          "style": "primary",
+          "icon": "groups",
+          "onExecute": [
+            {
+              "task": "agent",
+              "config": {
+                "mode": "sequential",
+                "agents": [ "dispute-orchestrator", "dispute-specialist-copilot" ],
+                "prompt": "Fraud şüphesi taşıyan {{ data.disputeNo }} numaralı ({{ data.amount }} ₺ - {{ data.category }}) işlemi sıralı çoklu ajan (Orchestrator + Specialist Copilot) komitesi olarak değerlendir.",
+                "context": {
+                  "disputeNo": "{{ data.disputeNo }}",
+                  "customerName": "{{ data.customerName }}",
+                  "merchantName": "{{ data.merchantName }}",
+                  "transactionRef": "{{ data.transactionRef }}",
+                  "amount": "{{ data.amount }}",
+                  "category": "{{ data.category }}"
+                },
+                "into": "committeeReview",
+                "metaInto": "committeeMeta"
+              }
+            }
+          ]
+        },
+        {
           "key": "confirm-fraud-refund",
           "title": "Fraud Doğrulandı & İade Et",
           "target": "resolved-refunded",

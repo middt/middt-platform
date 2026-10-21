@@ -75,7 +75,7 @@ public sealed class HttpTask : IWorkflowTask
         var method = new HttpMethod(config["method"]?.GetValue<string>()?.ToUpperInvariant() ?? "GET");
         var clientName = config["client"]?.GetValue<string>() ?? DefaultClientName;
         var client = context.Services.GetRequiredService<IHttpClientFactory>().CreateClient(clientName);
-        var wfOptions = context.Services.GetRequiredService<IOptions<MiddtWorkflowOptions>>().Value;
+        var wfOptions = context.Services.GetService<IOptions<MiddtWorkflowOptions>>()?.Value ?? new MiddtWorkflowOptions();
         var baseUri = RenderUrl(config["url"]!.GetValue<string>(), context, client.BaseAddress ?? wfOptions.DefaultHttpBaseUrl);
 
         var allowedHosts = wfOptions.AllowedHttpHosts;
@@ -272,12 +272,12 @@ public sealed class HttpTask : IWorkflowTask
         return new Uri(sb.ToString(), UriKind.Absolute);
     }
 
-    private static readonly Uri DefaultLocalBaseUri = new("http://127.0.0.1:8080");
+    private static readonly Uri DefaultLocalBaseUri = new("http://127.0.0.1:8180");
 
     private static Uri RenderUrl(string template, WorkflowTaskContext context, Uri? baseAddress)
     {
         // Each placeholder value is escaped: data cannot inject path segments, query parameters or a different host.
-        var rendered = System.Text.RegularExpressions.Regex.Replace(template, @"\{\{\s*(.+?)\s*\}\}", m =>
+        var rendered = ExpressionEvaluator.PlaceholderRegex().Replace(template, m =>
             Uri.EscapeDataString(Convert.ToString(context.Expressions.Evaluate(m.Groups[1].Value, context.Scope), CultureInfo.InvariantCulture) ?? string.Empty));
         return rendered.StartsWith('/')
             ? new Uri(baseAddress ?? DefaultLocalBaseUri, rendered)

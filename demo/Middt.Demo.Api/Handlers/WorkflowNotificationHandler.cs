@@ -1,12 +1,12 @@
-using Middt.Demo.Api.Messages;
+using Middt.Framework.Rebus;
 using Rebus.Handlers;
 
 namespace Middt.Demo.Api.Handlers;
 
 /// <summary>Demo subscriber for messages published by workflows.</summary>
-public sealed partial class WorkflowNotificationHandler(ILogger<WorkflowNotificationHandler> logger) : IHandleMessages<WorkflowNotification>
+public sealed partial class WorkflowNotificationHandler(ILogger<WorkflowNotificationHandler> logger) : IHandleMessages<RebusWorkflowMessage>
 {
-    public Task Handle(WorkflowNotification message)
+    public Task Handle(RebusWorkflowMessage message)
     {
         LogNotification(logger, message.Type, message.Payload);
         return Task.CompletedTask;

@@ -21,12 +21,21 @@ public sealed class UiLookupCacheTests
         Options.Create(new ApiSettings { URL = "http://localhost", Version = "1" }), NullLogger<UiDataClient>.Instance)
     {
         public List<(string Entity, CancellationToken Token, TaskCompletionSource<BaseResponseDataModel<List<JsonObject>>> Response)> Calls { get; } = [];
+        public List<(string Entity, string Id, CancellationToken Token, TaskCompletionSource<BaseResponseDataModel<JsonObject>> Response)> ItemCalls { get; } = [];
 
         public override Task<BaseResponseDataModel<List<JsonObject>>> GetAllAsync(string entity, CancellationToken cancellationToken = default)
         {
             var response = new TaskCompletionSource<BaseResponseDataModel<List<JsonObject>>>(TaskCreationOptions.RunContinuationsAsynchronously);
             cancellationToken.Register(() => response.TrySetCanceled(cancellationToken));
             Calls.Add((entity, cancellationToken, response));
+            return response.Task;
+        }
+
+        public override Task<BaseResponseDataModel<JsonObject>> GetByIdAsync(string entity, string id, CancellationToken cancellationToken = default)
+        {
+            var response = new TaskCompletionSource<BaseResponseDataModel<JsonObject>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.Register(() => response.TrySetCanceled(cancellationToken));
+            ItemCalls.Add((entity, id, cancellationToken, response));
             return response.Task;
         }
     }
@@ -121,5 +130,28 @@ public sealed class UiLookupCacheTests
         cache.Dispose();
 
         await FluentActions.Awaiting(() => pending).Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetById_shares_cached_items_and_evicts_failed_loads()
+    {
+        var client = new ControlledDataClient();
+        var time = new FakeTimeProvider();
+        using var cache = new UiLookupCache(client, time);
+
+        var failing = cache.GetByIdAsync("Customer", "C-1", Ct);
+        client.ItemCalls[0].Response.SetResult(BaseResponseDataModel<JsonObject>.Failure("boom"));
+        await FluentActions.Awaiting(() => failing).Should().ThrowAsync<InvalidOperationException>();
+
+        var retry = cache.GetByIdAsync("Customer", "C-1", Ct);
+        client.ItemCalls.Should().HaveCount(2);
+        client.ItemCalls[1].Response.SetResult(BaseResponseDataModel<JsonObject>.Success(new JsonObject { ["fullName"] = "Ada" }));
+        var item = await retry;
+        item!["fullName"]!.GetValue<string>().Should().Be("Ada");
+
+        // Cached within the 1-minute TTL
+        time.Advance(TimeSpan.FromSeconds(30));
+        (await cache.GetByIdAsync("Customer", "C-1", Ct))!["fullName"]!.GetValue<string>().Should().Be("Ada");
+        client.ItemCalls.Should().HaveCount(2);
     }
 }

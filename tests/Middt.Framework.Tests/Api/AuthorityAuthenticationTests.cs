@@ -150,12 +150,12 @@ public sealed class AuthorityAuthenticationTests(AuthorityApiFixture fixture) : 
     }
 
     [Fact]
-    public async Task Query_string_token_is_ignored_outside_the_hub_path()
+    public async Task Query_string_token_is_ignored()
     {
         var token = fixture.Provider.CreateAccessToken();
 
         using var response = await fixture.Host.Client.GetAsync($"api/v1/caller?access_token={token}", Ct);
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "query tokens are only accepted under HubPathPrefix");
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "query string tokens are not accepted");
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public sealed class AuthorityModeOptionsTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
-    public async Task Options_override_configuration_and_hub_query_tokens_work()
+    public async Task Options_override_configuration()
     {
         await using var provider = await FakeOidcProvider.StartAsync();
         await using var host = await TestApiHost.StartAsync(
@@ -181,7 +181,6 @@ public sealed class AuthorityModeOptionsTests
             {
                 o.Authority = FakeOidcProvider.Issuer;
                 o.Audience = "custom-api";
-                o.HubPathPrefix = "/api/v1/caller";
             },
             configureBuilder: builder => builder.Services
                 .AddHttpClient(MiddtApiExtensions.AuthorityBackchannelClientName)
@@ -190,8 +189,8 @@ public sealed class AuthorityModeOptionsTests
         using var wrongAudience = TestApiHost.Authorized(HttpMethod.Get, "api/v1/caller", provider.CreateAccessToken());
         (await host.Client.SendAsync(wrongAudience, Ct)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 
-        // HubPathPrefix points at the caller endpoint here: the token may come from the access_token query parameter.
-        using var response = await host.Client.GetAsync($"api/v1/caller?access_token={provider.CreateAccessToken(audience: "custom-api")}", Ct);
+        using var validAudience = TestApiHost.Authorized(HttpMethod.Get, "api/v1/caller", provider.CreateAccessToken(audience: "custom-api"));
+        using var response = await host.Client.SendAsync(validAudience, Ct);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         provider.Hosts.Should().Contain("idp.test", "without a backchannel authority the public authority is called");
     }

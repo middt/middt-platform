@@ -246,21 +246,6 @@ public static class MiddtApiExtensions
         services.TryAddSingleton<IRefreshTokenStore, DistributedCacheRefreshTokenStore>();
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
-        var events = new JwtBearerEvents
-        {
-            // WebSockets cannot send headers: SignalR passes the token in the query string.
-            OnMessageReceived = context =>
-            {
-                var accessToken = context.Request.Query["access_token"];
-                if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments(options.HubPathPrefix))
-                {
-                    context.Token = accessToken;
-                }
-
-                return Task.CompletedTask;
-            },
-        };
-
         if (authority is null)
         {
             services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
@@ -268,12 +253,11 @@ public static class MiddtApiExtensions
                 {
                     bearer.MapInboundClaims = false;
                     bearer.TokenValidationParameters = JwtTokenGenerator.CreateValidationParameters(jwt.Value);
-                    bearer.Events = events;
                 });
         }
         else
         {
-            AddAuthorityAuthentication(services, section, options, environment, authority, events);
+            AddAuthorityAuthentication(services, section, options, environment, authority);
         }
 
         services.AddAuthorization();
@@ -289,8 +273,7 @@ public static class MiddtApiExtensions
         IConfigurationSection section,
         MiddtApiOptions options,
         IHostEnvironment environment,
-        string authority,
-        JwtBearerEvents events)
+        string authority)
     {
         if (!Uri.TryCreate(authority, UriKind.Absolute, out _))
         {
@@ -305,7 +288,9 @@ public static class MiddtApiExtensions
         services.AddHttpClient(AuthorityBackchannelClientName, client => client.Timeout = TimeSpan.FromSeconds(60))
             .AddHttpMessageHandler(() => new BackchannelRewriteHandler(authority, backchannelAuthority));
 
-        events.OnTokenValidated = context =>
+        var events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
         {
             if (context.Principal?.Identity is System.Security.Claims.ClaimsIdentity identity)
             {
@@ -313,6 +298,7 @@ public static class MiddtApiExtensions
             }
 
             return Task.CompletedTask;
+            },
         };
 
         var issuer = authority.TrimEnd('/');

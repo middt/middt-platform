@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <Product>Middt Framework Blazor</Product>
-    <Description>Blazor Server frontend for Middt applications: BFF cookie authentication (Middt.Framework.Bff), workflow screens, SignalR, and the Blazor renderer and runtime editor of JSON layouts (Ui/).</Description>
+    <Description>Blazor Server frontend for Middt applications: BFF cookie authentication (Middt.Framework.Bff), workflow screens, and the Blazor renderer and runtime editor of JSON layouts (Ui/).</Description>
     <IsPackable>true</IsPackable>
   </PropertyGroup>
 

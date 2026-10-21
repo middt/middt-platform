@@ -32,7 +32,12 @@ public static class UiServiceCollectionExtensions
         }
 
         services.Configure(configure);
-        services.AddDbContext<UiDbContext>(options.ConfigureDbContext);
+        var configureDb = options.ConfigureDbContext;
+        services.AddDbContext<UiDbContext>(db =>
+        {
+            configureDb(db);
+            db.ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, UiModelCacheKeyFactory>();
+        });
         services.AddMemoryCache();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton(sp => sp.GetRequiredService<IOptions<MiddtUiOptions>>().Value.Widgets);

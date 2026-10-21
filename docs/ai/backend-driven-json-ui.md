@@ -12,10 +12,10 @@ Both **Blazor Server** and **Angular** render these JSON definitions identically
 |---|---|---|
 | **Left Navigation Menu** (Workflows) | `Workflows/*.json` (`key`, `title`, `icon`) via `GET /api/workflows` | `MenuService` / `MenuService` |
 | **Left Navigation Menu** (UI Pages) | `Layouts/*.json` (`kind: "page"`, `key`, `title`, `menu`) via `GET /api/ui/layouts` | `MenuService` / `MenuService` |
-| **Workflow Instance List Table** (`/workflow/{key}`) | `Workflows/*.json` (`dataSchema.properties`, `x-list`, `x-mask`) | `WorkflowInstanceList` / `MiddtWorkflowListComponent` |
-| **Workflow Start & Action Forms** | `Workflows/*.json` (`transitions[].input.schema`, `x-lookup`, `x-mask`) | `JsonSchemaForm` / `MiddtSchemaFormComponent` |
-| **Workflow State Detail Screen** (`/workflow/{key}/{id}`) | `Workflows/*.json` (`states[].view.layout`) $\rightarrow$ `Layouts/*.json` (`kind: "view"`) | `WorkflowInstanceDetail` + `UiLayoutHost` / `MiddtWorkflowDetailComponent` + `MiddtLayoutHostComponent` |
-| **Reusable Nested Widgets** | `Layouts/*.json` (`kind: "view"`) embedded via `{ "widget": "layout", "key": "...", "data": "..." }` | `UiLayoutWidget` / `UiLayoutWidget` |
+| **Workflow Instance List Table** (`/workflow/{key}`) | `Workflows/*.json` (`dataSchema.properties`, `x-list`, `x-mask`, `x-search`) | `WorkflowInstanceList` / `WorkflowInstanceListComponent` |
+| **Workflow Start & Action Forms** | `Workflows/*.json` (`transitions[].input.schema`, `x-lookup`, `x-enumFrom`) | `JsonSchemaForm` / `JsonSchemaFormComponent` |
+| **Workflow State Detail Screen** (`/workflow/{key}/{id}`) | `Workflows/*.json` (`states[].view.layout`) $\rightarrow$ `Layouts/*.json` (`kind: "view"`) | `WorkflowInstanceDetail` + `UiLayoutHost` / `WorkflowInstanceDetailComponent` + `MiddtLayoutHostComponent` |
+| **Reusable Nested Widgets** | `Layouts/*.json` (`kind: "view"`) embedded via `{ "widget": "layout", "key": "...", "data": "..." }` | `UiLayoutWidget` / `UiLayoutWidgetComponent` |
 | **Directory / CRUD / Overview Pages** (`/ui/{key}`) | `Layouts/*.json` (`kind: "page"`) | `UiPageHost` / `MiddtLayoutPageComponent` |
 
 > **Rule**: Never create hardcoded `.razor` or Angular `.ts` view components for business workflows or screens unless you are building a brand-new SDK primitive widget (`sdk/client/...`). All domain screens belong in `Layouts/*.json` and `Workflows/*.json`.
@@ -195,4 +195,4 @@ Whenever you add or modify a JSON layout or workflow seed in `demo/Middt.Demo.Ap
    ```bash
    dotnet test --project tests/Middt.Framework.Tests -- --filter-class "*UiSampleLayoutTests" --filter-class "*WorkflowDefinitionTests"
    ```
-2. Remember that `LayoutSeedHostedService` **only overwrites existing DB records when `version` is incremented** (`existing.Version < incoming.Version`). Bump `"version"` in your JSON file when updating an existing layout so running environments pick up the change automatically on restart.
+2. Remember that `UiStartup` **only overwrites existing DB records when `version` is incremented** (`existing.Version < incoming.Version`). Bump `"version"` in your JSON file when updating an existing layout so running environments pick up the change automatically on restart.

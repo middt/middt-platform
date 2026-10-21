@@ -1,0 +1,27 @@
+{
+  "name": "audit_invoice_payments",
+  "kind": "task",
+  "task": "set",
+  "writeToWorkflowData": true,
+  "description": "Fatura toplam tutarı, tahsil edilen tutar ve kalan bakiyeyi workflow 'set' task'ı üzerinden analiz ederek risk seviyesini ve skorunu hesaplar.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "invoiceNo": { "type": "string" },
+      "customerName": { "type": "string" },
+      "total": { "type": "number" },
+      "paidAmount": { "type": "number" },
+      "remainingAmount": { "type": "number" }
+    }
+  },
+  "into": "invoiceAudit",
+  "config": {
+    "values": {
+      "invoiceAudit.riskLevel": "instance.state == \"overdue\" || args.total > 250000 ? \"Yüksek\" : (args.total > 100000 ? \"Orta\" : \"Düşük\")",
+      "invoiceAudit.score": "instance.state == \"overdue\" || args.total > 250000 ? 38 : (args.total > 100000 ? 74 : 92)",
+      "invoiceAudit.summary": "instance.state == \"overdue\" || args.total > 250000 ? \"Vadesi geçmiş veya yüksek tutarlı fatura; tahsilat riski yüksek.\" : (args.total > 100000 ? \"Orta ölçekli bakiye vade takibinde.\" : \"Tahsilat ve ödeme geçmişi Microsoft Agent Framework ve workflow set task ile denetlendi; risk düşük.\")",
+      "invoiceAudit.recommendation": "instance.state == \"overdue\" || args.total > 250000 ? \"Müşteri ile acil mutabakat ve ödeme planı görüşmesi başlatılmalı.\" : \"Standart tahsilat akışına devam edilebilir.\"",
+      "lastAuditedWorkflow": "instance.workflow"
+    }
+  }
+}

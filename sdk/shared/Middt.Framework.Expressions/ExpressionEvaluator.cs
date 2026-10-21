@@ -175,7 +175,8 @@ public sealed partial class ExpressionEvaluator
         return JsonValue.Create(sb.ToString());
     }
 
-    private static IEnumerable<string> Placeholders(JsonNode? template) => template switch
+    /// <summary>Extracts every <c>{{ expression }}</c> placeholder from a JSON node tree.</summary>
+    public static IEnumerable<string> Placeholders(JsonNode? template) => template switch
     {
         JsonObject obj => obj.SelectMany(p => Placeholders(p.Value)),
         JsonArray array => array.SelectMany(Placeholders),
@@ -199,5 +200,6 @@ public sealed partial class ExpressionEvaluator
     }
 
     [GeneratedRegex(@"\{\{\s*(.+?)\s*\}\}", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
-    private static partial Regex PlaceholderRegex();
+    /// <summary>Matches <c>{{ expression }}</c> placeholders.</summary>
+    public static partial Regex PlaceholderRegex();
 }

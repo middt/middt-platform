@@ -1,7 +1,8 @@
 {
   "name": "calculate_reimbursement",
-  "kind": "expression",
-  "description": "İade tutarı, masraf iadesi ve uygulanacak politika kodunu hesaplar.",
+  "kind": "task",
+  "task": "set",
+  "description": "İade tutarı, masraf iadesi ve uygulanacak politika kodunu workflow 'set' task'ı üzerinden hesaplar.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -9,10 +10,13 @@
       "category": { "type": "string" }
     }
   },
-  "output": {
-    "approvedRefundAmount": "{{ args.amount }}",
-    "feeReversal": "{{ args.amount <= 5000 ? 0 : 150 }}",
-    "totalCredit": "{{ args.amount + (args.amount <= 5000 ? 0 : 150) }}",
-    "policyCode": "{{ args.amount <= 5000 ? \"CB-FAST-2026\" : \"CB-STD-2026\" }}"
+  "into": "reimbursement",
+  "config": {
+    "values": {
+      "reimbursement.approvedRefundAmount": "args.amount",
+      "reimbursement.feeReversal": "args.amount <= 5000 ? 0 : 150",
+      "reimbursement.totalCredit": "args.amount + (args.amount <= 5000 ? 0 : 150)",
+      "reimbursement.policyCode": "args.amount <= 5000 ? \"CB-FAST-2026\" : \"CB-STD-2026\""
+    }
   }
 }

@@ -166,7 +166,7 @@ When adding or altering a workflow:
 2. Ensure properties intended for filtering or sorting are declared with `"type"` in `dataSchema.properties`.
 3. Run tests:
    ```bash
-   dotnet test --project tests/Middt.Framework.Tests --filter-class "*Workflow*"
+   dotnet test --project tests/Middt.Framework.Tests -- --filter-class "*Workflow*"
    ```
 4. Verify that CI build passes with 0 warnings:
    ```bash

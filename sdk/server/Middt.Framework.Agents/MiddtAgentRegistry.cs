@@ -45,11 +45,6 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         _mcpClient = mcpClient;
         _loggerFactory = loggerFactory;
 
-        foreach (var tool in MiddtWorkflowAgentTools.CreateDefaultTools(services))
-        {
-            _tools[tool.Name] = tool;
-        }
-
         foreach (var (key, declTool) in _settings.Tools)
         {
             if (string.IsNullOrWhiteSpace(declTool.Name))
@@ -120,8 +115,35 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
 
     public IReadOnlyCollection<AgentDefinition> GetAllDefinitions() => _definitions.Values;
 
-    public AITool? GetTool(string name) =>
-        !string.IsNullOrWhiteSpace(name) && _tools.TryGetValue(name, out var tool) ? tool : null;
+    public AITool? GetTool(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        if (_tools.TryGetValue(name, out var tool))
+        {
+            return tool;
+        }
+
+        var taskName = name.StartsWith("task:", StringComparison.OrdinalIgnoreCase) ? name[5..] : name;
+        if (!string.IsNullOrWhiteSpace(taskName) && MiddtMcpClient.ResolveTaskRegistry(_services).Find(taskName) is not null)
+        {
+            return new DeclarativeAiFunction(
+                new AgentToolDefinition
+                {
+                    Name = name,
+                    Kind = "task",
+                    Task = taskName,
+                    Description = $"Executes the '{taskName}' workflow task.",
+                },
+                _services,
+                _mcpClient);
+        }
+
+        return null;
+    }
 
     public IReadOnlyCollection<AITool> GetAllTools() => _tools.Values;
 
@@ -167,8 +189,8 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
     {
         ArgumentNullException.ThrowIfNull(definition);
 
-        var agentName = string.IsNullOrWhiteSpace(definition.Name) ? "middt-agent" : definition.Name;
-        var modelId = ResolveEffectiveModelId(definition.ModelId);
+        var agentName = string.IsNullOrWhiteSpace(definition.Name) ? "agent" : definition.Name;
+        var modelId = !string.IsNullOrWhiteSpace(definition.ModelId) ? definition.ModelId : _settings.ModelId;
         var chatClient = BuildChatClient(modelId);
 
         var resolvedTools = new List<AITool>();
@@ -213,9 +235,9 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
 
         if (definition.OutputSchema is { } schemaNode)
         {
-            if (IsDeepSeekExternalActive(modelId))
+            if (!_settings.UseJsonSchemaResponseFormat && HasExternalProviderConfigured())
             {
-                var schemaHint = $"\n\nIMPORTANT: Respond ONLY with a valid json object matching this JSON Schema (no markdown code fences):\n{schemaNode.ToJsonString()}";
+                var schemaHint = $"\n\nRespond ONLY with a valid json object matching this JSON Schema (no markdown code fences):\n{schemaNode.ToJsonString()}";
                 chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions)
                     ? schemaHint.TrimStart()
                     : chatOptions.Instructions + schemaHint;
@@ -231,14 +253,25 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
             }
         }
 
-        var agentOptions = new ChatClientAgentOptions
+        if (definition.AllowedTransitions.Count > 0)
         {
-            Name = agentName,
-            Description = definition.Description,
-            ChatOptions = chatOptions,
-        };
+            var transitionHint = $"\nAllowed workflow transitions for routing: [{string.Join(", ", definition.AllowedTransitions)}].";
+            chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions)
+                ? transitionHint.TrimStart()
+                : chatOptions.Instructions + transitionHint;
+        }
 
-        return new ChatClientAgent(chatClient, agentOptions, _loggerFactory, _services);
+        return new ChatClientAgent(
+            chatClient,
+            new ChatClientAgentOptions
+            {
+                Id = agentName,
+                Name = agentName,
+                Description = definition.Description,
+                ChatOptions = chatOptions,
+            },
+            _loggerFactory,
+            _services);
     }
 
     public AIAgent CreateWorkflowAgent(string mode, IReadOnlyList<AIAgent> agents, string? workflowName = null)
@@ -249,7 +282,7 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
             throw new ArgumentException("At least one AIAgent is required to build an agent workflow.", nameof(agents));
         }
 
-        var name = string.IsNullOrWhiteSpace(workflowName) ? $"middt-{mode}-workflow" : workflowName;
+        var name = string.IsNullOrWhiteSpace(workflowName) ? $"{mode}-workflow" : workflowName;
         var normalizedMode = (mode ?? "sequential").Trim().ToLowerInvariant();
 
         Microsoft.Agents.AI.Workflows.Workflow workflow = normalizedMode switch
@@ -319,77 +352,23 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         return builder.Build(_services);
     }
 
-    private string ResolveEffectiveModelId(string? definitionModelId)
-    {
-        if (!string.IsNullOrWhiteSpace(definitionModelId))
-        {
-            return definitionModelId;
-        }
-
-        var configured = _settings.ModelId;
-        if (IsDeepSeekProvider(configured) && (string.IsNullOrWhiteSpace(configured) || string.Equals(configured, "gpt-4o-mini", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "deepseek-chat";
-        }
-
-        return string.IsNullOrWhiteSpace(configured) ? "gpt-4o-mini" : configured;
-    }
-
-    private bool IsDeepSeekProvider(string? modelId = null)
-    {
-        var provider = (_settings.Provider ?? string.Empty).Trim();
-        return string.Equals(provider, "DeepSeek", StringComparison.OrdinalIgnoreCase)
-               || (_settings.Endpoint?.Contains("deepseek", StringComparison.OrdinalIgnoreCase) == true)
-               || (modelId?.StartsWith("deepseek", StringComparison.OrdinalIgnoreCase) == true);
-    }
-
-    private string? ResolveApiKey(bool isDeepSeek)
-    {
-        if (!string.IsNullOrWhiteSpace(_settings.ApiKey))
-        {
-            return _settings.ApiKey;
-        }
-
-        return isDeepSeek
-            ? (Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY") ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY"))
-            : (Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"));
-    }
-
-    private string? ResolveEndpoint(bool isDeepSeek)
-    {
-        if (!string.IsNullOrWhiteSpace(_settings.Endpoint))
-        {
-            return _settings.Endpoint;
-        }
-
-        return isDeepSeek ? "https://api.deepseek.com/v1" : null;
-    }
-
-    private bool IsDeepSeekExternalActive(string modelId)
+    private bool HasExternalProviderConfigured()
     {
         if (_options.ChatClientFactory is not null || _services.GetService<IChatClient>() is not null)
         {
             return false;
         }
 
-        var isDeepSeek = IsDeepSeekProvider(modelId);
-        return isDeepSeek && !string.IsNullOrWhiteSpace(ResolveApiKey(isDeepSeek: true));
+        var isOllama = string.Equals(_settings.Provider?.Trim(), "Ollama", StringComparison.OrdinalIgnoreCase);
+        return isOllama
+            ? (!string.IsNullOrWhiteSpace(_settings.Endpoint) || !string.IsNullOrWhiteSpace(_settings.ApiKey))
+            : !string.IsNullOrWhiteSpace(_settings.ApiKey);
     }
 
     private IChatClient CreateProviderChatClient(string modelId)
     {
-        var provider = (_settings.Provider ?? "OpenAI").Trim();
-        var isDeepSeek = IsDeepSeekProvider(modelId);
-        var isOllama = string.Equals(provider, "Ollama", StringComparison.OrdinalIgnoreCase);
-        var isLocalProvider = string.Equals(provider, "Local", StringComparison.OrdinalIgnoreCase);
-
-        var apiKey = ResolveApiKey(isDeepSeek);
-        var endpoint = ResolveEndpoint(isDeepSeek);
-
-        // Ollama only requires an endpoint; OpenAI and DeepSeek require a non-empty API key.
-        var hasExternalConfig = isOllama
-            ? (!string.IsNullOrWhiteSpace(endpoint) || !string.IsNullOrWhiteSpace(apiKey))
-            : !string.IsNullOrWhiteSpace(apiKey);
+        var isLocalProvider = string.Equals(_settings.Provider?.Trim(), "Local", StringComparison.OrdinalIgnoreCase);
+        var hasExternalConfig = HasExternalProviderConfigured();
 
         if (isLocalProvider || (!hasExternalConfig && _settings.UseLocalFallback))
         {
@@ -399,17 +378,17 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         if (!hasExternalConfig)
         {
             throw new InvalidOperationException(
-                "AgentSettings:ApiKey (or DEEPSEEK_API_KEY / OPENAI_API_KEY) is required when UseLocalFallback is false.");
+                "AgentSettings:ApiKey is required when UseLocalFallback is false.");
         }
 
-        var credential = new ApiKeyCredential(string.IsNullOrWhiteSpace(apiKey) ? "ollama-or-compatible" : apiKey);
+        var credential = new ApiKeyCredential(string.IsNullOrWhiteSpace(_settings.ApiKey) ? "local" : _settings.ApiKey);
         OpenAIClient openAiClient;
 
-        if (!string.IsNullOrWhiteSpace(endpoint))
+        if (!string.IsNullOrWhiteSpace(_settings.Endpoint))
         {
             var clientOptions = new OpenAIClientOptions
             {
-                Endpoint = new Uri(endpoint, UriKind.Absolute),
+                Endpoint = new Uri(_settings.Endpoint, UriKind.Absolute),
             };
             openAiClient = new OpenAIClient(credential, clientOptions);
         }

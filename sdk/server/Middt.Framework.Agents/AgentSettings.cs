@@ -8,27 +8,33 @@ public sealed class AgentSettings
     public const string SectionName = "AgentSettings";
 
     /// <summary>
-    /// Underlying AI provider: <c>OpenAI</c>, <c>OpenAICompatible</c>, <c>Ollama</c>, or <c>Local</c>.
-    /// When <see cref="UseLocalFallback"/> is <c>true</c> and neither <see cref="ApiKey"/> nor <see cref="Endpoint"/> is set,
+    /// Underlying AI provider (<c>OpenAI</c>, <c>DeepSeek</c>, <c>Ollama</c>, <c>Local</c>, or any OpenAI-compatible provider).
+    /// When <see cref="UseLocalFallback"/> is <c>true</c> and no external credentials are active,
     /// the deterministic local <c>IChatClient</c> is used automatically.
     /// </summary>
-    public string Provider { get; set; } = "OpenAI";
+    public string Provider { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optional base URI for OpenAI-compatible endpoints (e.g. Azure OpenAI, Ollama <c>http://localhost:11434/v1</c>, vLLM, Foundry).
+    /// Base URI for OpenAI-compatible endpoints (configured via <c>appsettings.json</c> or <c>AgentSettings__Endpoint</c>).
     /// </summary>
     public string? Endpoint { get; set; }
 
     /// <summary>
-    /// API key for the model provider. Falls back to the <c>OPENAI_API_KEY</c> environment variable when not set.
+    /// API key for the model provider (configured via <c>appsettings.Local.json</c> or <c>AgentSettings__ApiKey</c>).
     /// </summary>
     public string? ApiKey { get; set; }
 
     /// <summary>Default model identifier used when an <see cref="AgentDefinition"/> or task does not specify one.</summary>
-    public string ModelId { get; set; } = "gpt-4o-mini";
+    public string ModelId { get; set; } = string.Empty;
 
     /// <summary>
-    /// When <c>true</c> (default), uses the deterministic local <c>IChatClient</c> if no external API key or endpoint is configured,
+    /// When <c>true</c> (default), uses <c>response_format: { type: "json_schema" }</c> for structured output.
+    /// Set to <c>false</c> for OpenAI-compatible providers that require <c>json_object</c> + schema instructions.
+    /// </summary>
+    public bool UseJsonSchemaResponseFormat { get; set; } = true;
+
+    /// <summary>
+    /// When <c>true</c> (default), uses the deterministic local <c>IChatClient</c> if no external API key is configured,
     /// allowing local development, demos, and CI tests to run the full <c>Microsoft.Agents.AI</c> pipeline without external secrets.
     /// </summary>
     public bool UseLocalFallback { get; set; } = true;

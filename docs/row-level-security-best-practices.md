@@ -442,7 +442,7 @@ Form şemasında `x-lookup` kullanıldığında:
   }
 }
 ```
-Önyüz otomatik olarak `/api/staff/getall` çağrısı yapar. `StaffController` üzerindeki `ApplyAccessFilter` zaten kullanıcının şubesini bildiği için dönen liste **doğal olarak sadece o şubenin personellerini** içerir.
+Önyüz otomatik olarak `/api/v1/Staff/getall` çağrısı yapar. `StaffController` üzerindeki `ApplyAccessFilter` zaten kullanıcının şubesini bildiği için dönen liste **doğal olarak sadece o şubenin personellerini** içerir.
 
 ---
 

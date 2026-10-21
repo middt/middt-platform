@@ -1,23 +1,31 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Middt.Framework.Expressions;
+using Middt.Framework.Workflow;
+using Middt.Framework.Workflow.Definitions;
+using Middt.Framework.Workflow.Expressions;
+using Middt.Framework.Workflow.Tasks;
 
 namespace Middt.Framework.Agents;
 
 /// <summary>
-/// Default implementation of <see cref="IMiddtMcpClient"/> supporting both remote HTTP JSON-RPC 2.0 MCP servers
-/// and declarative in-process MCP servers/tools.
+/// Default implementation of <see cref="IMiddtMcpClient"/> supporting remote HTTP JSON-RPC 2.0 MCP servers,
+/// declarative in-process MCP servers/tools, and direct bridging to <see cref="WorkflowTaskRegistry"/> (<see cref="IWorkflowTask"/>).
 /// </summary>
 public sealed class MiddtMcpClient : IMiddtMcpClient
 {
     public const string DefaultHttpClientName = "MiddtMcp";
+    private const string DefaultToolResultSlot = "__toolResult";
+    private static readonly WorkflowExpressionEngine DefaultExpressions = new();
 
-    private static readonly ExpressionEvaluator Evaluator = new(["args", "data", "input"], []);
     private readonly IServiceProvider _services;
     private readonly Dictionary<string, McpServerDefinition> _servers = new(StringComparer.OrdinalIgnoreCase);
 
@@ -166,18 +174,31 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
 
         if (!string.IsNullOrWhiteSpace(server.Endpoint))
         {
-            var rpcResult = await SendJsonRpcAsync(server, "resources/read", new JsonObject { ["uri"] = uri }, cancellationToken);
-            if (rpcResult?["contents"] is JsonArray { Count: > 0 } contents && contents[0] is JsonObject first)
+            var rpcParams = new JsonObject
             {
-                if (first["text"]?.GetValue<string>() is { } text)
+                ["uri"] = uri,
+            };
+
+            try
+            {
+                var rpcResult = await SendJsonRpcAsync(server, "resources/read", rpcParams, cancellationToken);
+                if (rpcResult?["contents"] is JsonArray { Count: > 0 } contents)
                 {
-                    return TryParseJsonOrValue(text);
+                    var first = contents[0];
+                    if (first?["text"]?.GetValue<string>() is { } text)
+                    {
+                        return TryParseJsonOrValue(text);
+                    }
+
+                    return first?.DeepClone();
                 }
 
-                return first.DeepClone();
+                return rpcResult;
             }
-
-            return rpcResult;
+            catch when (localResource is not null)
+            {
+                return RenderWithArgs(localResource.Content, args);
+            }
         }
 
         throw new InvalidOperationException($"Resource '{uri}' was not found on MCP server '{serverName}'.");
@@ -224,9 +245,20 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         CancellationToken cancellationToken)
     {
         args = CoerceArgumentsBySchema(args, tool.Parameters);
+
+        if (!string.IsNullOrWhiteSpace(tool.Task))
+        {
+            return await ExecuteWorkflowTaskToolAsync(tool, tool.Task, args, services, cancellationToken);
+        }
+
         var kind = (tool.Kind ?? "expression").Trim().ToLowerInvariant();
         switch (kind)
         {
+            case "task" or "workflowtask" or "workflow-task":
+                var explicitTask = tool.Task ?? tool.Config?["task"]?.GetValue<string>()
+                    ?? throw new InvalidOperationException($"Declarative task tool '{tool.Name}' requires 'task'.");
+                return await ExecuteWorkflowTaskToolAsync(tool, explicitTask, args, services, cancellationToken);
+
             case "expression":
                 if (tool.Output is not null)
                 {
@@ -235,8 +267,7 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
 
                 if (!string.IsNullOrWhiteSpace(tool.Expression))
                 {
-                    var context = CreateExpressionContext(args);
-                    return Evaluator.EvaluateToNode(tool.Expression, context);
+                    return (WorkflowTaskAmbientContext.Current?.Expressions ?? DefaultExpressions).EvaluateToNode(tool.Expression, CreateExpressionScope(args));
                 }
 
                 return args.DeepClone();
@@ -252,55 +283,297 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
                 return await mcpClient.CallToolAsync(server, targetTool, args, cancellationToken);
 
             default:
+                var registry = ResolveTaskRegistry(services);
+                if (registry.Find(kind) is not null)
+                {
+                    return await ExecuteWorkflowTaskToolAsync(tool, kind, args, services, cancellationToken);
+                }
+
                 throw new InvalidOperationException($"Unsupported declarative tool kind '{tool.Kind}' on tool '{tool.Name}'.");
         }
     }
 
-    private static async Task<JsonNode?> ExecuteHttpToolAsync(
+    internal static async Task<JsonNode?> ExecuteWorkflowTaskToolAsync(
+        AgentToolDefinition tool,
+        string taskName,
+        JsonObject args,
+        IServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        using var scope = services.CreateScope();
+        var scopedServices = scope.ServiceProvider;
+        var taskRegistry = ResolveTaskRegistry(scopedServices);
+        var taskImpl = taskRegistry.Resolve(scopedServices, taskName);
+
+        var config = tool.Config?.DeepClone() as JsonObject ?? [];
+        if (!string.IsNullOrWhiteSpace(tool.Url) && config["url"] is null)
+        {
+            config["url"] = tool.Url;
+        }
+
+        if (!string.IsNullOrWhiteSpace(tool.Method) && config["method"] is null)
+        {
+            config["method"] = tool.Method;
+        }
+
+        if (tool.Headers is not null && config["headers"] is null)
+        {
+            config["headers"] = tool.Headers.DeepClone();
+        }
+
+        if (tool.QueryParams is not null && config["queryParams"] is null)
+        {
+            config["queryParams"] = tool.QueryParams.DeepClone();
+        }
+
+        if (tool.Body is not null && config["body"] is null)
+        {
+            config["body"] = tool.Body.DeepClone();
+        }
+
+        if (taskImpl is SetTask && config["values"] is null && tool.Output is JsonObject outputValues)
+        {
+            config["values"] = outputValues.DeepClone();
+        }
+
+        var explicitInto = !string.IsNullOrWhiteSpace(tool.Into)
+            ? tool.Into
+            : config["into"]?.GetValue<string>();
+        var intoPath = !string.IsNullOrWhiteSpace(explicitInto) ? explicitInto : DefaultToolResultSlot;
+        if (config["into"] is null)
+        {
+            config["into"] = intoPath;
+        }
+
+        var ambient = WorkflowTaskAmbientContext.Current;
+        var workingData = ambient is not null ? (JsonObject)ambient.Data.DeepClone() : [];
+        foreach (var (k, v) in args)
+        {
+            workingData[k] = v?.DeepClone();
+        }
+
+        var preExecutionSnapshot = (JsonObject)workingData.DeepClone();
+
+        var expressionScope = CreateExpressionScope(args, workingData);
+
+        var loggerFactory = scopedServices.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
+        var taskDef = new TaskDefinition
+        {
+            Key = string.IsNullOrWhiteSpace(tool.Name) ? taskName : tool.Name,
+            Task = taskName,
+            Config = config,
+        };
+
+        var taskContext = new WorkflowTaskContext
+        {
+            Task = taskDef,
+            Data = workingData,
+            Scope = expressionScope,
+            Expressions = ambient?.Expressions ?? DefaultExpressions,
+            InstanceId = ambient?.InstanceId ?? Guid.Empty,
+            IdempotencyKey = ambient is not null ? $"{ambient.IdempotencyKey}:tool:{tool.Name}" : $"tool:{tool.Name}:{Guid.CreateVersion7():N}",
+            Workflow = ambient?.Workflow ?? string.Empty,
+            State = ambient?.State ?? string.Empty,
+            Services = scopedServices,
+            Logger = ambient?.Logger ?? loggerFactory.CreateLogger($"Middt.AgentTool.{tool.Name}"),
+            BusinessKey = ambient?.BusinessKey,
+            SetBusinessKey = ambient?.SetBusinessKey,
+            StartWorkflow = ambient?.StartWorkflow,
+        };
+
+        await taskImpl.ExecuteAsync(taskContext, cancellationToken);
+
+        if (tool.WriteToWorkflowData && ambient is not null)
+        {
+            foreach (var (key, value) in workingData)
+            {
+                if (string.Equals(key, DefaultToolResultSlot, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!JsonNode.DeepEquals(value, preExecutionSnapshot[key]))
+                {
+                    ambient.Data[key] = value?.DeepClone();
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(explicitInto) && JsonPath.Get(workingData, explicitInto) is { } explicitNode)
+            {
+                JsonPath.Set(ambient.Data, explicitInto, explicitNode.DeepClone());
+            }
+        }
+
+        var produced = JsonPath.Get(workingData, intoPath);
+        if (produced is not null)
+        {
+            if (taskImpl is HttpTask
+                && config["fullResponse"]?.GetValue<bool>() != true
+                && produced is JsonObject httpObj
+                && httpObj.ContainsKey("statusCode")
+                && httpObj.ContainsKey("body"))
+            {
+                return httpObj["body"]?.DeepClone();
+            }
+
+            return produced.DeepClone();
+        }
+
+        var diff = new JsonObject();
+        foreach (var (key, value) in workingData)
+        {
+            if (string.Equals(key, DefaultToolResultSlot, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!JsonNode.DeepEquals(value, preExecutionSnapshot[key]))
+            {
+                diff[key] = value?.DeepClone();
+            }
+        }
+
+        return diff.Count > 0
+            ? diff
+            : new JsonObject
+            {
+                ["status"] = "completed",
+                ["task"] = taskName,
+            };
+    }
+
+    internal static WorkflowTaskRegistry ResolveTaskRegistry(IServiceProvider services)
+    {
+        if (services.GetService<WorkflowTaskRegistry>() is { } registered)
+        {
+            return registered;
+        }
+
+        var configuredOptions = services.GetService<IOptions<MiddtWorkflowOptions>>()?.Value;
+        if (configuredOptions is null)
+        {
+            configuredOptions = new MiddtWorkflowOptions();
+            configuredOptions.AddAgentTasks();
+        }
+
+        return new WorkflowTaskRegistry(Options.Create(configuredOptions));
+    }
+
+    internal static JsonNode? TryParseJsonOrValue(string? text, bool parseJson = true)
+    {
+        if (text is null)
+        {
+            return null;
+        }
+
+        var trimmed = text.Trim();
+        if (parseJson && ((trimmed.StartsWith('{') && trimmed.EndsWith('}')) || (trimmed.StartsWith('[') && trimmed.EndsWith(']'))))
+        {
+            try
+            {
+                return JsonNode.Parse(trimmed);
+            }
+            catch (JsonException)
+            {
+                // Fall back to string value when text is not valid JSON.
+            }
+        }
+
+        return JsonValue.Create(text);
+    }
+
+    internal static bool TryGetCaseInsensitive(JsonObject obj, string key, out JsonNode? value)
+    {
+        if (obj.TryGetPropertyValue(key, out value))
+        {
+            return true;
+        }
+
+        foreach (var (k, v) in obj)
+        {
+            if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase))
+            {
+                value = v;
+                return true;
+            }
+        }
+
+        value = null;
+        return false;
+    }
+
+    internal static JsonNode? CoerceValueToSchema(JsonNode? source, JsonObject schema)
+    {
+        var candidate = source?.DeepClone();
+        var expectedType = schema["type"]?.GetValue<string>();
+
+        if (expectedType == "integer" && candidate is JsonValue iVal)
+        {
+            if (iVal.TryGetValue<double>(out var d) && !iVal.TryGetValue<long>(out _))
+            {
+                candidate = JsonValue.Create((long)Math.Round(d, MidpointRounding.AwayFromZero));
+            }
+            else if (iVal.TryGetValue<string>(out var s) && long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLong))
+            {
+                candidate = JsonValue.Create(parsedLong);
+            }
+        }
+        else if (expectedType == "number" && candidate is JsonValue nVal && nVal.TryGetValue<string>(out var numStr)
+                 && double.TryParse(numStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedDouble))
+        {
+            candidate = JsonValue.Create(parsedDouble);
+        }
+        else if (expectedType == "boolean" && candidate is JsonValue bStr && bStr.TryGetValue<string>(out var boolText)
+                 && bool.TryParse(boolText, out var bVal))
+        {
+            candidate = JsonValue.Create(bVal);
+        }
+
+        if (schema["enum"] is JsonArray allowed && allowed.Count > 0)
+        {
+            var matchesEnum = allowed.Any(a => JsonNode.DeepEquals(a, candidate));
+            if (!matchesEnum)
+            {
+                return null;
+            }
+        }
+
+        return candidate;
+    }
+
+    private static Task<JsonNode?> ExecuteHttpToolAsync(
         AgentToolDefinition tool,
         JsonObject args,
         IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(tool.Url))
+        var urlTemplate = tool.Url ?? tool.Config?["url"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(urlTemplate))
         {
             throw new InvalidOperationException($"HTTP tool '{tool.Name}' requires 'url'.");
         }
 
-        var url = RenderTextWithArgs(tool.Url, args);
-        var methodStr = !string.IsNullOrWhiteSpace(tool.Method)
-            ? tool.Method
-            : (tool.Body is not null ? "POST" : "GET");
-
-        var clientFactory = services.GetService<IHttpClientFactory>();
-        using var httpClient = clientFactory is not null
-            ? clientFactory.CreateClient(DefaultHttpClientName)
-            : new HttpClient();
-
-        using var request = new HttpRequestMessage(new HttpMethod(methodStr.ToUpperInvariant()), url);
-        if (tool.Headers is not null && RenderWithArgs(tool.Headers, args) is JsonObject headersObj)
+        var httpTool = new AgentToolDefinition
         {
-            foreach (var (k, v) in headersObj)
-            {
-                if (v?.GetValue<string>() is { Length: > 0 } headerVal)
-                {
-                    request.Headers.TryAddWithoutValidation(k, headerVal);
-                }
-            }
+            Name = tool.Name,
+            Description = tool.Description,
+            Kind = "task",
+            Task = "http",
+            Url = urlTemplate,
+            Method = tool.Method ?? (tool.Body is not null ? "POST" : "GET"),
+            Headers = tool.Headers,
+            QueryParams = tool.QueryParams,
+            Body = tool.Body,
+            Config = tool.Config?.DeepClone() as JsonObject ?? [],
+            Into = tool.Into,
+            WriteToWorkflowData = tool.WriteToWorkflowData,
+        };
+        if (httpTool.Config["client"] is null)
+        {
+            httpTool.Config["client"] = DefaultHttpClientName;
         }
 
-        if (tool.Body is not null)
-        {
-            var renderedBody = RenderWithArgs(tool.Body, args);
-            request.Content = new StringContent(
-                renderedBody?.ToJsonString() ?? "{}",
-                Encoding.UTF8,
-                "application/json");
-        }
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
-        return TryParseJsonOrValue(responseText);
+        return ExecuteWorkflowTaskToolAsync(httpTool, "http", args, services, cancellationToken);
     }
 
     private async Task<JsonNode?> SendJsonRpcAsync(
@@ -309,10 +582,7 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         JsonObject parameters,
         CancellationToken cancellationToken)
     {
-        var clientFactory = _services.GetService<IHttpClientFactory>();
-        using var httpClient = clientFactory is not null
-            ? clientFactory.CreateClient(DefaultHttpClientName)
-            : new HttpClient();
+        var httpClient = _services.GetRequiredService<IHttpClientFactory>().CreateClient(DefaultHttpClientName);
 
         var rpcRequest = new JsonObject
         {
@@ -339,8 +609,8 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         var root = JsonNode.Parse(body) as JsonObject;
         if (root?["error"] is JsonObject err)
         {
-            var msg = err["message"]?.GetValue<string>() ?? err.ToJsonString();
-            throw new InvalidOperationException($"MCP server '{server.Name}' returned JSON-RPC error for '{method}': {msg}");
+            var msg = err["message"]?.GetValue<string>() ?? "Unknown MCP JSON-RPC error.";
+            throw new InvalidOperationException($"MCP server '{server.Name}' returned error: {msg}");
         }
 
         return root?["result"];
@@ -348,98 +618,96 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
 
     private static JsonNode? ExtractMcpToolContent(JsonNode? rpcResult)
     {
-        if (rpcResult is not JsonObject obj)
+        if (rpcResult is null)
         {
-            return rpcResult;
+            return null;
         }
 
-        if (obj["structuredContent"] is { } structured)
+        if (rpcResult["structuredContent"] is { } structured)
         {
             return structured.DeepClone();
         }
 
-        if (obj["content"] is JsonArray { Count: > 0 } contentArr && contentArr[0] is JsonObject first)
+        if (rpcResult["content"] is JsonArray { Count: > 0 } contentArr)
         {
-            if (first["text"]?.GetValue<string>() is { } text)
+            var first = contentArr[0];
+            if (first?["text"]?.GetValue<string>() is { } text)
             {
                 return TryParseJsonOrValue(text);
             }
+
+            return first?.DeepClone();
         }
 
-        return obj.DeepClone();
+        return rpcResult.DeepClone();
     }
 
     private McpServerDefinition RequireServer(string serverName) =>
         GetServer(serverName)
-        ?? throw new InvalidOperationException($"MCP server '{serverName}' is not registered.");
+        ?? throw new InvalidOperationException($"MCP server '{serverName}' is not registered in AgentSettings.McpServers.");
 
-    private static JsonObject CoerceArgumentsBySchema(JsonObject args, JsonObject? parametersSchema)
+    private static JsonObject CoerceArgumentsBySchema(JsonObject args, JsonObject? schema)
     {
-        var normalized = args.DeepClone().AsObject();
-        if (parametersSchema?["properties"] is not JsonObject props)
+        if (schema?["properties"] is not JsonObject props || args.Count == 0)
         {
-            return normalized;
+            return args;
+        }
+
+        var normalized = new JsonObject();
+        foreach (var (key, val) in args)
+        {
+            normalized[key] = val?.DeepClone();
         }
 
         foreach (var (propName, propNode) in props)
         {
-            if (propNode is not JsonObject propSchema || !normalized.TryGetPropertyValue(propName, out var valNode) || valNode is not JsonValue jv)
+            if (propNode is JsonObject propSchema && normalized[propName] is { } existing)
             {
-                continue;
-            }
-
-            if (!jv.TryGetValue<string>(out var rawStr))
-            {
-                continue;
-            }
-
-            var expectedType = propSchema["type"]?.GetValue<string>();
-            if (expectedType == "integer" && long.TryParse(rawStr, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var lVal))
-            {
-                normalized[propName] = JsonValue.Create(lVal);
-            }
-            else if (expectedType == "number" && double.TryParse(rawStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dVal))
-            {
-                normalized[propName] = JsonValue.Create(dVal);
-            }
-            else if (expectedType == "boolean" && bool.TryParse(rawStr, out var bVal))
-            {
-                normalized[propName] = JsonValue.Create(bVal);
+                normalized[propName] = CoerceValueToSchema(existing, propSchema) ?? existing.DeepClone();
             }
         }
 
         return normalized;
     }
 
-    private static ExpressionContext CreateExpressionContext(JsonObject args) =>
-        new ExpressionContext { Now = DateTime.UtcNow }
-            .Set("args", args)
-            .Set("data", args)
-            .Set("input", args);
-
-    private static JsonNode? RenderWithArgs(JsonNode? template, JsonObject args) =>
-        Evaluator.Render(template, CreateExpressionContext(args));
-
-    private static string RenderTextWithArgs(string template, JsonObject args) =>
-        Evaluator.RenderText(template, CreateExpressionContext(args));
-
-    private static JsonNode? TryParseJsonOrValue(string text)
+    private static ExpressionScope CreateExpressionScope(JsonObject args, JsonObject? workingData = null)
     {
-        var trimmed = text.Trim();
-        if ((trimmed.StartsWith('{') && trimmed.EndsWith('}')) || (trimmed.StartsWith('[') && trimmed.EndsWith(']')))
+        var ambient = WorkflowTaskAmbientContext.Current;
+        JsonObject dataObj;
+        if (workingData is not null)
         {
-            try
+            dataObj = workingData;
+        }
+        else if (ambient is not null)
+        {
+            dataObj = (JsonObject)ambient.Data.DeepClone();
+            foreach (var (k, v) in args)
             {
-                return JsonNode.Parse(trimmed);
-            }
-            catch (JsonException)
-            {
-                // Fall back to string value
+                dataObj[k] = v?.DeepClone();
             }
         }
+        else
+        {
+            dataObj = args;
+        }
 
-        return JsonValue.Create(text);
+        return new ExpressionScope
+        {
+            Data = dataObj,
+            Input = (JsonObject)args.DeepClone(),
+            Args = (JsonObject)args.DeepClone(),
+            User = ambient?.Scope.User ?? WorkflowUser.System,
+            Instance = ambient?.Scope.Instance.DeepClone() as JsonObject ?? [],
+            Child = ambient?.Scope.Child?.DeepClone() as JsonObject,
+            Now = ambient?.Scope.Now ?? DateTimeOffset.UtcNow,
+        };
     }
+
+    private static JsonNode? RenderWithArgs(JsonNode? template, JsonObject args) =>
+        (WorkflowTaskAmbientContext.Current?.Expressions ?? DefaultExpressions).Render(template, CreateExpressionScope(args));
+
+    private static string RenderTextWithArgs(string template, JsonObject args) =>
+        (WorkflowTaskAmbientContext.Current?.Expressions ?? DefaultExpressions).RenderText(template, CreateExpressionScope(args));
 }
 
 /// <summary>

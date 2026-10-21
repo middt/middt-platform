@@ -37,7 +37,8 @@ public static class AgentServiceCollectionExtensions
             optionsBuilder.Configure(configureSettings);
         }
 
-        services.AddHttpClient(MiddtMcpClient.DefaultHttpClientName);
+        services.AddHttpClient(MiddtMcpClient.DefaultHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddSingleton(options);
         services.TryAddSingleton<IMiddtMcpClient, MiddtMcpClient>();
         services.TryAddSingleton<IMiddtAgentRegistry, MiddtAgentRegistry>();

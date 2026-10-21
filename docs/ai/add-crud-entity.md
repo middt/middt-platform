@@ -18,7 +18,7 @@ In `demo/Middt.Demo.Api`, domain records live as JSON documents inside PostgreSQ
    - `entity`: the workflow key in PascalCase or kebab-case (e.g., `"CustomerOnboarding"` or `"customer-onboarding"` — `WorkflowInstanceDataQuery` resolves both dynamically).
    - `columns`: `{ "field": "key", "title": "Müşteri Anahtarı", "sortable": true, ... }`.
    - `search`: search/filter field definitions (`text`, `number`, `select`, `date`, `checkbox`).
-3. Restart the API (or create/edit the layout at runtime in `/ui-admin` / `/admin/layouts`).
+3. Restart the API (or create/edit the layout at runtime in `/ui-admin`).
 4. The screen appears automatically in **both** menus (Blazor `:8080`, Angular `:8081`) at `/ui/<screen-key>`.
 
 ---

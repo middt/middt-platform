@@ -60,7 +60,7 @@ public sealed class MiddtBffOptions
     public bool ResponseCompression { get; set; } = true;
 
     /// <summary>Request paths answered with 401/403 instead of a redirect to the login page (API style endpoints).</summary>
-    public IList<string> ApiPathPrefixes { get; } = ["/api", "/hubs", "/bff", "/_blazor"];
+    public IList<string> ApiPathPrefixes { get; } = ["/api", "/bff", "/_blazor"];
 
     /// <summary>
     /// OpenID Connect sign-in at an identity provider (bound from configuration <c>Bff:Oidc</c> before the configure
@@ -74,7 +74,7 @@ public sealed class MiddtBffOptions
 /// Backend-for-frontend: the browser holds only an HttpOnly cookie that identifies a server side session; the API tokens
 /// stay in <see cref="IServerTokenStore"/>. Used by Blazor Server (<c>AddMiddtBlazor</c>) and by SPA hosts:
 /// <code>
-/// builder.AddMiddtSpaBff();      // cookie session + login pages + /api and /hubs proxy
+/// builder.AddMiddtSpaBff();      // cookie session + login pages + /api proxy
 /// var app = builder.Build();
 /// app.UseMiddtSpaBff();          // security headers, auth, /bff/user, proxy, SPA fallback (index.html)
 /// </code>
@@ -173,7 +173,7 @@ public static class MiddtBffExtensions
         return options;
     }
 
-    /// <summary>BFF for single page applications: <see cref="AddMiddtBff"/> plus the <c>/api</c> and <c>/hubs</c> proxy to the API.</summary>
+    /// <summary>BFF for single page applications: <see cref="AddMiddtBff"/> plus the <c>/api</c> proxy to the API.</summary>
     public static WebApplicationBuilder AddMiddtSpaBff(this WebApplicationBuilder builder, Action<MiddtBffOptions>? configure = null)
     {
         var options = AddMiddtBffCore(builder, configure);

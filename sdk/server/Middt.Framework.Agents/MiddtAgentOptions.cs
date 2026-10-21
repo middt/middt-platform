@@ -71,7 +71,7 @@ public sealed class MiddtAgentOptions
         });
     }
 
-    /// <summary>Registers a declarative <see cref="AgentToolDefinition"/> (<c>expression</c>, <c>http</c>, or <c>mcp</c>).</summary>
+    /// <summary>Registers a declarative <see cref="AgentToolDefinition"/> (<c>expression</c>, <c>http</c>, <c>mcp</c>, or <c>task</c>).</summary>
     public MiddtAgentOptions AddDeclarativeTool(AgentToolDefinition tool)
     {
         ArgumentNullException.ThrowIfNull(tool);
@@ -103,81 +103,57 @@ public sealed class MiddtAgentOptions
     /// Each file may contain a single <see cref="AgentDefinition"/>, an array of <see cref="AgentDefinition"/>s,
     /// or an <see cref="AgentCatalogFile"/> (<c>{ "agents": [...], "tools": [...], "mcpServers": [...] }</c>).
     /// </summary>
-    public MiddtAgentOptions AddAgentsFromDirectory(string directoryPath)
+    public MiddtAgentOptions AddAgentsFromDirectory(
+        string directoryPath,
+        string toolsSubdirectory = "Tools",
+        string mcpServersSubdirectory = "McpServers")
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
-        var fullPath = Path.IsPathRooted(directoryPath)
-            ? directoryPath
-            : Path.Combine(AppContext.BaseDirectory, directoryPath);
-
-        if (!Directory.Exists(fullPath))
+        var files = EnumerateJsonFiles(directoryPath, out var fullPath);
+        foreach (var (file, node) in files)
         {
-            return this;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(fullPath, "*.json", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var json = File.ReadAllText(file);
-            var node = JsonNode.Parse(json);
-            if (node is JsonArray array)
+            if (node is JsonObject obj && IsCatalogObject(obj))
             {
-                foreach (var item in array)
+                var catalog = obj.Deserialize<AgentCatalogFile>(JsonOptions);
+                if (catalog is not null)
                 {
-                    if (item.Deserialize<AgentDefinition>(JsonOptions) is { Name.Length: > 0 } def)
+                    foreach (var tool in catalog.Tools.Where(t => !string.IsNullOrWhiteSpace(t.Name)))
                     {
-                        AddAgent(def);
+                        AddDeclarativeTool(tool);
+                    }
+
+                    foreach (var mcp in catalog.McpServers.Where(s => !string.IsNullOrWhiteSpace(s.Name)))
+                    {
+                        AddMcpServer(mcp);
+                    }
+
+                    foreach (var agent in catalog.Agents.Where(a => !string.IsNullOrWhiteSpace(a.Name)))
+                    {
+                        AddAgent(agent);
                     }
                 }
+
+                continue;
             }
-            else if (node is JsonObject obj)
+
+            DeserializeItems<AgentDefinition>(
+                file,
+                node,
+                def => def.Name,
+                (def, name) => def.Name = name,
+                def => AddAgent(def));
+        }
+
+        if (fullPath is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(toolsSubdirectory))
             {
-                if (IsCatalogObject(obj))
-                {
-                    var catalog = obj.Deserialize<AgentCatalogFile>(JsonOptions);
-                    if (catalog is not null)
-                    {
-                        foreach (var tool in catalog.Tools.Where(t => !string.IsNullOrWhiteSpace(t.Name)))
-                        {
-                            AddDeclarativeTool(tool);
-                        }
-
-                        foreach (var mcp in catalog.McpServers.Where(s => !string.IsNullOrWhiteSpace(s.Name)))
-                        {
-                            AddMcpServer(mcp);
-                        }
-
-                        foreach (var agent in catalog.Agents.Where(a => !string.IsNullOrWhiteSpace(a.Name)))
-                        {
-                            AddAgent(agent);
-                        }
-                    }
-                }
-                else
-                {
-                    var def = obj.Deserialize<AgentDefinition>(JsonOptions);
-                    if (def is not null)
-                    {
-                        if (string.IsNullOrWhiteSpace(def.Name))
-                        {
-                            def.Name = Path.GetFileNameWithoutExtension(file);
-                        }
-
-                        AddAgent(def);
-                    }
-                }
+                AddToolsFromDirectory(Path.Combine(fullPath, toolsSubdirectory));
             }
-        }
 
-        var nestedTools = Path.Combine(fullPath, "Tools");
-        if (Directory.Exists(nestedTools))
-        {
-            AddToolsFromDirectory(nestedTools);
-        }
-
-        var nestedMcp = Path.Combine(fullPath, "McpServers");
-        if (Directory.Exists(nestedMcp))
-        {
-            AddMcpServersFromDirectory(nestedMcp);
+            if (!string.IsNullOrWhiteSpace(mcpServersSubdirectory))
+            {
+                AddMcpServersFromDirectory(Path.Combine(fullPath, mcpServersSubdirectory));
+            }
         }
 
         return this;
@@ -189,43 +165,14 @@ public sealed class MiddtAgentOptions
     /// </summary>
     public MiddtAgentOptions AddToolsFromDirectory(string directoryPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
-        var fullPath = Path.IsPathRooted(directoryPath)
-            ? directoryPath
-            : Path.Combine(AppContext.BaseDirectory, directoryPath);
-
-        if (!Directory.Exists(fullPath))
+        foreach (var (file, node) in EnumerateJsonFiles(directoryPath, out _))
         {
-            return this;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(fullPath, "*.json", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var json = File.ReadAllText(file);
-            var node = JsonNode.Parse(json);
-            if (node is JsonArray array)
-            {
-                foreach (var item in array)
-                {
-                    if (item.Deserialize<AgentToolDefinition>(JsonOptions) is { Name.Length: > 0 } tool)
-                    {
-                        AddDeclarativeTool(tool);
-                    }
-                }
-            }
-            else if (node is JsonObject obj)
-            {
-                var tool = obj.Deserialize<AgentToolDefinition>(JsonOptions);
-                if (tool is not null)
-                {
-                    if (string.IsNullOrWhiteSpace(tool.Name))
-                    {
-                        tool.Name = Path.GetFileNameWithoutExtension(file);
-                    }
-
-                    AddDeclarativeTool(tool);
-                }
-            }
+            DeserializeItems<AgentToolDefinition>(
+                file,
+                node,
+                tool => tool.Name,
+                (tool, name) => tool.Name = name,
+                tool => AddDeclarativeTool(tool));
         }
 
         return this;
@@ -237,43 +184,14 @@ public sealed class MiddtAgentOptions
     /// </summary>
     public MiddtAgentOptions AddMcpServersFromDirectory(string directoryPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
-        var fullPath = Path.IsPathRooted(directoryPath)
-            ? directoryPath
-            : Path.Combine(AppContext.BaseDirectory, directoryPath);
-
-        if (!Directory.Exists(fullPath))
+        foreach (var (file, node) in EnumerateJsonFiles(directoryPath, out _))
         {
-            return this;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(fullPath, "*.json", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var json = File.ReadAllText(file);
-            var node = JsonNode.Parse(json);
-            if (node is JsonArray array)
-            {
-                foreach (var item in array)
-                {
-                    if (item.Deserialize<McpServerDefinition>(JsonOptions) is { Name.Length: > 0 } server)
-                    {
-                        AddMcpServer(server);
-                    }
-                }
-            }
-            else if (node is JsonObject obj)
-            {
-                var server = obj.Deserialize<McpServerDefinition>(JsonOptions);
-                if (server is not null)
-                {
-                    if (string.IsNullOrWhiteSpace(server.Name))
-                    {
-                        server.Name = Path.GetFileNameWithoutExtension(file);
-                    }
-
-                    AddMcpServer(server);
-                }
-            }
+            DeserializeItems<McpServerDefinition>(
+                file,
+                node,
+                server => server.Name,
+                (server, name) => server.Name = name,
+                server => AddMcpServer(server));
         }
 
         return this;
@@ -295,6 +213,58 @@ public sealed class MiddtAgentOptions
         var fn = AIFunctionFactory.Create(method, name, description);
         Tools[name] = fn;
         return this;
+    }
+
+    private static List<(string FilePath, JsonNode? Node)> EnumerateJsonFiles(string directoryPath, out string? resolvedFullPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
+        var fullPath = Path.IsPathRooted(directoryPath)
+            ? directoryPath
+            : Path.Combine(AppContext.BaseDirectory, directoryPath);
+
+        if (!Directory.Exists(fullPath))
+        {
+            resolvedFullPath = null;
+            return [];
+        }
+
+        resolvedFullPath = fullPath;
+        var results = new List<(string, JsonNode?)>();
+        foreach (var file in Directory.EnumerateFiles(fullPath, "*.json", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.Ordinal))
+        {
+            results.Add((file, JsonNode.Parse(File.ReadAllText(file))));
+        }
+
+        return results;
+    }
+
+    private static void DeserializeItems<T>(
+        string file,
+        JsonNode? node,
+        Func<T, string> getName,
+        Action<T, string> setName,
+        Action<T> register)
+        where T : class
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                if (item.Deserialize<T>(JsonOptions) is { } parsed && !string.IsNullOrWhiteSpace(getName(parsed)))
+                {
+                    register(parsed);
+                }
+            }
+        }
+        else if (node is JsonObject obj && obj.Deserialize<T>(JsonOptions) is { } single)
+        {
+            if (string.IsNullOrWhiteSpace(getName(single)))
+            {
+                setName(single, Path.GetFileNameWithoutExtension(file));
+            }
+
+            register(single);
+        }
     }
 
     private static bool IsCatalogObject(JsonObject obj) =>

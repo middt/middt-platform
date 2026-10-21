@@ -10,7 +10,6 @@ using Middt.Framework.Workflow.Runtime;
 using Middt.Framework.Workflow.Tasks;
 using Middt.Demo.Api;
 using Middt.Demo.Api.Handlers;
-using Middt.Demo.Api.Messages;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
@@ -18,13 +17,10 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 builder.AddServiceDefaults(enableOpenTelemetry: true);
 builder.AddMiddtApi(options => options.Title = "Middt Sample API");
 
-var signalR = builder.Services.AddSignalR();
-
 // Optional infrastructure: enabled only when a connection string is configured (Aspire / Docker Compose injects them).
 if (builder.Configuration.GetConnectionString("redis") is { Length: > 0 } redis)
 {
     builder.Services.AddStackExchangeRedisCache(o => o.Configuration = redis); // L2 for CacheTask / RefreshTokenStore
-    signalR.AddStackExchangeRedis(redis);                                       // SignalR backplane
 }
 
 // Messaging (Rebus): RabbitMQ when a connection string is configured, otherwise the in-memory transport for local runs.
@@ -36,7 +32,7 @@ builder.Services.AddMiddtRebus(
         settings.ConnectionString = messaging;
         settings.UseInMemoryTransport = string.IsNullOrEmpty(messaging);
     },
-    rebus => rebus.Subscribe<WorkflowNotification>());
+    rebus => rebus.Subscribe<RebusWorkflowMessage>());
 builder.Services.AddMiddtRebusHandlersFromAssemblyOf<WorkflowNotificationHandler>();
 builder.Services.AddHostedService<RabbitMqQueueInitializer>();
 
@@ -54,10 +50,7 @@ builder.Services.AddMiddtWorkflow(workflow =>
     workflow.AutoCreateSchema = true;
     workflow.ExposeErrorDetails = builder.Environment.IsDevelopment();
     workflow.AddDefinitionsFromDirectory("Workflows");
-    workflow.AddRebusTasks();
-    workflow.AddAgentTasks();
 });
-builder.Services.AddSingleton<IWorkflowMessagePublisher, RebusWorkflowMessagePublisher>();
 builder.Services.AddHostedService<DemoWorkflowSeeder>();
 
 // Server driven UI: JSON layouts (pages and workflow state views) in the "ui" schema, seeded from ./Layouts and editable at runtime.
@@ -72,7 +65,6 @@ builder.Services.AddScoped<IWorkflowViewRenderer, WorkflowLayoutRenderer>();
 var app = builder.Build();
 
 app.UseMiddtApi();
-app.MapHub<TestHub>("/hubs/testhub");
 app.MapMiddtWorkflows("api/workflows");
 app.MapMiddtUi("api/ui");
 

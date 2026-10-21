@@ -5,12 +5,12 @@ namespace Middt.Framework.Workflow.Expressions;
 
 /// <summary>
 /// Evaluates C#-like expressions used in rules, mappings and task templates over the workflow variables
-/// (<c>data</c>, <c>input</c>, <c>result</c>, <c>child</c>, <c>user</c>, <c>instance</c>, <c>now</c>).
+/// (<c>data</c>, <c>input</c>, <c>args</c>, <c>result</c>, <c>child</c>, <c>user</c>, <c>instance</c>, <c>now</c>).
 /// Thin wrapper over the shared <see cref="ExpressionEvaluator"/>.
 /// </summary>
 public sealed class WorkflowExpressionEngine
 {
-    private readonly ExpressionEvaluator evaluator = new(["data", "input", "child", "instance", "item"], ["result", "index"]);
+    private readonly ExpressionEvaluator evaluator = new(["data", "input", "args", "child", "instance", "item"], ["result", "index"]);
 
     /// <summary>Compiles <paramref name="expression"/> and returns the error message, or <c>null</c> when it is valid.</summary>
     public string? Validate(string expression) => evaluator.Validate(expression);
@@ -33,6 +33,7 @@ public sealed class WorkflowExpressionEngine
         new ExpressionContext { User = scope.User, Now = scope.Now }
             .Set("data", scope.Data)
             .Set("input", scope.Input)
+            .Set("args", scope.Args ?? scope.Input)
             .Set("result", scope.Result)
             .Set("child", scope.Child)
             .Set("instance", scope.Instance)

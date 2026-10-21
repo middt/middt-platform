@@ -12,20 +12,20 @@ Targets **.NET 10 (LTS)**.
 
 | Layer | Project | Purpose |
 |---|---|---|
-| Contracts | `Middt.Framework.Model` | Wire contracts: `BaseResponseModel`/`BaseResponseDataModel<T>` (result envelope), auth, workflow and SignalR DTOs, settings. No dependencies. |
+| Contracts | `Middt.Framework.Model` | Wire contracts: `BaseResponseModel`/`BaseResponseDataModel<T>` (result envelope), auth and workflow DTOs, settings. No dependencies. |
 | Contracts | `Middt.Framework.Expressions` | The **portable expression language** (identical in .NET and TypeScript, verified by `spec/expressions.conformance.json`) and the richer DynamicExpresso evaluator used by workflow rules. |
 | Contracts | `Middt.Framework.Ui.Abstractions` | Server driven UI contract: layout model, widget specs, validator, portable formats, JSON Schema generator. No UI technology. |
-| Backend | `Middt.Framework.Common` | Server side helpers for API and frontend hosts: security headers, forwarded headers, local URL checks, SignalR hub base. |
+| Backend | `Middt.Framework.Common` | Server side helpers for API and frontend hosts: security headers, forwarded headers, local URL checks. |
 | Backend | `Middt.Framework.Api` | `AddMiddtApi()` / `UseMiddtApi()`, token & API controllers, ProblemDetails, versioning, OpenAPI + Scalar, JWT/OIDC, rate limiting. |
 | Backend | `Middt.Framework.Workflow` | Embedded, JSON defined workflow (state machine) engine: manual/automatic/scheduled transitions and message-driven event transitions, tasks (also in the background, outside the instance lock), retries, timers, subflows, history (full / delta / none), multi-node job processing (`SKIP LOCKED`, `LISTEN`/`NOTIFY`), PostgreSQL declarative partitioning & dynamic `WorkflowInstanceDataQuery` – on EF Core, no Dapr. |
 | Backend | `Middt.Framework.Ui.Server` | Layout store on EF Core (`ui` schema, revisions, optimistic concurrency), seeding, `MapMiddtUi()` REST API (incl. widgets and JSON Schema), plain C# static HTML renderer. |
-| Client SDK | `Middt.Framework.Client` | Typed API clients (`WorkflowApiClient`, `UiApiClient`, `UiDataClient`) on `IHttpClientFactory` + resilience, token refresh, SignalR client. |
-| Frontends | `Middt.Framework.Bff` | Backend-for-frontend blocks for any browser frontend: HttpOnly cookie session, server side token store with refresh, Login/Logout pages, `GET /bff/user`, YARP proxy of `/api` + `/hubs` with the session's token and CSRF protection (`AddMiddtSpaBff()` / `UseMiddtSpaBff()`). |
-| Blazor | `Middt.Framework.Blazor` | The Blazor frontend: `AddMiddtBlazor()` / `UseMiddtBlazor()`, BFF cookie auth, workflow screens, SignalR; layout renderer under `Ui/` (`AddMiddtUi()`, display + interactive widgets, `UiPageHost`, `UiLayoutHost`, runtime `UiLayoutEditor`). |
+| Client SDK | `Middt.Framework.Client` | Typed API clients (`WorkflowApiClient`, `UiApiClient`, `UiDataClient`) on `IHttpClientFactory` + resilience, token refresh. |
+| Frontends | `Middt.Framework.Bff` | Backend-for-frontend blocks for any browser frontend: HttpOnly cookie session, server side token store with refresh, Login/Logout pages, `GET /bff/user`, YARP proxy of `/api` with the session's token and CSRF protection (`AddMiddtSpaBff()` / `UseMiddtSpaBff()`). |
+| Blazor | `Middt.Framework.Blazor` | The Blazor frontend: `AddMiddtBlazor()` / `UseMiddtBlazor()`, BFF cookie auth, workflow screens; layout renderer under `Ui/` (`AddMiddtUi()`, display + interactive widgets, `UiPageHost`, `UiLayoutHost`, runtime `UiLayoutEditor`). |
 | TypeScript | `sdk/client/ui-core` (`@middt/ui-core`) | Types, portable expressions, formats, layout/data/workflow API clients for non-.NET frontends. |
-| Angular | `sdk/client/angular` (`@middt/angular`) | Angular 22 frontend library: BFF auth, layout renderer/widgets/editor, workflow list/detail/wizard, SignalR – see [sdk/client/angular/README.md](sdk/client/angular/README.md). Demo app: `demo/angular-app`. |
+| Angular | `sdk/client/angular` (`@middt/angular`) | Angular 22 frontend library: BFF auth, layout renderer/widgets/editor, workflow list/detail/wizard – see [sdk/client/angular/README.md](sdk/client/angular/README.md). Demo app: `demo/angular-app`. |
 | Plugins | `Middt.Framework.Rebus` | Messaging on [Rebus](https://github.com/rebus-org/Rebus/wiki) (MIT): `AddMiddtRebus()` with RabbitMQ or in-memory transport, publish/subscribe, send routing, retries and error queue. |
-| Plugins | `Middt.Framework.Agents` | AI agents & MCP on [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/) (`Microsoft.Agents.AI` + `Microsoft.Extensions.AI`, MIT): `AddMiddtAgents()` with OpenAI/Ollama/compatible or deterministic local fallback, single & multi-agent workflows (`sequential`, `concurrent`, `handoff`), declarative JSON tools (`expression`, `http`, `mcp`), Model Context Protocol (`IMiddtMcpClient` + `mcp` task), AI-driven workflow routing (`allowedTransitions` / `transitionInto`), structured `outputSchema` validation, session persistence, and OpenTelemetry tracing. |
+| Plugins | `Middt.Framework.Agents` | AI agents & MCP on [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/) (`Microsoft.Agents.AI` + `Microsoft.Extensions.AI`, MIT): `AddMiddtAgents()` with OpenAI, DeepSeek, Ollama, or deterministic local fallback, single & multi-agent workflows (`sequential`, `concurrent`, `handoff`), declarative JSON tools (`expression`, `task` bridged to any `IWorkflowTask`, `http`, `mcp`), Model Context Protocol (`IMiddtMcpClient` + `mcp` task), AI-driven workflow routing (`allowedTransitions` / `transitionInto`), structured `outputSchema` validation, session persistence, and OpenTelemetry tracing. |
 
 **Middt Identity** (`identity/Middt.Identity`, not a package): the OAuth 2.0 / OpenID Connect server of Middt
 applications – one service, configured by appsettings / environment (database, issuer, certificate, clients, users).
@@ -40,7 +40,7 @@ The repository has two main folders: **`sdk/`** (the framework packages, split i
 ```
 sdk/                              the framework (NuGet / npm packages)
   shared/                         Model · Expressions · Ui.Abstractions         contracts, no UI technology
-  server/                         Common · Api · Workflow · Ui.Server · Rebus   backend, no frontend dependencies
+  server/                         Common · Api · Workflow · Ui.Server · Rebus · Agents  backend, no frontend dependencies
   client/
     Middt.Framework.Client        .NET client SDK (typed API clients)
     Middt.Framework.Bff           backend-for-frontend host blocks (Blazor + Angular)
@@ -51,7 +51,7 @@ identity/Middt.Identity           the OAuth 2.0 / OpenID Connect server: one rea
 demo/                             the 100% backend-driven JSON demo
   Middt.Demo.AppHost              Aspire orchestration of everything
   Middt.Demo.ServiceDefaults      Aspire OpenTelemetry & health defaults
-  Middt.Demo.Api                  API (+ Layouts/, Workflows/, Seeds/ seeds)
+  Middt.Demo.Api                  API (+ Layouts/, Workflows/, Agents/, Seeds/ seeds)
   Middt.Demo.Blazor               Blazor Server demo
   Middt.Demo.Angular              Angular BFF host
   angular-app/                    Angular demo SPA using @middt/angular as a package
@@ -64,7 +64,7 @@ tests/  docs/
 
 ```
  Contracts      Model · Expressions (portable) · Ui.Abstractions · spec/*.json      ← shared by every layer and language
- Backend        Api · Workflow · Ui.Server · Rebus · Common                         ← no Razor/Blazor/Radzen
+ Backend        Api · Workflow · Ui.Server · Rebus · Agents · Common                ← no Razor/Blazor/Radzen
  Client SDK     Client (typed HttpClient + resilience + token refresh)
  Frontends      BFF: Bff   Blazor: Blazor   Angular: @middt/ui-core · @middt/angular
 
@@ -322,9 +322,26 @@ POST /api/workflows/invoice-collection/instances/{id}/transitions/update-billing
 - The implementation is `JsonPatch` in `Middt.Framework.Expressions` (`ApplyStrict`, `Diff`); the TypeScript `jsonPatchDiff`
   is its twin, and both pass [`spec/json-patch.conformance.json`](spec/json-patch.conformance.json).
 
+### AI Agents, Declarative Tools & Model Context Protocol (MCP) (`Middt.Framework.Agents`)
+
+`Middt.Framework.Agents` integrates the [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/) (`Microsoft.Agents.AI` + `Microsoft.Extensions.AI`) directly into the workflow engine:
+
+```csharp
+builder.Services.AddMiddtAgents(builder.Configuration, a =>
+{
+    a.AddAgentsFromDirectory("Agents"); // loads Agents/*.json, Agents/Tools/*.json, Agents/McpServers/*.json
+});
+```
+
+- **Single & Multi-Agent Workflow Tasks (`task: "agent"` / `"aiAgent"`)**: Execute a single agent or a multi-agent orchestration (`mode: "sequential" | "concurrent" | "handoff"`) with structured `outputSchema` validation, session persistence (`session` / `sessionInto`), tool-call audit capture (`toolCallsInto`), and execution metadata (`metaInto`).
+- **AI-Driven Workflow Routing (`allowedTransitions` + `transitionInto`)**: Agents can decide the next workflow path by returning `nextTransition` (validated against `allowedTransitions`), which is stored in `data.<transitionInto>` and evaluated by automatic transition rules (see [ai-dispute-resolution.json](demo/Middt.Demo.Api/Workflows/ai-dispute-resolution.json)).
+- **Unified Declarative Tools & `IWorkflowTask` Bridge (`Agents/Tools/*.json`)**: Tools invoked by AI agents can run portable expressions (`kind: "expression"`), **any registered `IWorkflowTask`** from `WorkflowTaskRegistry` (`kind: "task"`, `"task": "set" | "cache" | "http" | "operation" | "publish" | "rabbitmq" | "loadWorkflow" | "startWorkflow"` with `into` and optional `writeToWorkflowData: true`), HTTP calls (`kind: "http"`, delegated to `HttpTask`), or MCP tools (`kind: "mcp"`). Active workflow context (`WorkflowTaskAmbientContext`) is automatically propagated so tools can read `data.*`, `args.*`, `input.*`, `instance.*`, and `user.*`.
+- **Model Context Protocol (`task: "mcp"` + `Agents/McpServers/*.json`)**: Call MCP tools (`callTool`), read resources (`readResource`), list tools/resources, or render prompt templates (`getPrompt`) against remote HTTP JSON-RPC 2.0 MCP servers or declarative in-process MCP servers (`banking-mcp.json`).
+- **Providers & Local Testing**: Supports `OpenAI`, `DeepSeek` (`AgentSettings:Provider = "DeepSeek"` / `DEEPSEEK_API_KEY`, or local git-ignored `appsettings.Local.json`), `Ollama`, custom `IChatClient`, and a zero-dependency deterministic `LocalAgentChatClient` fallback (`UseLocalFallback: true`).
+
 
 Blazor: register `builder.Services.AddMiddtApiClient<WorkflowApiClient>();` and use the components from
-`Middt.Framework.Blazor.Base.Component.Workflow` – `WorkflowInstanceList` (paged list, columns generated from `dataSchema`, start dialog generated from the
+`Middt.Framework.Blazor.Workflow` – `WorkflowInstanceList` (paged list, columns generated from `dataSchema`, start dialog generated from the
 start input schema), `WorkflowInstanceDetail` (state, data, history, incidents, retry, one button per available transition
 with a form generated from its input schema) and `JsonSchemaForm`. A schema property with
 `"x-lookup": { "entity": "CustomerOnboarding", "valueField": "key", "textField": "fullName" }` is rendered as a select of the
@@ -405,29 +422,29 @@ HTML (`UiHtmlRenderer`), and Angular renders it with `@middt/angular` (on `@midd
 - **Blazor & Angular**: `<UiPageHost Key="@Key" />` / `<UiLayoutHost />` (Blazor) and `<middt-layout-page />` / `<middt-layout-host />` (Angular), plus `<UiLayoutEditor />` / `<middt-layout-editor />` at `/ui-admin` (edit JSON, validate on the server, preview, save, revisions, delete).
   Grid/record/layout widgets call the API **with the signed-in user's token**, so API authorization is unchanged;
   a layout can only show what the user may already read.
-- **Workflows**: every state in the sample uses `"view": { "layout": "kyc-review" }` (or `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`);
+- **Workflows**: every state in the sample uses `"view": { "layout": "kyc-review" }` (or `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`);
   both frontends render it automatically with `data` and `instance`.
 - **Editors**: `GET api/ui/schema` (also committed as `spec/ui-layout.schema.json`) is the JSON Schema of layouts;
   seed files reference it with `"$schema"` for completion in VS Code / Rider.
 - **Custom widgets**: register the spec in the API – `o.AddWidget(spec, html)` (optional static HTML) – and an
   implementation in each frontend: `AddMiddtUi(w => w.Add<MyWidget>(spec))` in Blazor, `provideMiddtUiWidgets({ name, component })` in Angular.
 
-All screens in `demo/Middt.Demo.Api/Layouts` (`executive-overview`, `customer-directory`, `credit-pipeline`, `order-monitor`, `kyc-review`, `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `customer-summary-card`, `risk-eval-card`, and `workflow-footer`) are 100% backend-driven JSON layouts.
+All screens in `demo/Middt.Demo.Api/Layouts` (`customer-directory`, `credit-pipeline`, `order-monitor`, `kyc-review`, `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`, `customer-summary-card`, `risk-eval-card`, and `workflow-footer`) are 100% backend-driven JSON layouts.
 
 ## Messaging (Rebus)
 
 ```csharp
 builder.Services.AddMiddtRebus(builder.Configuration, rebus => rebus
-    .Subscribe<WorkflowNotification>()     // pub/sub (RabbitMQ topic exchange)
+    .Subscribe<RebusWorkflowMessage>()     // pub/sub (RabbitMQ topic exchange)
     .Map<CreateInvoice>("billing"));       // bus.Send(...) routes
 builder.Services.AddMiddtRebusHandlersFromAssemblyOf<WorkflowNotificationHandler>();
 
-public sealed class WorkflowNotificationHandler : IHandleMessages<WorkflowNotification>
+public sealed class WorkflowNotificationHandler : IHandleMessages<RebusWorkflowMessage>
 {
-    public Task Handle(WorkflowNotification message) => ...;
+    public Task Handle(RebusWorkflowMessage message) => ...;
 }
 
-await bus.Publish(new WorkflowNotification(...));   // inject Rebus.Bus.IBus
+await bus.Publish(new RebusWorkflowMessage(...));   // inject Rebus.Bus.IBus
 ```
 
 ```jsonc
@@ -494,7 +511,7 @@ provider's end-session endpoint (`id_token_hint`, back via `/signout-callback-oi
 to an internal URL (`BackchannelAuthority`, `BackchannelRewriteHandler`) while issuer and browser redirects keep the
 public one. Without `Bff:Oidc:Authority` everything works as before (password form → API token controller).
 
-**SPA (Angular) calls.** The Angular app never sees a token: it calls `/api/**` and `/hubs/**` on its own origin and the
+**SPA (Angular) calls.** The Angular app never sees a token: it calls `/api/**` on its own origin and the
 BFF forwards them to the API (YARP) with the session's access token, refreshing it shortly before it expires (single
 flight per session; a failed refresh ends the session → 401 → login page). Browser cookies are not forwarded. CSRF: API
 calls must carry the `X-CSRF` header (cannot be set cross-site without a CORS preflight) and WebSocket upgrades must have a
@@ -514,8 +531,7 @@ Connect provider instead of its own HS256 tokens: signing keys from discovery, i
 `Authentication:Audience` (default `middt-api`), `Authentication:RequireHttpsMetadata` (default: outside Development),
 discovery/JWKS through `Authentication:BackchannelAuthority` when set. OIDC claims are mapped to the claim types the
 framework reads (`name` → `ClaimTypes.Name`, every `role` → `ClaimTypes.Role`, `sub` → `ClaimTypes.NameIdentifier` and
-`ClaimTypes.Sid`, `email` → `ClaimTypes.Email`); SignalR's `access_token` query parameter keeps working under
-`HubPathPrefix`. `JwtSettings` are optional in this mode (only needed if the app still hosts a `BaseTokenController`).
+`ClaimTypes.Sid`, `email` → `ClaimTypes.Email`). `JwtSettings` are optional in this mode (only needed if the app still hosts a `BaseTokenController`).
 
 **Hardening.** ProblemDetails without exception details outside Development; parameterized SQL queries and
 white-listed sort columns; security headers (CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`,

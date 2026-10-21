@@ -6,7 +6,7 @@ backend-for-frontend blocks (`sdk/client/Middt.Framework.Bff`), so no frontend e
 
 ```
                          ┌────────────────────────────── 1. Contracts (no UI technology) ──────────────────────────────┐
-                         │ Middt.Framework.Model            wire DTOs: envelope, auth, workflow, SignalR                │
+                         │ Middt.Framework.Model            wire DTOs: envelope, auth, workflow                         │
                          │ Middt.Framework.Expressions      portable expression language (+ DynamicExpresso for workflows)│
                          │ Middt.Framework.Ui.Abstractions  layout model, widget specs, validator, formats, JSON Schema   │
                          │ spec/                            expressions.conformance.json, ui-layout.schema.json           │
@@ -15,15 +15,15 @@ backend-for-frontend blocks (`sdk/client/Middt.Framework.Bff`), so no frontend e
 ┌──────────── 2. Backend ────────────────┴───┐   ┌──── 3. .NET client SDK ──┴──────┐   ┌──── TypeScript ───┴────────────┐
 │ Api, Common (server helpers)               │   │ Middt.Framework.Client           │   │ sdk/client/ui-core     │
 │ Workflow   (engine; IWorkflowViewRenderer, │   │ typed workflow/layout/data       │   │ @middt/ui-core: types,         │
-│             WorkflowInstanceDataQuery)      │   │ clients, token refresh, SignalR  │   │ expressions, formats, clients  │
+│             WorkflowInstanceDataQuery)      │   │ clients, token refresh           │   │ expressions, formats, clients  │
 │ Ui.Server  (layout store, REST, schema,    │   └───────────────▲──────────────────┘   └───────────────▲────────────────┘
 │            plain C# static HTML renderer)  │                   │                                      │
 │ Rebus      (RabbitMQ / in-memory messaging)│   ┌──── 4. Blazor frontend ┴──────────┐   ┌──── Angular frontend ─────────┴┐
 │ Agents     (Microsoft Agent Framework AI)  │   │ Blazor      BFF auth, workflow    │   │ @middt/angular: widgets as     │
 └─────────────────────▲──────────────────────┘   │             screens, layout       │   │ Angular components, BFF/cookie │
-                      │  HTTPS / JSON (REST,     │             screens, layout       │   │ Angular components, BFF/cookie │
-                      │  ProblemDetails)         │             widgets + editor (Ui/)│   │ auth, workflow screens         │
-                      └──────────────────────────└───────────────────────────────────┘   └────────────────────────────────┘
+                      │  HTTPS / JSON (REST,     │             widgets + editor (Ui/)│   │ auth, workflow screens         │
+                      │  ProblemDetails)         └───────────────────────────────────┘   └────────────────────────────────┘
+                      └───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Dependency rules
@@ -67,16 +67,16 @@ widgets can also be defined in pure JSON (`kind: "view"`) and embedded via `{ "w
    consumes `@middt/ui-core` as a `file:` package.
 2. **Authentication**: the SPA is served by a BFF host (`demo/Middt.Demo.Angular`: `AddMiddtSpaBff()` +
    `UseMiddtSpaBff()`). It owns the cookie session and the tokens, serves the server rendered login/logout pages,
-   `GET /bff/user`, and proxies `/api/**` and `/hubs/**` (YARP, WebSockets included) to the API with the session's
+   `GET /bff/user`, and proxies `/api/**` (YARP) to the API with the session's
    access token, refreshing it before it expires. CSRF: API calls carry an `X-CSRF` header, WebSocket upgrades must be
    same-origin. The API is unchanged.
-3. **Layouts**: `UiLayoutRendererComponent` loads layouts and maps widget names to Angular
+3. **Layouts**: `UiLayoutViewComponent` / `MiddtLayoutHostComponent` loads layouts and maps widget names to Angular
    components (`MIDDT_UI_WIDGETS`); `@middt/ui-core` evaluates `visibleWhen`, templates and
    formats exactly like .NET; the same CSS classes (`middt-ui-*`) and E2E selectors work in both frontends.
-   The Angular package has focused `core`, `ui`, `workflow`, and `signalr` entry points; the root entry point remains
+   The Angular package has focused `core`, `ui`, and `workflow` entry points; the root entry point remains
    an aggregate for compatibility.
 4. **Workflows**: `WorkflowApiClient` (ui-core) + list/detail/wizard components; all workflow states use `view.layout`
-   JSON layouts (`kyc-review`, `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`) rendered by
+   JSON layouts (`kyc-review`, `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`) rendered by
    the layout host in both frontends.
    Transition input schemas are rendered as forms; a property with `x-lookup` (`entity`, `valueField`, `textField`)
    becomes a select loaded dynamically from the endpoint – the engine only checks the hint's shape.
@@ -87,7 +87,7 @@ For a third frontend (e.g. React) repeat 1–4: reuse `@middt/ui-core` and a BFF
 ## Workflow execution and recovery
 
 Workflow JSON uses the framework's general task types (`set`, `setKey`, `log`, `http`, `publish`, `startWorkflow`,
-`loadWorkflow`, `fanOut`, `cache`). The `operation` task delegates named domain actions to an
+`loadWorkflow`, `fanOut`, `cache`, `agent`, `mcp`). The `operation` task delegates named domain actions to an
 explicitly registered `IWorkflowOperationDispatcher`; identity allowlists its password, MFA and OIDC operations there.
 The demo's flows store and query all domain data as JSON inside PostgreSQL-partitioned workflow tables (`WorkflowInstances` +
 `WorkflowInstanceData`) and expose dynamic CRUD query endpoints via `WorkflowInstanceDataQuery`. Task definitions remain independent of
@@ -129,16 +129,17 @@ Folders follow the layers: `sdk/shared` (contracts), `sdk/server` (backend), `sd
 
 | Project | Layer | Notes |
 |---|---|---|
-| Middt.Framework.Model | contracts | DTOs, settings, SignalR contracts |
+| Middt.Framework.Model | contracts | DTOs, settings |
 | Middt.Framework.Expressions | contracts | portable language + DynamicExpresso evaluator (workflows) |
 | Middt.Framework.Ui.Abstractions | contracts | layout model, specs, validator, formats, schema generator |
-| Middt.Framework.Common | backend / host helpers | security headers, forwarded headers, local URL check, SignalR hub base |
+| Middt.Framework.Common | backend / host helpers | security headers, forwarded headers, local URL check |
 | Middt.Framework.Api | backend | hosting, controllers, JWT, ProblemDetails, OpenAPI |
 | Middt.Framework.Workflow | backend | engine, endpoints, `IWorkflowViewRenderer`, `WorkflowInstanceDataQuery` |
 | Middt.Framework.Ui.Server | backend | layout store, endpoints, `UiHtmlRenderer` |
 | Middt.Framework.Rebus | backend | messaging on Rebus (RabbitMQ / in-memory), `publish` workflow task |
-| Middt.Framework.Client | client SDK | typed API clients, token refresh, SignalR client |
-| Middt.Framework.Bff | frontends | cookie session, token store + refresh, login pages, `/bff/user`, `/api` + `/hubs` proxy (YARP) |
+| Middt.Framework.Agents | backend | Microsoft Agent Framework (`Microsoft.Agents.AI` + `Microsoft.Extensions.AI`), `agent` & `mcp` workflow tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing |
+| Middt.Framework.Client | client SDK | typed API clients, token refresh |
+| Middt.Framework.Bff | frontends | cookie session, token store + refresh, login pages, `/bff/user`, `/api` proxy (YARP) |
 | Middt.Framework.Blazor | Blazor | BFF auth, workflow screens (`Workflow/`), layout widgets/hosts/editor (`Ui/`) |
 | sdk/client/ui-core | TypeScript | `@middt/ui-core` – contract, expressions, formats, layout/data/workflow clients |
 | sdk/client/angular | Angular | `@middt/angular` library workspace (demo app: `demo/angular-app`) |

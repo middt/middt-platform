@@ -18,7 +18,6 @@
     "@angular/platform-browser": "^22.2.0",
     "@angular/router": "^22.2.0",
     "@fontsource/roboto": "^5.2.6",
-    "@microsoft/signalr": "^10.0.11",
     "@middt/angular": "file:../../sdk/client/angular/dist/middt-angular",
     "@middt/ui-core": "file:../../sdk/client/ui-core",
     "material-icons": "^1.13.14",

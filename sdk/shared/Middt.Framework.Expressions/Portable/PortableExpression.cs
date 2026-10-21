@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 
 namespace Middt.Framework.Expressions.Portable;
 
@@ -51,7 +50,7 @@ public sealed partial class PortableExpression
 
     /// <summary>Validates every <c>{{ expression }}</c> of a template value (objects and arrays recurse).</summary>
     public IEnumerable<string> ValidateTemplate(JsonNode? template) =>
-        Placeholders(template).Select(Validate).OfType<string>();
+        ExpressionEvaluator.Placeholders(template).Select(Validate).OfType<string>();
 
     /// <summary>Evaluates to a runtime value (<c>null</c>, bool, double, string, JsonObject, JsonArray). Throws only on syntax errors.</summary>
     public object? Evaluate(string expression, ExpressionContext context)
@@ -81,11 +80,11 @@ public sealed partial class PortableExpression
     public static string ToText(object? value) => PortableEvaluator.ToText(value);
 
     /// <summary>True when <paramref name="text"/> contains <c>{{ }}</c> placeholders.</summary>
-    public static bool IsTemplate(string? text) => text is not null && PlaceholderRegex().IsMatch(text);
+    public static bool IsTemplate(string? text) => ExpressionEvaluator.IsTemplate(text);
 
     private JsonNode? RenderString(string text, ExpressionContext context)
     {
-        var matches = PlaceholderRegex().Matches(text);
+        var matches = ExpressionEvaluator.PlaceholderRegex().Matches(text);
         if (matches.Count == 0)
         {
             return JsonValue.Create(text);
@@ -98,7 +97,7 @@ public sealed partial class PortableExpression
 
         var sb = new StringBuilder();
         var last = 0;
-        foreach (Match match in matches)
+        foreach (System.Text.RegularExpressions.Match match in matches)
         {
             sb.Append(text, last, match.Index - last);
             sb.Append(PortableEvaluator.ToText(Evaluate(match.Groups[1].Value, context)));
@@ -124,14 +123,4 @@ public sealed partial class PortableExpression
         return cache.GetOrAdd(expression, e => PortableParser.Parse(e, variables));
     }
 
-    private static IEnumerable<string> Placeholders(JsonNode? template) => template switch
-    {
-        JsonObject obj => obj.SelectMany(p => Placeholders(p.Value)),
-        JsonArray array => array.SelectMany(Placeholders),
-        JsonValue value when value.TryGetValue<string>(out var text) => PlaceholderRegex().Matches(text).Select(m => m.Groups[1].Value),
-        _ => [],
-    };
-
-    [GeneratedRegex(@"\{\{\s*(.+?)\s*\}\}", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
-    private static partial Regex PlaceholderRegex();
 }

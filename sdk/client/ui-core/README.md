@@ -10,6 +10,7 @@ frontend render the same JSON layouts as the Blazor renderer of the framework:
 | `render-context.ts` – `UiRenderContext` (text, format, isVisible, with, idFor), `UiFormats`, `UiUrl` | `Middt.Framework.Ui.Abstractions/Rendering/UiRenderContext.cs` |
 | `fields.ts` – grid columns / form fields, validation (Turkish messages) | `Middt.Framework.Ui.Abstractions/Model/UiFieldModels.cs` |
 | `client.ts` – `UiApiClient` (layout API) and `UiDataClient` (CRUD controllers) | `Middt.Framework.Client/Http/UiClients.cs`, `UiEndpoints.cs` |
+| `workflow.ts` – `WorkflowApiClient` and workflow DTOs (`WorkflowDefinitionModel`, `WorkflowInstanceModel`, `AvailableTransitionModel`, …) | `Middt.Framework.Client/Http/WorkflowApiClient.cs`, `Middt.Framework.Model/Workflow/WorkflowModels.cs` |
 | `workflow-ui.ts` – `jsonPatchDiff`, `workflowTransitionPrefill` / `workflowTransitionInput` (forms of `input.format: jsonPatch` transitions) | `Middt.Framework.Expressions/JsonPatch.cs`, `Middt.Framework.Blazor/Workflow/WorkflowUi.cs` |
 
 The **Blazor implementation is the reference**. Expressions must behave the same in every renderer, so both
@@ -31,7 +32,7 @@ npm test          # node --test test/
 1. **Fetch the layout** – `GET api/ui/layouts/{key}` returns a `UiLayoutDocument`; `GET api/ui/layouts?kind=page` feeds the menu.
 2. **Render nodes by widget name** – every `UiNode` has `widget`, optional `id`, `visibleWhen`, `children` and its
    properties inline (`uiNodeProps(node)`). Map widget names (`heading`, `text`, `fields`, `alert`, `badge`, `section`,
-   `columns`, `divider`, `list`, `link`, `grid`, `record` and any custom ones listed by `GET api/ui/widgets`) to components.
+   `columns`, `divider`, `list`, `link`, `layout`, `grid`, `record` and any custom ones listed by `GET api/ui/widgets`) to components.
 3. **Evaluate with this package** – `ctx.isVisible(node)`, `ctx.text(node.text)`, `ctx.format(value, column.format)`,
    `ctx.with('row', item)` for list/grid rows, `ctx.with('record', loaded)` for `record` widgets, `ctx.render(node.filter)`
    for template maps. Only render links that pass `UiUrl.isSafe` (navigation from row actions: `UiUrl.isLocal`).
@@ -44,7 +45,7 @@ import { UiApiClient, UiDataClient, UiRenderContext, UiColumn } from '@middt/ui-
 const api = new UiApiClient({ credentials: 'include' });            // same origin, cookie auth through a BFF
 const data = new UiDataClient({ credentials: 'include', apiVersion: '1.0' });
 
-const layout = (await api.get('bike-category')).data!;
+const layout = (await api.get('customer-directory')).data!;
 const ctx = new UiRenderContext({ user: { id: '7', name: 'ayse', roles: ['manager'] }, variables: { query: { id: '42' } } });
 
 for (const node of layout.body) {

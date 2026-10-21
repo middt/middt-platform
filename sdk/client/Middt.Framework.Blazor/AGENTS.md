@@ -6,7 +6,7 @@
   circuit, API calls go through `Middt.Framework.Client` typed clients.
 - Layout renderer lives in `Middt.Framework.Blazor/Ui/` (namespace `Middt.Framework.Blazor.Ui`): `UiNodeView`
   display widgets, `UiGridWidget` (`grid`), `UiRecordWidget` (`record`), `UiLayoutWidget` (`layout` – embeds another JSON
-  layout by `key` with optional `data` scope and `MaxDepth = 5` recursion guard), `UiFieldEditor`, `UiLayoutRenderer`,
+  layout by `key` with optional `data` scope and `MaxDepth = 5` recursion guard), `UiFieldEditor`, `UiLayoutView`, `UiLayoutHost`, `UiPageHost`,
   `UiLayoutEditor`, registry `UiBlazorWidgets`. Markup must match `UiHtmlRenderer` and the Angular widgets (same
   classes, ids, aria labels) – a parity test compares visible text.
 - Widgets derive from `UiWidgetBase`, which skips updates with unchanged `Node`/`Context`; override

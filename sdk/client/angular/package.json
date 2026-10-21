@@ -18,7 +18,6 @@
     "@angular/material": "^22.2.3",
     "@angular/platform-browser": "^22.2.0",
     "@angular/router": "^22.2.0",
-    "@microsoft/signalr": "^10.0.11",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
     "@middt/ui-core": "file:../ui-core"

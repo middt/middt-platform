@@ -13,11 +13,11 @@ namespace Middt.Framework.Agents;
 /// pipeline, invokes registered <see cref="AIFunction"/> tools via <see cref="FunctionCallContent"/>, and synthesizes
 /// schema-compliant JSON responses enriched with tool outputs.
 /// </summary>
-public sealed class LocalAgentChatClient(string modelId = "local-deterministic") : IChatClient
+public sealed class LocalAgentChatClient(string modelId = "") : IChatClient
 {
-    private const string ContextJsonMarker = "Context JSON: ";
+    internal const string ContextJsonMarker = "Context JSON: ";
 
-    public ChatClientMetadata Metadata { get; } = new("middt-local", null, modelId);
+    public ChatClientMetadata Metadata { get; } = new("local", null, modelId);
 
     public Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -65,7 +65,11 @@ public sealed class LocalAgentChatClient(string modelId = "local-deterministic")
         }
         else if (mergedToolOutput.Count > 0)
         {
-            responseText = TryExtractSummaryText(mergedToolOutput) ?? mergedToolOutput.ToJsonString();
+            responseText = mergedToolOutput.Count == 1
+                           && mergedToolOutput.First().Value is JsonValue singleVal
+                           && singleVal.TryGetValue<string>(out var singleStr)
+                ? singleStr
+                : mergedToolOutput.ToJsonString();
         }
         else
         {
@@ -135,9 +139,9 @@ public sealed class LocalAgentChatClient(string modelId = "local-deterministic")
         string? propertyName,
         JsonObject? toolOutputs = null)
     {
-        if (propertyName is not null && toolOutputs is not null && TryGetCaseInsensitive(toolOutputs, propertyName, out var toolVal) && toolVal is not null)
+        if (propertyName is not null && toolOutputs is not null && MiddtMcpClient.TryGetCaseInsensitive(toolOutputs, propertyName, out var toolVal) && toolVal is not null)
         {
-            var coerced = CoerceToSchema(toolVal, schema);
+            var coerced = MiddtMcpClient.CoerceValueToSchema(toolVal, schema);
             if (coerced is not null)
             {
                 return coerced;
@@ -179,25 +183,7 @@ public sealed class LocalAgentChatClient(string modelId = "local-deterministic")
 
         foreach (var tool in availableTools)
         {
-            if (tool is not AIFunction fn)
-            {
-                continue;
-            }
-
-            if (fn.Name is MiddtWorkflowAgentTools.EvaluateExpressionToolName
-                && !contextObj.ContainsKey("expression"))
-            {
-                continue;
-            }
-
-            if (fn.Name is MiddtWorkflowAgentTools.GetInstanceToolName
-                && !contextObj.ContainsKey("instanceId"))
-            {
-                continue;
-            }
-
-            if (fn.Name is MiddtWorkflowAgentTools.ListDefinitionsToolName
-                && availableTools.Count > 1)
+            if (tool is not AIFunction fn || !HasRequiredParameters(fn.JsonSchema, contextObj))
             {
                 continue;
             }
@@ -212,6 +198,27 @@ public sealed class LocalAgentChatClient(string modelId = "local-deterministic")
         }
 
         return calls;
+    }
+
+    private static bool HasRequiredParameters(JsonElement jsonSchema, JsonObject contextObj)
+    {
+        if (jsonSchema.ValueKind != JsonValueKind.Object
+            || !jsonSchema.TryGetProperty("required", out var requiredProp)
+            || requiredProp.ValueKind != JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        foreach (var reqItem in requiredProp.EnumerateArray())
+        {
+            var paramName = reqItem.GetString();
+            if (!string.IsNullOrWhiteSpace(paramName) && !MiddtMcpClient.TryGetCaseInsensitive(contextObj, paramName, out _))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static object? ConvertJsonNodeToPrimitive(JsonNode? node) => node switch
@@ -268,94 +275,22 @@ public sealed class LocalAgentChatClient(string modelId = "local-deterministic")
                     continue;
                 }
 
-                try
+                var parsed = MiddtMcpClient.TryParseJsonOrValue(raw);
+                if (parsed is JsonObject obj)
                 {
-                    if (JsonNode.Parse(raw) is JsonObject obj)
+                    foreach (var (k, v) in obj)
                     {
-                        foreach (var (k, v) in obj)
-                        {
-                            merged[k] = v?.DeepClone();
-                        }
+                        merged[k] = v?.DeepClone();
                     }
                 }
-                catch (JsonException)
+                else if (parsed is not null)
                 {
-                    merged["result"] = JsonValue.Create(raw);
+                    merged["result"] = parsed.DeepClone();
                 }
             }
         }
 
         return merged;
-    }
-
-    private static string? TryExtractSummaryText(JsonObject obj)
-    {
-        foreach (var key in (string[])["advice", "summary", "text", "message", "reasoning"])
-        {
-            if (TryGetCaseInsensitive(obj, key, out var node)
-                && node is JsonValue jv
-                && jv.TryGetValue<string>(out var str)
-                && !string.IsNullOrWhiteSpace(str))
-            {
-                return str;
-            }
-        }
-
-        return null;
-    }
-
-    private static bool TryGetCaseInsensitive(JsonObject obj, string propertyName, out JsonNode? value)
-    {
-        if (obj.TryGetPropertyValue(propertyName, out value))
-        {
-            return true;
-        }
-
-        foreach (var (k, v) in obj)
-        {
-            if (string.Equals(k, propertyName, StringComparison.OrdinalIgnoreCase))
-            {
-                value = v;
-                return true;
-            }
-        }
-
-        value = null;
-        return false;
-    }
-
-    private static JsonNode? CoerceToSchema(JsonNode value, JsonObject schema)
-    {
-        var expectedType = schema["type"]?.GetValue<string>();
-        JsonNode? candidate = value.DeepClone();
-
-        if (expectedType is "number" or "integer" && candidate is JsonValue jvStr && jvStr.TryGetValue<string>(out var numStr))
-        {
-            if (expectedType == "integer" && long.TryParse(numStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var lVal))
-            {
-                candidate = JsonValue.Create(lVal);
-            }
-            else if (double.TryParse(numStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var dVal))
-            {
-                candidate = JsonValue.Create(dVal);
-            }
-        }
-        else if (expectedType == "boolean" && candidate is JsonValue bStr && bStr.TryGetValue<string>(out var boolText)
-                 && bool.TryParse(boolText, out var bVal))
-        {
-            candidate = JsonValue.Create(bVal);
-        }
-
-        if (schema["enum"] is JsonArray allowed && allowed.Count > 0)
-        {
-            var matchesEnum = allowed.Any(a => JsonNode.DeepEquals(a, candidate));
-            if (!matchesEnum)
-            {
-                return null;
-            }
-        }
-
-        return candidate;
     }
 
     private static JsonObject SynthesizeObject(JsonObject schema, string promptText, JsonObject? toolOutputs)

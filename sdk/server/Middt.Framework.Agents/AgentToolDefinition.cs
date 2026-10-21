@@ -4,7 +4,9 @@ namespace Middt.Framework.Agents;
 
 /// <summary>
 /// Declarative specification of an <c>AITool</c> that can be invoked by Microsoft Agent Framework (<c>Microsoft.Agents.AI</c>)
-/// agents. Can be defined in <c>Agents/*.json</c>, <c>appsettings.json</c>, or via <see cref="MiddtAgentOptions"/>.
+/// agents. Can be defined in <c>Agents/Tools/*.json</c>, <c>appsettings.json</c>, or via <see cref="MiddtAgentOptions"/>.
+/// Supports direct execution of any registered <see cref="Middt.Framework.Workflow.Tasks.IWorkflowTask"/> via <see cref="Task"/>
+/// or <c>kind: "task"</c>.
 /// </summary>
 public sealed class AgentToolDefinition
 {
@@ -17,8 +19,9 @@ public sealed class AgentToolDefinition
     /// <summary>
     /// Execution kind:
     /// <list type="bullet">
-    ///   <item><description><c>expression</c> (default): Evaluates <see cref="Expression"/> or renders <see cref="Output"/> with <c>args</c> in scope.</description></item>
-    ///   <item><description><c>http</c>: Sends an HTTP request (<see cref="Method"/>, <see cref="Url"/>, <see cref="Headers"/>, <see cref="Body"/>) templated with <c>{{ args.* }}</c>.</description></item>
+    ///   <item><description><c>expression</c> (default when <see cref="Task"/> is not set): Evaluates <see cref="Expression"/> or renders <see cref="Output"/> with <c>args</c> and workflow <c>data</c> in scope.</description></item>
+    ///   <item><description><c>task</c> (or any registered workflow task name): Executes a registered <see cref="Middt.Framework.Workflow.Tasks.IWorkflowTask"/> from <see cref="Middt.Framework.Workflow.Definitions.WorkflowTaskRegistry"/> (<c>set</c>, <c>http</c>, <c>cache</c>, <c>operation</c>, <c>publish</c>, <c>rabbitmq</c>, <c>loadWorkflow</c>, <c>startWorkflow</c>, or custom tasks).</description></item>
+    ///   <item><description><c>http</c>: Executes an HTTP request through the workflow <see cref="Middt.Framework.Workflow.Tasks.HttpTask"/> pipeline (<see cref="Method"/>, <see cref="Url"/>, <see cref="QueryParams"/>, <see cref="Headers"/>, <see cref="Body"/>) templated with <c>{{ args.* }}</c> / <c>{{ data.* }}</c>.</description></item>
     ///   <item><description><c>mcp</c>: Calls a tool on a configured Model Context Protocol (MCP) server (<see cref="McpServer"/>, <see cref="McpTool"/>).</description></item>
     /// </list>
     /// </summary>
@@ -27,19 +30,48 @@ public sealed class AgentToolDefinition
     /// <summary>Optional JSON Schema describing the tool's input parameters.</summary>
     public JsonObject? Parameters { get; set; }
 
-    /// <summary>For <c>kind: "expression"</c>: single Middt expression evaluated with <c>args</c> in scope.</summary>
+    /// <summary>
+    /// For <c>kind: "task"</c>: name of the workflow task in <see cref="Middt.Framework.Workflow.Definitions.WorkflowTaskRegistry"/>
+    /// (e.g. <c>set</c>, <c>http</c>, <c>cache</c>, <c>operation</c>, <c>publish</c>, <c>rabbitmq</c>, <c>loadWorkflow</c>, <c>startWorkflow</c>).
+    /// When set, the tool automatically executes through the workflow task pipeline even if <see cref="Kind"/> is omitted.
+    /// </summary>
+    public string? Task { get; set; }
+
+    /// <summary>
+    /// For <c>kind: "task"</c> (or <c>kind: "http"</c>): configuration object passed as <c>TaskDefinition.Config</c> to the
+    /// <see cref="Middt.Framework.Workflow.Tasks.IWorkflowTask"/>. Supports <c>{{ args.* }}</c>, <c>{{ input.* }}</c>, and <c>{{ data.* }}</c> templates.
+    /// </summary>
+    public JsonObject? Config { get; set; }
+
+    /// <summary>
+    /// For <c>kind: "task"</c>: path in the task's <c>Data</c> object from which the tool output is read and returned to the AI model
+    /// (defaults to <c>Config["into"]</c> or <c>__toolResult</c>).
+    /// </summary>
+    public string? Into { get; set; }
+
+    /// <summary>
+    /// When <c>true</c> and the tool is invoked by an agent running inside a workflow (<see cref="AiAgentTask"/>),
+    /// any fields written to <c>Data</c> by the underlying <see cref="Middt.Framework.Workflow.Tasks.IWorkflowTask"/>
+    /// are also merged back into the active workflow instance's <c>Data</c>.
+    /// </summary>
+    public bool WriteToWorkflowData { get; set; }
+
+    /// <summary>For <c>kind: "expression"</c>: single Middt expression evaluated with <c>args</c> and <c>data</c> in scope.</summary>
     public string? Expression { get; set; }
 
     /// <summary>
-    /// For <c>kind: "expression"</c>: structured JSON template whose <c>{{ }}</c> placeholders are evaluated with <c>args</c> in scope.
+    /// For <c>kind: "expression"</c>: structured JSON template whose <c>{{ }}</c> placeholders are evaluated with <c>args</c> and <c>data</c> in scope.
     /// </summary>
     public JsonNode? Output { get; set; }
 
     /// <summary>For <c>kind: "http"</c>: HTTP method (<c>GET</c>, <c>POST</c>, etc.; defaults to <c>POST</c> when <see cref="Body"/> is set, otherwise <c>GET</c>).</summary>
     public string? Method { get; set; }
 
-    /// <summary>For <c>kind: "http"</c>: Target URL template (supports <c>{{ args.* }}</c>).</summary>
+    /// <summary>For <c>kind: "http"</c>: Target URL template (supports <c>{{ args.* }}</c> and <c>{{ data.* }}</c>).</summary>
     public string? Url { get; set; }
+
+    /// <summary>For <c>kind: "http"</c>: Optional query string parameters template.</summary>
+    public JsonObject? QueryParams { get; set; }
 
     /// <summary>For <c>kind: "http"</c>: Optional HTTP headers object template.</summary>
     public JsonObject? Headers { get; set; }
@@ -96,7 +128,7 @@ public sealed class McpResourceDefinition
 
     public string MimeType { get; set; } = "application/json";
 
-    /// <summary>Static or <c>{{ args.* }}</c> templated JSON/text content of the resource.</summary>
+    /// <summary>Static or templated JSON content returned when the resource is read.</summary>
     public JsonNode? Content { get; set; }
 }
 
@@ -107,7 +139,7 @@ public sealed class McpPromptDefinition
 
     public string? Description { get; set; }
 
-    /// <summary>Prompt template text (supports <c>{{ args.* }}</c> placeholders).</summary>
+    /// <summary>Prompt message template supporting <c>{{ args.* }}</c> placeholders.</summary>
     public string Template { get; set; } = string.Empty;
 }
 

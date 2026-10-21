@@ -119,6 +119,21 @@
         }
       ]
     },
+    {
+      "widget": "section",
+      "title": "AI Çoklu Ajan (Multi-Agent) Fraud Komitesi Raporu",
+      "visibleWhen": "data.committeeReview != null",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "Komite Modu", "value": "{{ data.committeeMeta.mode }}", "visibleWhen": "data.committeeMeta != null" },
+            { "label": "Komite Özeti", "value": "{{ data.committeeReview }}" },
+            { "label": "Değerlendirme Zamanı", "value": "{{ data.committeeMeta.evaluatedAt }}", "format": "g", "visibleWhen": "data.committeeMeta != null && data.committeeMeta.evaluatedAt != null" }
+          ]
+        }
+      ]
+    },
     { "widget": "layout", "key": "workflow-footer" }
   ]
 }

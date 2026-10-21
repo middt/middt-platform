@@ -70,6 +70,7 @@ public sealed class AiAgentTask : IWorkflowTask
 
     public async Task ExecuteAsync(WorkflowTaskContext context, CancellationToken cancellationToken)
     {
+        using var _ = WorkflowTaskAmbientContext.Enter(context);
         var registry = context.Services.GetService<IMiddtAgentRegistry>()
             ?? throw new WorkflowTaskException("agent task requires IMiddtAgentRegistry (call services.AddMiddtAgents(...)).");
 

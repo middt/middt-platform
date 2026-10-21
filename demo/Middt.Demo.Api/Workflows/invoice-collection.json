@@ -8,11 +8,29 @@
   "dataSchema": {
     "type": "object",
     "properties": {
-      "invoiceNo": { "type": "string", "title": "Fatura No", "x-search": true },
-      "customerName": { "type": "string", "title": "Müşteri Adı", "x-search": true },
-      "total": { "type": "number", "title": "Fatura Tutarı (₺)", "x-search": true },
-      "paidAmount": { "type": "number", "title": "Ödenen Tutar (₺)" },
-      "remainingAmount": { "type": "number", "title": "Kalan Tutar (₺)" }
+      "invoiceNo": {
+        "type": "string",
+        "title": "Fatura No",
+        "x-search": true
+      },
+      "customerName": {
+        "type": "string",
+        "title": "Müşteri Adı",
+        "x-search": true
+      },
+      "total": {
+        "type": "number",
+        "title": "Fatura Tutarı (₺)",
+        "x-search": true
+      },
+      "paidAmount": {
+        "type": "number",
+        "title": "Ödenen Tutar (₺)"
+      },
+      "remainingAmount": {
+        "type": "number",
+        "title": "Kalan Tutar (₺)"
+      }
     }
   },
   "start": {
@@ -22,12 +40,38 @@
       "schema": {
         "type": "object",
         "additionalProperties": false,
-        "required": [ "invoiceNo", "customerName", "total" ],
+        "required": [
+          "invoiceNo",
+          "customerName",
+          "total"
+        ],
         "properties": {
-          "invoiceNo": { "type": "string", "minLength": 3, "maxLength": 40, "title": "Fatura No", "default": "FTR-2026-0001" },
-          "customerName": { "type": "string", "minLength": 2, "maxLength": 120, "title": "Müşteri Adı", "default": "Anadolu Lojistik A.Ş." },
-          "total": { "type": "number", "minimum": 1, "title": "Fatura Tutarı (₺)", "default": 12500 },
-          "description": { "type": "string", "maxLength": 500, "title": "Açıklama", "default": "Ekim 2026 lojistik hizmet bedeli" }
+          "invoiceNo": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 40,
+            "title": "Fatura No",
+            "default": "FTR-2026-0001"
+          },
+          "customerName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120,
+            "title": "Müşteri Adı",
+            "default": "Anadolu Lojistik A.Ş."
+          },
+          "total": {
+            "type": "number",
+            "minimum": 1,
+            "title": "Fatura Tutarı (₺)",
+            "default": 12500
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Açıklama",
+            "default": "Ekim 2026 lojistik hizmet bedeli"
+          }
         }
       },
       "set": {
@@ -42,12 +86,17 @@
     {
       "key": "awaiting-payment",
       "title": "Ödeme Bekleniyor",
-      "view": { "layout": "invoice-detail" },
+      "view": {
+        "layout": "invoice-detail"
+      },
       "step": 1,
       "onEntry": [
         {
           "task": "setKey",
-          "config": { "key": "INV-{{ data.invoiceNo }}", "ensureUnique": true }
+          "config": {
+            "key": "INV-{{ data.invoiceNo }}",
+            "ensureUnique": true
+          }
         }
       ],
       "transitions": [
@@ -70,10 +119,20 @@
             "schema": {
               "type": "object",
               "additionalProperties": false,
-              "required": [ "amount" ],
+              "required": [
+                "amount"
+              ],
               "properties": {
-                "amount": { "type": "number", "minimum": 0, "title": "Ödenen Tutar (₺)" },
-                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı" }
+                "amount": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "Ödenen Tutar (₺)"
+                },
+                "reference": {
+                  "type": "string",
+                  "maxLength": 60,
+                  "title": "Banka Referansı"
+                }
               }
             },
             "into": "partialPayment[]",
@@ -91,17 +150,31 @@
           "key": "record-payment",
           "title": "Ödeme Kaydet",
           "target": "$self",
-          "roles": [ "manager" ],
+          "roles": [
+            "manager"
+          ],
           "rule": "data.remainingAmount > 0",
           "input": {
             "rule": "input.amount <= data.remainingAmount",
             "schema": {
               "type": "object",
               "additionalProperties": false,
-              "required": [ "amount" ],
+              "required": [
+                "amount"
+              ],
               "properties": {
-                "amount": { "type": "number", "minimum": 0, "title": "Ödenen Tutar (₺)", "default": 5000 },
-                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı", "default": "EFT-2026-000{{ data.partialPayment != null ? data.partialPayment.Count + 1 : 1 }}" }
+                "amount": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "Ödenen Tutar (₺)",
+                  "default": 5000
+                },
+                "reference": {
+                  "type": "string",
+                  "maxLength": 60,
+                  "title": "Banka Referansı",
+                  "default": "EFT-2026-000{{ data.partialPayment != null ? data.partialPayment.Count + 1 : 1 }}"
+                }
               }
             },
             "into": "partialPayment[]",
@@ -111,85 +184,6 @@
               "partialPayment[-1].reference": "input.reference ?? \"EFT-2026-0001\"",
               "partialPayment[-1].paidAt": "now",
               "partialPayment[-1].recordedBy": "user.Name",
-              "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")"
-            }
-          }
-        },
-        {
-          "key": "delete-payment",
-          "title": "Ödeme Kaydını Sil",
-          "target": "$self",
-          "style": "danger",
-          "icon": "delete",
-          "roles": [ "manager" ],
-          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
-          "input": {
-            "rule": "data.partialPayment.Any(\"reference\", input.reference)",
-            "schema": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [ "reference" ],
-              "properties": {
-                "reference": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 120,
-                  "title": "Silinecek Ödeme",
-                  "x-enumFrom": {
-                    "source": "partialPayment",
-                    "format": "#{{ item.rowNumber }} - {{ item.amount }} ₺ ({{ item.reference }})"
-                  }
-                },
-                "reason": {
-                  "type": "string",
-                  "maxLength": 300,
-                  "title": "Silme Nedeni",
-                  "default": "Hatalı ödeme kaydı düzeltildi."
-                }
-              }
-            },
-            "set": {
-              "partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)",
-              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"Hatalı ödeme kaydı düzeltildi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
-              "paidAmount": "data.partialPayment.Sum(\"amount\")",
-              "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
-              "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")"
-            }
-          }
-        },
-        {
-          "key": "patch-payment",
-          "title": "Ödeme Kaydını Sil / Düzenle (JSON Patch)",
-          "target": "$self",
-          "style": "warning",
-          "icon": "edit_note",
-          "toolbar": false,
-          "roles": [ "manager" ],
-          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
-          "input": {
-            "format": "jsonPatch",
-            "into": "partialPayment",
-            "rule": "data.partialPayment.Sum(\"amount\") <= data.total",
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [ "amount" ],
-                "properties": {
-                  "amount": { "type": "number", "minimum": 0 },
-                  "reference": { "type": "string", "maxLength": 60 },
-                  "paidAt": { "type": "string" },
-                  "recordedBy": { "type": "string" }
-                }
-              }
-            },
-            "set": {
-              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"JSON Patch ile silindi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
-              "paidAmount": "data.partialPayment.Sum(\"amount\")",
-              "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
               "payment.amount": "data.paidAmount",
               "payment.reference": "data.partialPayment.Last(\"reference\")"
             }
@@ -206,12 +200,27 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "email": { "type": "string", "format": "email", "maxLength": 120, "title": "E-posta" },
-                "phone": { "type": "string", "maxLength": 20, "title": "Telefon" },
-                "address": { "type": "string", "maxLength": 300, "title": "Fatura Adresi" }
+                "email": {
+                  "type": "string",
+                  "format": "email",
+                  "maxLength": 120,
+                  "title": "E-posta"
+                },
+                "phone": {
+                  "type": "string",
+                  "maxLength": 20,
+                  "title": "Telefon"
+                },
+                "address": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "title": "Fatura Adresi"
+                }
               }
             },
-            "set": { "contactUpdatedBy": "user.Name" }
+            "set": {
+              "contactUpdatedBy": "user.Name"
+            }
           }
         },
         {
@@ -220,30 +229,15 @@
           "target": "overdue",
           "trigger": "Scheduled",
           "after": "P7D"
-        },
-        {
-          "key": "cancel-invoice",
-          "title": "Faturayı İptal Et",
-          "target": "cancelled",
-          "roles": [ "manager" ],
-          "input": {
-            "schema": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [ "reason" ],
-              "properties": {
-                "reason": { "type": "string", "minLength": 3, "maxLength": 300, "title": "İptal Nedeni", "default": "Fatura müşteri talebiyle iptal edildi." }
-              }
-            },
-            "into": "cancellation"
-          }
         }
       ]
     },
     {
       "key": "overdue",
       "title": "Vadesi Geçti",
-      "view": { "layout": "invoice-detail" },
+      "view": {
+        "layout": "invoice-detail"
+      },
       "step": 1,
       "subType": "Human",
       "transitions": [
@@ -266,10 +260,20 @@
             "schema": {
               "type": "object",
               "additionalProperties": false,
-              "required": [ "amount" ],
+              "required": [
+                "amount"
+              ],
               "properties": {
-                "amount": { "type": "number", "minimum": 0, "title": "Ödenen Tutar (₺)" },
-                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı" }
+                "amount": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "Ödenen Tutar (₺)"
+                },
+                "reference": {
+                  "type": "string",
+                  "maxLength": 60,
+                  "title": "Banka Referansı"
+                }
               }
             },
             "into": "partialPayment[]",
@@ -287,17 +291,31 @@
           "key": "record-late-payment",
           "title": "Gecikmeli Ödeme Kaydet",
           "target": "$self",
-          "roles": [ "manager" ],
+          "roles": [
+            "manager"
+          ],
           "rule": "data.remainingAmount > 0",
           "input": {
             "rule": "input.amount <= data.remainingAmount",
             "schema": {
               "type": "object",
               "additionalProperties": false,
-              "required": [ "amount" ],
+              "required": [
+                "amount"
+              ],
               "properties": {
-                "amount": { "type": "number", "minimum": 0, "title": "Ödenen Tutar (₺)", "default": 5000 },
-                "reference": { "type": "string", "maxLength": 60, "title": "Banka Referansı", "default": "EFT-2026-000{{ data.partialPayment != null ? data.partialPayment.Count + 1 : 1 }}" }
+                "amount": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "Ödenen Tutar (₺)",
+                  "default": 5000
+                },
+                "reference": {
+                  "type": "string",
+                  "maxLength": 60,
+                  "title": "Banka Referansı",
+                  "default": "EFT-2026-000{{ data.partialPayment != null ? data.partialPayment.Count + 1 : 1 }}"
+                }
               }
             },
             "into": "partialPayment[]",
@@ -311,109 +329,15 @@
               "payment.reference": "data.partialPayment.Last(\"reference\")"
             }
           }
-        },
-        {
-          "key": "delete-payment",
-          "title": "Ödeme Kaydını Sil",
-          "target": "$self",
-          "style": "danger",
-          "icon": "delete",
-          "roles": [ "manager" ],
-          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
-          "input": {
-            "rule": "data.partialPayment.Any(\"reference\", input.reference)",
-            "schema": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [ "reference" ],
-              "properties": {
-                "reference": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 120,
-                  "title": "Silinecek Ödeme",
-                  "x-enumFrom": {
-                    "source": "partialPayment",
-                    "format": "#{{ item.rowNumber }} - {{ item.amount }} ₺ ({{ item.reference }})"
-                  }
-                },
-                "reason": {
-                  "type": "string",
-                  "maxLength": 300,
-                  "title": "Silme Nedeni",
-                  "default": "Hatalı ödeme kaydı düzeltildi."
-                }
-              }
-            },
-            "set": {
-              "partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)",
-              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"Hatalı ödeme kaydı düzeltildi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
-              "paidAmount": "data.partialPayment.Sum(\"amount\")",
-              "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
-              "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")"
-            }
-          }
-        },
-        {
-          "key": "patch-payment",
-          "title": "Ödeme Kaydını Sil / Düzenle (JSON Patch)",
-          "target": "$self",
-          "style": "warning",
-          "icon": "edit_note",
-          "toolbar": false,
-          "roles": [ "manager" ],
-          "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
-          "input": {
-            "format": "jsonPatch",
-            "into": "partialPayment",
-            "rule": "data.partialPayment.Sum(\"amount\") <= data.total",
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [ "amount" ],
-                "properties": {
-                  "amount": { "type": "number", "minimum": 0 },
-                  "reference": { "type": "string", "maxLength": 60 },
-                  "paidAt": { "type": "string" },
-                  "recordedBy": { "type": "string" }
-                }
-              }
-            },
-            "set": {
-              "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"JSON Patch ile silindi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
-              "paidAmount": "data.partialPayment.Sum(\"amount\")",
-              "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
-              "payment.amount": "data.paidAmount",
-              "payment.reference": "data.partialPayment.Last(\"reference\")"
-            }
-          }
-        },
-        {
-          "key": "cancel-invoice",
-          "title": "Faturayı İptal Et",
-          "target": "cancelled",
-          "roles": [ "manager" ],
-          "input": {
-            "schema": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [ "reason" ],
-              "properties": {
-                "reason": { "type": "string", "minLength": 3, "maxLength": 300, "title": "İptal Nedeni", "default": "Tahsil edilemedi." }
-              }
-            },
-            "into": "cancellation"
-          }
         }
       ]
     },
     {
       "key": "reconciling",
       "title": "Muhasebe Mutabakatı (Arka Plan)",
-      "view": { "layout": "invoice-detail" },
+      "view": {
+        "layout": "invoice-detail"
+      },
       "step": 2,
       "onEntry": [
         {
@@ -424,7 +348,11 @@
             "maxAttempts": 3,
             "delay": "00:00:02",
             "backoffMultiplier": 2.0,
-            "retryOnStatusCodes": [ "408", "429", "5xx" ],
+            "retryOnStatusCodes": [
+              "408",
+              "429",
+              "5xx"
+            ],
             "action": "Transition",
             "transition": "reconcile-manually"
           },
@@ -441,7 +369,11 @@
         },
         {
           "task": "set",
-          "config": { "values": { "reconciledAt": "now" } }
+          "config": {
+            "values": {
+              "reconciledAt": "now"
+            }
+          }
         }
       ],
       "transitions": [
@@ -455,14 +387,18 @@
           "key": "reconcile-manually",
           "title": "Elle Mutabakata Gönder",
           "target": "manual-reconciliation",
-          "roles": [ "manager" ]
+          "roles": [
+            "manager"
+          ]
         }
       ]
     },
     {
       "key": "manual-reconciliation",
       "title": "Elle Mutabakat",
-      "view": { "layout": "invoice-detail" },
+      "view": {
+        "layout": "invoice-detail"
+      },
       "step": 2,
       "subType": "Human",
       "transitions": [
@@ -470,17 +406,27 @@
           "key": "confirm-reconciliation",
           "title": "Mutabakatı Onayla",
           "target": "paid",
-          "roles": [ "manager" ],
+          "roles": [
+            "manager"
+          ],
           "input": {
             "schema": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "note": { "type": "string", "maxLength": 300, "title": "Mutabakat Notu", "default": "Muhasebe kaydı elle girildi." }
+                "note": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "title": "Mutabakat Notu",
+                  "default": "Muhasebe kaydı elle girildi."
+                }
               }
             },
             "into": "manualReconciliation",
-            "set": { "reconciledBy": "user.Name", "reconciledAt": "now" }
+            "set": {
+              "reconciledBy": "user.Name",
+              "reconciledAt": "now"
+            }
           }
         }
       ]
@@ -488,7 +434,9 @@
     {
       "key": "paid",
       "title": "Tahsil Edildi",
-      "view": { "layout": "invoice-result" },
+      "view": {
+        "layout": "invoice-result"
+      },
       "step": 3,
       "type": "Finish",
       "subType": "Success"
@@ -496,7 +444,9 @@
     {
       "key": "cancelled",
       "title": "İptal Edildi",
-      "view": { "layout": "invoice-result" },
+      "view": {
+        "layout": "invoice-result"
+      },
       "step": 3,
       "type": "Finish",
       "subType": "Cancelled"
@@ -504,13 +454,154 @@
   ],
   "sharedTransitions": [
     {
+      "key": "delete-payment",
+      "title": "Ödeme Kaydını Sil",
+      "target": "$self",
+      "style": "danger",
+      "icon": "delete",
+      "roles": [
+        "manager"
+      ],
+      "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
+      "input": {
+        "rule": "data.partialPayment.Any(\"reference\", input.reference)",
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reference"
+          ],
+          "properties": {
+            "reference": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "title": "Silinecek Ödeme",
+              "x-enumFrom": {
+                "source": "partialPayment",
+                "format": "#{{ item.rowNumber }} - {{ item.amount }} ₺ ({{ item.reference }})"
+              }
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 300,
+              "title": "Silme Nedeni",
+              "default": "Hatalı ödeme kaydı düzeltildi."
+            }
+          }
+        },
+        "set": {
+          "partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)",
+          "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"Hatalı ödeme kaydı düzeltildi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
+          "paidAmount": "data.partialPayment.Sum(\"amount\")",
+          "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
+          "payment.amount": "data.paidAmount",
+          "payment.reference": "data.partialPayment.Last(\"reference\")"
+        }
+      },
+      "availableIn": [
+        "awaiting-payment",
+        "overdue"
+      ]
+    },
+    {
+      "key": "patch-payment",
+      "title": "Ödeme Kaydını Sil / Düzenle (JSON Patch)",
+      "target": "$self",
+      "style": "warning",
+      "icon": "edit_note",
+      "toolbar": false,
+      "roles": [
+        "manager"
+      ],
+      "rule": "data.paidAmount > 0 && data.partialPayment != null && data.partialPayment.Count > 0",
+      "input": {
+        "format": "jsonPatch",
+        "into": "partialPayment",
+        "rule": "data.partialPayment.Sum(\"amount\") <= data.total",
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "amount"
+            ],
+            "properties": {
+              "amount": {
+                "type": "number",
+                "minimum": 0
+              },
+              "reference": {
+                "type": "string",
+                "maxLength": 60
+              },
+              "paidAt": {
+                "type": "string"
+              },
+              "recordedBy": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "set": {
+          "deletedPayment[]": "input.removed.With(\"reason\", input.reason ?? \"JSON Patch ile silindi.\").With(\"deletedBy\", user.Name).With(\"deletedAt\", now)",
+          "paidAmount": "data.partialPayment.Sum(\"amount\")",
+          "remainingAmount": "data.total > data.paidAmount ? data.total - data.paidAmount : 0",
+          "payment.amount": "data.paidAmount",
+          "payment.reference": "data.partialPayment.Last(\"reference\")"
+        }
+      },
+      "availableIn": [
+        "awaiting-payment",
+        "overdue"
+      ]
+    },
+    {
+      "key": "cancel-invoice",
+      "title": "Faturayı İptal Et",
+      "target": "cancelled",
+      "roles": [
+        "manager"
+      ],
+      "input": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 300,
+              "title": "İptal Nedeni",
+              "default": "Fatura müşteri talebiyle iptal edildi."
+            }
+          }
+        },
+        "into": "cancellation"
+      },
+      "availableIn": [
+        "awaiting-payment",
+        "overdue"
+      ]
+    },
+    {
       "key": "ai-risk-audit",
       "title": "AI Risk Analizi",
       "target": "$self",
       "style": "secondary",
       "icon": "psychology",
-      "availableIn": [ "awaiting-payment", "overdue" ],
-      "roles": [ "manager" ],
+      "availableIn": [
+        "awaiting-payment",
+        "overdue"
+      ],
+      "roles": [
+        "manager"
+      ],
       "onExecute": [
         {
           "key": "run-risk-auditor-agent",

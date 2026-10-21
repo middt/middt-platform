@@ -4,12 +4,12 @@ Angular 22 frontend of the Middt framework – the counterpart of `Middt.Framewo
 same API, render the same JSON layouts and drive the same workflows.
 
 This workspace contains only the library **`@middt/angular`** (`projects/middt-angular`): BFF authentication, layout
-renderer + widgets + runtime editor, workflow list/detail/wizard/JSON Schema forms, SignalR, notifications. It is built on
+renderer + widgets + runtime editor, workflow list/detail/wizard/JSON Schema forms, notifications. It is built on
 [`@middt/ui-core`](../ui-core) (consumed as a package) and Angular Material.
 
 The demo app lives in [`demo/angular-app`](../../../demo/angular-app) and uses both packages exactly like
 any application would; it is served by the BFF host [`demo/Middt.Demo.Angular`](../../../demo/Middt.Demo.Angular)
-(cookie session, server side tokens, `/api` + `/hubs` proxy) – the browser never sees a token.
+(cookie session, server side tokens, `/api` proxy) – the browser never sees a token.
 
 ## Build
 
@@ -26,7 +26,7 @@ up without reinstalling.
 ## Using the library in an app
 
 New applications should import from `@middt/angular/core`, `@middt/angular/ui`,
-`@middt/angular/workflow`, and `@middt/angular/signalr`. The root `@middt/angular`
+and `@middt/angular/workflow`. The root `@middt/angular`
 entry point remains available for existing applications.
 
 ```ts

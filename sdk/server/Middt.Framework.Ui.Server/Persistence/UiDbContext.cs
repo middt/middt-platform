@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Options;
 
 namespace Middt.Framework.Ui.Server.Persistence;
@@ -48,10 +49,12 @@ public sealed class UiDbContext(DbContextOptions<UiDbContext> options, IOptions<
 
     public DbSet<UiLayoutRevisionEntity> Revisions => Set<UiLayoutRevisionEntity>();
 
+    internal string? ModelSchema => (Database.ProviderName ?? string.Empty).Contains("Sqlite", StringComparison.Ordinal) ? null : uiOptions.Value.Schema;
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var provider = Database.ProviderName ?? string.Empty;
-        var schema = provider.Contains("Sqlite", StringComparison.Ordinal) ? null : uiOptions.Value.Schema;
+        var schema = ModelSchema;
         var isPostgres = provider.Contains("Npgsql", StringComparison.Ordinal);
 
         modelBuilder.Entity<UiLayoutEntity>(e =>
@@ -87,4 +90,13 @@ public sealed class UiDbContext(DbContextOptions<UiDbContext> options, IOptions<
             e.HasIndex(x => new { x.Key, x.Version });
         });
     }
+}
+
+/// <summary>Includes <see cref="UiDbContext.ModelSchema"/> in the EF Core model cache key.</summary>
+internal sealed class UiModelCacheKeyFactory : IModelCacheKeyFactory
+{
+    public object Create(DbContext context, bool designTime) =>
+        context is UiDbContext ui
+            ? (context.GetType(), ui.ModelSchema, designTime)
+            : (context.GetType(), designTime);
 }

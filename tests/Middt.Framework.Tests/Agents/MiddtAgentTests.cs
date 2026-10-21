@@ -118,7 +118,6 @@ public sealed class MiddtAgentTests
                     name: "credit-underwriter",
                     instructions: "You are a credit underwriting specialist.",
                     description: "Evaluates credit risk.",
-                    tools: [MiddtWorkflowAgentTools.EvaluateExpressionToolName],
                     outputSchema: outputSchema)));
 
         var instance = await host.StartInstanceAsync(
@@ -252,7 +251,7 @@ public sealed class MiddtAgentTests
                 "config": {
                   "name": "tax-agent",
                   "instructions": "Calculate tax using the calculate_tax tool.",
-                  "tools": ["calculate_tax", "workflow_evaluate_expression", "workflow_list_definitions"],
+                  "tools": ["calculate_tax"],
                   "prompt": "Compute VAT for {{ data.amount }}",
                   "outputSchema": {
                     "type": "object",
@@ -327,27 +326,20 @@ public sealed class MiddtAgentTests
         instance.Data["taxResult"]!["vatAmount"]!.GetValue<double>().Should().Be(200);
         instance.Data["taxResult"]!["currency"]!.GetValue<string>().Should().Be("TRY");
 
-        // Built-in Middt tools are also registered and callable via IMiddtAgentRegistry
+        // Registered tools and WorkflowTaskRegistry tasks are callable via IMiddtAgentRegistry
         var ct = TestContext.Current.CancellationToken;
         var registry = host.Services.GetRequiredService<IMiddtAgentRegistry>();
-        var evalTool = (AIFunction)registry.GetTool(MiddtWorkflowAgentTools.EvaluateExpressionToolName)!;
-        var evalResult = await evalTool.InvokeAsync(
+        var taxTool = (AIFunction)registry.GetTool("calculate_tax")!;
+        var taxResult = await taxTool.InvokeAsync(
             new AIFunctionArguments(new Dictionary<string, object?>
             {
-                ["expression"] = "data.total - data.paidAmount",
-                ["dataJson"] = """{"total": 5000, "paidAmount": 1250}""",
+                ["amount"] = 2500d,
             }),
             ct);
-        evalResult?.ToString().Should().Be("3750");
+        taxResult?.ToString().Should().Be("500");
 
-        var getTool = (AIFunction)registry.GetTool(MiddtWorkflowAgentTools.GetInstanceToolName)!;
-        var getResult = await getTool.InvokeAsync(
-            new AIFunctionArguments(new Dictionary<string, object?>
-            {
-                ["instanceId"] = instance.Id,
-            }),
-            ct);
-        getResult?.ToString().Should().Contain("tool-and-schema-test");
+        var logTaskTool = (AIFunction)registry.GetTool("log")!;
+        logTaskTool.Should().NotBeNull();
 
         // Triggering an agent whose output violates outputSchema faults the transition as expected
         var faulted = await host.TransitionAsync(instance.Id, "trigger-invalid-schema", new { }, user: Manager);
@@ -387,6 +379,7 @@ public sealed class MiddtAgentTests
         audited.Data["aiAudit"]!["summary"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
         audited.Data["aiAudit"]!["recommendation"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
         audited.Data["aiAuditMeta"]!["agent"]!.GetValue<string>().Should().Be("invoice-risk-auditor");
+        audited.Data["lastAuditedWorkflow"]!.GetValue<string>().Should().Be("invoice-collection");
 
         var layout = UiJson.Parse(await File.ReadAllTextAsync(layoutPath, ct));
         var uiOptions = new MiddtUiOptions();
@@ -645,6 +638,15 @@ public sealed class MiddtAgentTests
         fraudCase.Data["aiDecision"]!["riskLevel"]!.GetValue<string>().Should().Be("Yüksek");
         fraudCase.Data["aiDecision"]!["riskScore"]!.GetValue<double>().Should().Be(89);
 
+        var committeeEvaluated = await host.TransitionAsync(
+            fraudCase.Id,
+            "run-multi-agent-committee",
+            new { },
+            user: Manager);
+        committeeEvaluated.State.Should().Be("fraud-investigation");
+        committeeEvaluated.Data["committeeReview"].Should().NotBeNull();
+        committeeEvaluated.Data["committeeMeta"]!["mode"]!.GetValue<string>().Should().Be("sequential");
+
         var fraudResolved = await host.TransitionAsync(
             fraudCase.Id,
             "confirm-fraud-refund",
@@ -668,6 +670,169 @@ public sealed class MiddtAgentTests
 
         resultHtml.Should().Contain("Kart Kapatıldı & Yenilendi");
         resultHtml.Should().Contain("route-fraud-investigation");
+    }
+
+    [Fact]
+    public async Task Agent_tools_execute_registered_workflow_tasks_with_ambient_workflow_context()
+    {
+        const string definition = """
+        {
+          "key": "ai-task-bridge-flow",
+          "version": 1,
+          "start": {
+            "key": "start",
+            "target": "completed",
+            "input": {
+              "schema": {
+                "type": "object",
+                "required": ["orderId", "baseAmount", "customerSegment"],
+                "properties": {
+                  "orderId": { "type": "string" },
+                  "baseAmount": { "type": "number" },
+                  "customerSegment": { "type": "string" }
+                }
+              }
+            },
+            "onExecute": [
+              {
+                "key": "run-pricing-agent",
+                "task": "aiAgent",
+                "config": {
+                  "agent": "pricing-agent",
+                  "prompt": "Calculate discounted pricing for order {{ data.orderId }}.",
+                  "context": {
+                    "orderId": "{{ data.orderId }}",
+                    "baseAmount": "{{ data.baseAmount }}",
+                    "customerSegment": "{{ data.customerSegment }}"
+                  },
+                  "into": "pricingResult",
+                  "metaInto": "pricingMeta"
+                }
+              }
+            ]
+          },
+          "states": [
+            {
+              "key": "completed",
+              "type": "Finish",
+              "subType": "Success"
+            }
+          ]
+        }
+        """;
+
+        var pricingSchema = JsonNode.Parse("""
+        {
+          "type": "object",
+          "required": ["finalPrice", "discountRate", "segmentTag", "workflowKey"],
+          "properties": {
+            "finalPrice": { "type": "number", "default": 0 },
+            "discountRate": { "type": "number", "default": 0 },
+            "segmentTag": { "type": "string", "default": "STD" },
+            "workflowKey": { "type": "string", "default": "unknown" }
+          }
+        }
+        """)!.AsObject();
+
+        await using var host = await WorkflowTestHost.StartAsync(
+            [definition],
+            services: s =>
+            {
+                s.AddMemoryCache();
+                s.AddMiddtAgents(
+                    configure: a =>
+                    {
+                        // 1. Declarative tool using workflow "set" task + WriteToWorkflowData = true
+                        a.AddDeclarativeTool(new AgentToolDefinition
+                        {
+                            Name = "compute_segment_pricing",
+                            Kind = "task",
+                            Task = "set",
+                            Description = "Computes discount and final price using the workflow set task and ambient instance context.",
+                            WriteToWorkflowData = true,
+                            Into = "pricingBreakdown",
+                            Parameters = JsonNode.Parse("""
+                            {
+                              "type": "object",
+                              "properties": {
+                                "baseAmount": { "type": "number" },
+                                "customerSegment": { "type": "string" }
+                              }
+                            }
+                            """)!.AsObject(),
+                            Config = JsonNode.Parse("""
+                            {
+                              "values": {
+                                "pricingBreakdown.discountRate": "args.customerSegment == \"VIP\" ? 0.2 : 0.05",
+                                "pricingBreakdown.finalPrice": "args.baseAmount * (args.customerSegment == \"VIP\" ? 0.8 : 0.95)",
+                                "pricingBreakdown.workflowKey": "instance.workflow",
+                                "auditTrailTag": "data.orderId + \":\" + args.customerSegment"
+                              }
+                            }
+                            """)!.AsObject(),
+                        });
+
+                        // 2. Declarative tool using workflow "cache" task wrapping an inner "set" subTask
+                        a.AddDeclarativeTool(new AgentToolDefinition
+                        {
+                            Name = "cached_segment_tag",
+                            Kind = "cache",
+                            Description = "Caches segment tag computation via the workflow cache task.",
+                            Parameters = JsonNode.Parse("""
+                            {
+                              "type": "object",
+                              "properties": {
+                                "customerSegment": { "type": "string" }
+                              }
+                            }
+                            """)!.AsObject(),
+                            Into = "cachedTag",
+                            Config = JsonNode.Parse("""
+                            {
+                              "key": "segment-tag:{{ args.customerSegment }}",
+                              "ttl": "PT5M",
+                              "into": "cachedTag",
+                              "subTask": {
+                                "task": "set",
+                                "config": {
+                                  "into": "cachedTag",
+                                  "values": {
+                                    "cachedTag.segmentTag": "\"SEG-\" + args.customerSegment"
+                                  }
+                                }
+                              }
+                            }
+                            """)!.AsObject(),
+                        });
+
+                        a.AddAgent(
+                            name: "pricing-agent",
+                            instructions: "Use compute_segment_pricing and cached_segment_tag to calculate pricing.",
+                            tools: ["compute_segment_pricing", "cached_segment_tag"],
+                            outputSchema: pricingSchema);
+                    });
+            });
+
+        var instance = await host.StartInstanceAsync(
+            "ai-task-bridge-flow",
+            new
+            {
+                orderId = "ORD-900",
+                baseAmount = 1000,
+                customerSegment = "VIP",
+            },
+            user: Manager);
+
+        instance.State.Should().Be("completed");
+        instance.Data["pricingResult"]!["discountRate"]!.GetValue<double>().Should().Be(0.2);
+        instance.Data["pricingResult"]!["finalPrice"]!.GetValue<double>().Should().Be(800);
+        instance.Data["pricingResult"]!["segmentTag"]!.GetValue<string>().Should().Be("SEG-VIP");
+        instance.Data["pricingResult"]!["workflowKey"]!.GetValue<string>().Should().Be("ai-task-bridge-flow");
+
+        // WriteToWorkflowData = true persisted both into path and mutated workflow data fields back to instance.Data
+        instance.Data["auditTrailTag"]!.GetValue<string>().Should().Be("ORD-900:VIP");
+        instance.Data["pricingBreakdown"]!["finalPrice"]!.GetValue<double>().Should().Be(800);
+        instance.Data["pricingMeta"]!["toolCallCount"]!.GetValue<int>().Should().Be(2);
     }
 
     private sealed class ToolTestingChatClient(string modelId) : IChatClient

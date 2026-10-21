@@ -1,6 +1,6 @@
 # sdk/server – backend (read the root AGENTS.md first)
 
-Common · Api · Workflow · Ui.Server · Rebus. **Must not reference any client/frontend package**
+Common · Api · Workflow · Ui.Server · Rebus · Agents. **Must not reference any client/frontend package**
 (Client, Bff, Blazor, Radzen) – LayeringTests enforce it.
 
 ## Api (`Middt.Framework.Api`)
@@ -42,10 +42,15 @@ Common · Api · Workflow · Ui.Server · Rebus. **Must not reference any client
   (`WorkflowModelCacheKeyFactory`).
 - Access: definition `roles`, transition `roles`, `instanceAccess` (owner mode + supervisor roles). Every instance-level
   entry point must go through `EnsureCanAccess`; list filtering uses each instance's stored definition version.
-- Errors shown to callers are hidden unless `ExposeErrorDetails`; the `http` task never follows redirects and honours
-  `AllowedHttpHosts` – keep both.
 - Static view HTML: `IWorkflowViewRenderer` implementations (e.g. `WorkflowLayoutRenderer` using `UiHtmlRenderer`).
 - Persistence & Querying: `WorkflowDbContext` (schema `wf`, PostgreSQL declarative partitioning per workflow key, `jsonb` columns, functional B-Tree indexes from `dataSchema`), `WorkflowInstanceDataQuery` (exposes `/api/v1/{workflow}/getitems|getall|getbyid|insert|update|delete` over workflow JSON instances); ids use UUIDv7 (`Guid.CreateVersion7()`).
+
+## Agents (`Middt.Framework.Agents`)
+- Built on Microsoft Agent Framework (`Microsoft.Agents.AI`, `Microsoft.Agents.AI.OpenAI`, `Microsoft.Agents.AI.Workflows`) and `Microsoft.Extensions.AI`.
+- Registration: `services.AddMiddtAgents(configuration, o => o.AddAgentsFromDirectory("Agents"))` loads agent definitions (`Agents/*.json`), declarative tools (`Agents/Tools/*.json`), and MCP servers (`Agents/McpServers/*.json`), and registers the `agent` (`aiAgent`, `ai-agent`) and `mcp` (`mcp-call`, `mcp-tool`, `mcp-resource`, `mcp-prompt`) workflow tasks into `WorkflowTaskRegistry`.
+- Providers: supports OpenAI, DeepSeek (`Provider: "DeepSeek"`, auto-handles `json_object` response format and `DEEPSEEK_API_KEY`), Ollama, custom `IChatClient`, and deterministic in-process `LocalAgentChatClient` fallback when `UseLocalFallback = true`.
+- Tool <-> Workflow Task Bridge: `AgentToolDefinition` supports `kind: "expression"`, `kind: "task"` (or setting `"task": "<taskName>"` to execute any registered `IWorkflowTask` in `WorkflowTaskRegistry` such as `set`, `http`, `cache`, `operation`, `publish`, `rabbitmq`, `loadWorkflow`, `startWorkflow`), `kind: "http"` (delegates to `HttpTask`), and `kind: "mcp"`.
+- Ambient Context: `WorkflowTaskAmbientContext` propagates the active `WorkflowTaskContext` across async agent/MCP calls so tools can access `data`, `args`, `input`, `instance`, and `user` (and optionally persist changes back to the workflow instance when `writeToWorkflowData: true`).
 
 ## Ui.Server (`Middt.Framework.Ui.Server`)
 - `UiLayoutStore` (EF, schema `ui`, revisions, optimistic version, cached snapshot with a reload lock), seeding from
@@ -53,7 +58,7 @@ Common · Api · Workflow · Ui.Server · Rebus. **Must not reference any client
   HTML-encodes everything – never write raw data with `Raw()`).
 
 ## Tests
-`tests/Middt.Framework.Tests/{Api,Workflow,Ui,Messaging,Security}` – hosts: `TestApiHost`, `WorkflowTestHost`
+`tests/Middt.Framework.Tests/{Api,Workflow,Ui,Messaging,Security,Agents}` – hosts: `TestApiHost`, `WorkflowTestHost`
 (SQLite in-memory, or `StartPostgresAsync` on the Testcontainers PostgreSQL of `Workflow/Postgres`; FakeTimeProvider,
 header based fake auth), `UiTestHost`. Behaviour that only PostgreSQL shows (partitions, jsonb indexes, claim races,
 `SKIP LOCKED`, `LISTEN`/`NOTIFY`) is tested in `WorkflowPostgresTests`.

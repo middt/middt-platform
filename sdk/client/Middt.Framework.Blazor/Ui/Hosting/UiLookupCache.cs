@@ -14,6 +14,7 @@ public sealed class UiLookupCache(UiDataClient client, TimeProvider timeProvider
 {
     private static readonly TimeSpan Duration = TimeSpan.FromMinutes(1);
     private readonly ConcurrentDictionary<string, Entry> entries = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ItemEntry> items = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource disposed = new();
 
     public Task<List<JsonObject>> GetAllAsync(string entity, CancellationToken cancellationToken = default)
@@ -37,10 +38,42 @@ public sealed class UiLookupCache(UiDataClient client, TimeProvider timeProvider
         return entry.Items.WaitAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// One row of <paramref name="entity"/> by <paramref name="id"/> (<c>getbyid</c>, e.g. the text of a stored picker value);
+    /// <c>null</c> when it does not exist. Shared by every editor of the circuit for <see cref="Duration"/>; failed or
+    /// cancelled loads are not cached.
+    /// </summary>
+    public Task<JsonObject?> GetByIdAsync(string entity, string id, CancellationToken cancellationToken = default)
+    {
+        var cacheKey = $"{entity}\0{id}";
+        var now = timeProvider.GetUtcNow();
+        if (!items.TryGetValue(cacheKey, out var entry) || now - entry.LoadedAt >= Duration || entry.Item.IsFaulted || entry.Item.IsCanceled)
+        {
+            var load = LoadItemAsync(entity, id);
+            entry = new ItemEntry(now, load);
+            items[cacheKey] = entry;
+
+            var added = entry;
+            _ = load.ContinueWith(
+                _ => items.TryRemove(new KeyValuePair<string, ItemEntry>(cacheKey, added)),
+                CancellationToken.None,
+                TaskContinuationOptions.NotOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        return entry.Item.WaitAsync(cancellationToken);
+    }
+
     private async Task<List<JsonObject>> LoadAsync(string entity)
     {
         var response = await client.GetAllAsync(entity, disposed.Token).ConfigureAwait(false);
         return response.IsSuccess ? response.Data ?? [] : throw new InvalidOperationException(response.ErrorText);
+    }
+
+    private async Task<JsonObject?> LoadItemAsync(string entity, string id)
+    {
+        var response = await client.GetByIdAsync(entity, id, disposed.Token).ConfigureAwait(false);
+        return response.IsSuccess ? response.Data : throw new InvalidOperationException(response.ErrorText);
     }
 
     public void Dispose()
@@ -50,4 +83,6 @@ public sealed class UiLookupCache(UiDataClient client, TimeProvider timeProvider
     }
 
     private sealed record Entry(DateTimeOffset LoadedAt, Task<List<JsonObject>> Items);
+
+    private sealed record ItemEntry(DateTimeOffset LoadedAt, Task<JsonObject?> Item);
 }

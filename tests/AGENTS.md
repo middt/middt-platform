@@ -7,16 +7,17 @@ dotnet test --project tests/Middt.Framework.Tests
 dotnet test --project tests/Middt.Framework.Tests -- --filter-class "*SpaBffHardeningTests"
 ```
 
-- Folders mirror the code: Api, Workflow, Ui, Bff, Blazor, Client, Security, Messaging, Expressions,
+- Folders mirror the code: Agents, Api, Workflow, Ui, Bff, Blazor, Client, Identity, Security, Messaging, Expressions,
   Architecture (layering), Infrastructure.
 - Use the existing hosts instead of inventing new ones: `TestApiHost`, `WorkflowTestHost`, `UiTestHost`,
-  `SpaBffTestHost`, `BlazorTestHost`; SQLite in-memory (keep the connection open), `FakeTimeProvider`,
+  `SpaBffTestHost`, `BlazorTestHost`, `IdentityTestHost`; SQLite in-memory (keep the connection open), `FakeTimeProvider`,
   `TestContext.Current.CancellationToken`.
 - PostgreSQL-only behaviour: `Workflow/Postgres/WorkflowPostgresTests` (collection `Postgres`, one Testcontainers
   `postgres:17-alpine` container, skipped with the reason when Docker is missing). Each `WorkflowTestHost.StartPostgresAsync`
   gets its own schema (`PostgresFixture.NewSchema()`); two hosts on one schema act as two nodes.
 - Tests run in parallel: no shared mutable statics; parse `JsonObject` per test (lazy materialisation isn't thread-safe).
 - Warnings are errors in CI – analyzers apply to tests too (`CultureInfo.InvariantCulture`, `ConfigureAwait` not needed).
-- Spec files: `Expressions/PortableExpressionConformanceTests` (spec/expressions.conformance.json) and
+- Spec files: `Expressions/PortableExpressionConformanceTests` (`spec/expressions.conformance.json`),
+  `Expressions/JsonPatchConformanceTests` (`spec/json-patch.conformance.json`), and
   `Ui/UiLayoutSchemaTests.Schema_file_is_up_to_date` (regenerate with `MIDDT_UPDATE_SPEC=1`).
 - Architecture: `Architecture/LayeringTests` – if it fails, fix the dependency, not the test.

@@ -14,8 +14,7 @@
                 <RadzenDropDown TValue="string" Data="@themes" Value="@ThemeService.Theme" Change="@(value => ThemeService.SetTheme((string)value))" Style="width: 140px" />
                 <RadzenSplitButton Text="@BaseTokenHelper.Username()" Icon="account_circle" Click="OnUserButtonClick">
                     <ChildContent>
-                        <RadzenSplitButtonItem Text="Profile" Value="profile" Icon="account_box" />
-                        <RadzenSplitButtonItem Text="Logout" Value="logout" Icon="logout" />
+                        <RadzenSplitButtonItem Text="Çıkış" Value="logout" Icon="logout" />
                     </ChildContent>
                 </RadzenSplitButton>
             </RadzenStack>
