@@ -14,7 +14,6 @@ COPY sdk/server/Middt.Framework.Common/*.csproj sdk/server/Middt.Framework.Commo
 COPY sdk/client/Middt.Framework.Client/*.csproj sdk/client/Middt.Framework.Client/
 COPY sdk/client/Middt.Framework.Bff/*.csproj sdk/client/Middt.Framework.Bff/
 COPY sdk/client/Middt.Framework.Blazor/*.csproj sdk/client/Middt.Framework.Blazor/
-COPY demo/Middt.Demo.ServiceDefaults/*.csproj demo/Middt.Demo.ServiceDefaults/
 COPY demo/Middt.Demo.Blazor/*.csproj demo/Middt.Demo.Blazor/
 RUN dotnet restore demo/Middt.Demo.Blazor/Middt.Demo.Blazor.csproj
 COPY . .

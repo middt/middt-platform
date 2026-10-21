@@ -95,7 +95,8 @@ public static class MiddtApiExtensions
         AddJwtAuthentication(services, configuration, options, builder.Environment);
         AddRateLimiting(services, options);
 
-        services.AddHealthChecks();
+        services.AddHealthChecks()
+            .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(), ["live"]);
 
         if (options.EnableResponseCompression)
         {

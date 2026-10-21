@@ -6,7 +6,7 @@ namespace Middt.Framework.Common.Observability;
 /// <summary>
 /// Vendor-neutral OpenTelemetry OTLP exporter configuration.
 /// Can target any OTLP-compatible backend (OpenObserve, OpenTelemetry Collector, Jaeger, Grafana Tempo/Alloy,
-/// Elastic APM, Seq, Aspire Dashboard, etc.) purely via configuration.
+/// Elastic APM, Seq, etc.) purely via configuration.
 /// </summary>
 public sealed class MiddtOtlpOptions
 {
@@ -167,7 +167,7 @@ public sealed class MiddtTelemetryOptions
 
     /// <summary>
     /// Additional OTLP exporters (<c>Telemetry:Exporters</c>) to fan out telemetry to multiple backends simultaneously
-    /// (e.g. OpenObserve + Jaeger / Elastic APM / Aspire Dashboard) directly from configuration.
+    /// (e.g. OpenObserve + Jaeger / Elastic APM) directly from configuration.
     /// </summary>
     public IList<MiddtOtlpOptions> Exporters { get; } = [];
 
@@ -229,8 +229,7 @@ public sealed class MiddtTelemetryOptions
 
     private static string GuessDefaultProtocol(string endpoint)
     {
-        // Standard OTLP gRPC port is 4317 (and Aspire Dashboard uses gRPC on arbitrary local ports unless specified);
-        // when a path like /api/default or port 4318/5080/5180 is present, default to http/protobuf.
+        // Standard OTLP gRPC port is 4317; when a path like /api/default or port 4318/5080/5180 is present, default to http/protobuf.
         if (Uri.TryCreate(endpoint.Trim(), UriKind.Absolute, out var uri))
         {
             if (uri.Port == 4317)

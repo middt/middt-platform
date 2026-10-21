@@ -23,10 +23,8 @@
   <Folder Name="/identity/">
     <Project Path="identity/Middt.Identity/Middt.Identity.csproj" />
   </Folder>
-  <!-- demo: the 100% backend-driven JSON demo (AppHost, ServiceDefaults, Api, Blazor, Angular). -->
+  <!-- demo: the 100% backend-driven JSON demo (Api, Blazor, Angular). -->
   <Folder Name="/demo/">
-    <Project Path="demo/Middt.Demo.AppHost/Middt.Demo.AppHost.csproj" />
-    <Project Path="demo/Middt.Demo.ServiceDefaults/Middt.Demo.ServiceDefaults.csproj" />
     <Project Path="demo/Middt.Demo.Api/Middt.Demo.Api.csproj" />
     <Project Path="demo/Middt.Demo.Blazor/Middt.Demo.Blazor.csproj" />
     <Project Path="demo/Middt.Demo.Angular/Middt.Demo.Angular.csproj" />

@@ -256,7 +256,7 @@ its access tokens.
 | Run | Client secrets | Notes |
 |---|---|---|
 | `docker compose up -d --build` | `.env`: `IDP_BLAZOR_CLIENT_SECRET`, `IDP_ANGULAR_CLIENT_SECRET` (required) | service `middt-identity`, `demo/identity.json` mounted as `Identity:ConfigFile`; BFFs/API reach it as `middt-identity:8080` (`BackchannelAuthority`); development signing keys persist in the `identity-keys` volume |
-| Aspire AppHost / `dotnet run --project identity/Middt.Identity` | `development-only-*` in `demo/identity.json` and in both BFFs' `appsettings.Development.json` | fixed launch ports: IdP 8083, Blazor `https://localhost:7020`, Angular 8081 |
+| `dotnet run --project identity/Middt.Identity` | `development-only-*` in `demo/identity.json` and in both BFFs' `appsettings.Development.json` | fixed launch ports: IdP 8083, Blazor `https://localhost:7020`, Angular 8081 |
 
 - The `middt-angular` client uses explicit consent (the consent page appears once per user), `middt-blazor` implicit.
 - A client secret is stored on the first start; changing it in `.env` later also requires changing it in

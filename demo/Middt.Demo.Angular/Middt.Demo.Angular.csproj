@@ -12,7 +12,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\sdk\client\Middt.Framework.Bff\Middt.Framework.Bff.csproj" />
-    <ProjectReference Include="..\Middt.Demo.ServiceDefaults\Middt.Demo.ServiceDefaults.csproj" />
   </ItemGroup>
 
 

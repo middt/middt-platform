@@ -38,8 +38,6 @@ sdk/                              the framework (NuGet + npm packages)
     angular/                      @middt/angular (library workspace) – Angular frontend
 identity/Middt.Identity           OAuth2/OIDC server – ONE runnable service (not SDK), configured by appsettings (docs/identity.md)
 demo/                             100% backend-driven JSON demo (KYC, credit, order orchestration, invoice collection, AI dispute resolution)
-  Middt.Demo.AppHost              Aspire orchestration
-  Middt.Demo.ServiceDefaults      Aspire OpenTelemetry & health defaults
   Middt.Demo.Api                  API + Layouts/*.json + Workflows/*.json + Agents/**/*.json + Seeds/*.json seeds (zero hardcoded domain views/tables)
   Middt.Demo.Blazor               Blazor demo (:8080)
   Middt.Demo.Angular              Angular BFF host (:8081)

@@ -40,11 +40,9 @@ COPY sdk/shared/Middt.Framework.Ui.Abstractions/*.csproj sdk/shared/Middt.Framew
 COPY sdk/server/Middt.Framework.Common/*.csproj sdk/server/Middt.Framework.Common/
 COPY sdk/client/Middt.Framework.Client/*.csproj sdk/client/Middt.Framework.Client/
 COPY sdk/client/Middt.Framework.Bff/*.csproj sdk/client/Middt.Framework.Bff/
-COPY demo/Middt.Demo.ServiceDefaults/*.csproj demo/Middt.Demo.ServiceDefaults/
 COPY demo/Middt.Demo.Angular/*.csproj demo/Middt.Demo.Angular/
 RUN dotnet restore demo/Middt.Demo.Angular/Middt.Demo.Angular.csproj
 COPY sdk/ sdk/
-COPY demo/Middt.Demo.ServiceDefaults/ demo/Middt.Demo.ServiceDefaults/
 COPY demo/Middt.Demo.Angular/ demo/Middt.Demo.Angular/
 RUN dotnet publish demo/Middt.Demo.Angular/Middt.Demo.Angular.csproj -c $BUILD_CONFIGURATION -o /app/publish --no-restore /p:UseAppHost=false
 

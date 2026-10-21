@@ -49,8 +49,6 @@ sdk/                              the framework (NuGet / npm packages)
     angular/                      @middt/angular – Angular frontend (library workspace)
 identity/Middt.Identity           the OAuth 2.0 / OpenID Connect server: one ready to run service (not an SDK package)
 demo/                             the 100% backend-driven JSON demo
-  Middt.Demo.AppHost              Aspire orchestration of everything
-  Middt.Demo.ServiceDefaults      Aspire OpenTelemetry & health defaults
   Middt.Demo.Api                  API (+ Layouts/, Workflows/, Agents/, Seeds/ seeds)
   Middt.Demo.Blazor               Blazor Server demo
   Middt.Demo.Angular              Angular BFF host
@@ -84,7 +82,7 @@ Design choices:
 - **Options pattern** – every settings class is bound with `IOptions<T>` (validated on start where it matters, e.g. `JwtSettings`).
 - **Result envelope + ProblemDetails** – successful calls return `BaseResponseDataModel<T>`; failures are RFC 9457 ProblemDetails produced by a global `IExceptionHandler`. Exception details are only exposed in Development. The typed clients map both back to `Result = Error` so UI code keeps a single code path.
 - **Async all the way** with `CancellationToken`, no `.Result` / `async void`.
-- **Observability (OpenTelemetry OTLP + OpenObserve)** – `builder.AddMiddtOpenTelemetry()` in `Middt.Framework.Common` configures OpenTelemetry logs, metrics and traces (including `Middt.Framework.Workflow` transition/task `Activity` spans and `Meter` instruments) and exports them via the standard OpenTelemetry OTLP exporter (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_HEADERS` or `Telemetry:Otlp` / `Telemetry:Exporters` in `appsettings.json`) to any OTLP-compatible backend (**OpenObserve**, OpenTelemetry Collector, Jaeger, Elastic APM, Grafana Tempo, Seq, Aspire Dashboard) purely from configuration. Health probes are mapped at `/health` and `/alive`.
+- **Observability (OpenTelemetry OTLP + OpenObserve)** – `builder.AddMiddtOpenTelemetry()` in `Middt.Framework.Common` configures OpenTelemetry logs, metrics and traces (including `Middt.Framework.Workflow` transition/task `Activity` spans and `Meter` instruments) and exports them via the standard OpenTelemetry OTLP exporter (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_HEADERS` or `Telemetry:Otlp` / `Telemetry:Exporters` in `appsettings.json`) to any OTLP-compatible backend (**OpenObserve**, OpenTelemetry Collector, Jaeger, Elastic APM, Grafana Tempo, Seq) purely from configuration. Health probes are mapped at `/health` and `/alive`.
 
 ## Getting started
 
@@ -542,16 +540,6 @@ token reuse; personal data is kept out of logs; vulnerable transitive packages a
 ## Running the sample
 
 The demo (`demo/`) runs on PostgreSQL (`middt_workflow` + `middt_identity`), Redis, RabbitMQ (Rebus), the OAuth 2.0 / OpenID Connect identity provider, the API, the Blazor UI and the Angular UI. Both UIs sign in at the identity provider (authorization code + PKCE through their BFF) and the API accepts its access tokens.
-
-**With .NET Aspire (recommended)** – requires Docker or Podman:
-
-```bash
-dotnet run --project demo/Middt.Demo.AppHost
-```
-
-The Aspire dashboard shows all resources, logs, traces and metrics. Set the PostgreSQL password once with
-`dotnet user-secrets set Parameters:postgres-password "<password>" --project demo/Middt.Demo.AppHost`
-(Aspire prompts for missing parameters otherwise).
 
 **With Docker Compose:**
 

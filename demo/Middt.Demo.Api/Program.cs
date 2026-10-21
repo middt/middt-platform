@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Middt.Framework.Agents;
 using Middt.Framework.Api.DependencyInjection;
+using Middt.Framework.Common.Observability;
 using Middt.Framework.Rebus;
 using Middt.Framework.Ui.Server.DependencyInjection;
 using Middt.Framework.Ui.Server.Endpoints;
@@ -14,10 +15,10 @@ using Middt.Demo.Api.Handlers;
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
-builder.AddServiceDefaults(enableOpenTelemetry: true);
+builder.AddMiddtOpenTelemetry();
 builder.AddMiddtApi(options => options.Title = "Middt Sample API");
 
-// Optional infrastructure: enabled only when a connection string is configured (Aspire / Docker Compose injects them).
+// Optional infrastructure: enabled only when a connection string is configured (Docker Compose injects them).
 if (builder.Configuration.GetConnectionString("redis") is { Length: > 0 } redis)
 {
     builder.Services.AddStackExchangeRedisCache(o => o.Configuration = redis); // L2 for CacheTask / RefreshTokenStore

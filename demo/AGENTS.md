@@ -1,6 +1,6 @@
 # demo – workflow & server-driven UI demo (read the root AGENTS.md first)
 
-Flat project structure: `Middt.Demo.AppHost` (Aspire), `Middt.Demo.ServiceDefaults`, `Middt.Demo.Api`,
+Flat project structure: `Middt.Demo.Api`,
 `Middt.Demo.Blazor`, `Middt.Demo.Angular` (BFF host) + `angular-app` (Angular SPA workspace).
 The demo shows framework usage – keep framework logic in `sdk/`.
 

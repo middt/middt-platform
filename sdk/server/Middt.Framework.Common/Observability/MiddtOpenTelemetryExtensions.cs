@@ -14,7 +14,7 @@ namespace Middt.Framework.Common.Observability;
 /// <summary>
 /// Configures OpenTelemetry logging, metrics, and distributed tracing across Middt hosts (API, Workflow, Identity, BFFs)
 /// using the standard OpenTelemetry OTLP exporter (<c>OTEL_EXPORTER_OTLP_*</c> or <c>Telemetry:Otlp</c> / <c>Telemetry:Exporters</c>),
-/// enabling telemetry export to OpenObserve, OpenTelemetry Collector, Jaeger, Elastic APM, Grafana Tempo, Seq, or Aspire Dashboard
+/// enabling telemetry export to OpenObserve, OpenTelemetry Collector, Jaeger, Elastic APM, Grafana Tempo, or Seq
 /// purely from configuration.
 /// </summary>
 public static class MiddtOpenTelemetryExtensions

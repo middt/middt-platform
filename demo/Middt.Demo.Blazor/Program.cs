@@ -7,10 +7,9 @@ using Middt.Framework.Client.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.AddServiceDefaults();
 builder.AddMiddtBlazor();
 
-// With Redis (Aspire / compose) sessions and Data Protection keys are shared and survive restarts.
+// With Redis (Docker Compose) sessions and Data Protection keys are shared and survive restarts.
 if (builder.Configuration.GetConnectionString("redis") is { Length: > 0 } redis)
 {
     builder.Services.AddStackExchangeRedisCache(o =>

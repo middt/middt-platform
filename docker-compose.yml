@@ -1,4 +1,4 @@
-# Container based alternative to the Aspire AppHost (demo/Middt.Demo.AppHost).
+# Full-stack Docker Compose environment for the Middt demo.
 #   docker compose up --build   → Blazor UI: http://localhost:8080   Angular UI: http://localhost:8081
 #                                 Identity provider (login, /admin): http://localhost:8083   API docs: http://127.0.0.1:8180/scalar
 #                                 OpenObserve (logs, metrics, traces): http://127.0.0.1:5180

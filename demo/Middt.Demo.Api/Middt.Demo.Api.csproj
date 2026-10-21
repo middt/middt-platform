@@ -20,7 +20,6 @@
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Rebus\Middt.Framework.Rebus.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Workflow\Middt.Framework.Workflow.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Ui.Server\Middt.Framework.Ui.Server.csproj" />
-    <ProjectReference Include="..\Middt.Demo.ServiceDefaults\Middt.Demo.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>
