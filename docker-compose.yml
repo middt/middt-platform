@@ -91,6 +91,12 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: *otlp-endpoint
       OTEL_EXPORTER_OTLP_PROTOCOL: *otlp-protocol
       OTEL_EXPORTER_OTLP_HEADERS: *otlp-headers
+      AgentSettings__Provider: ${AGENT_PROVIDER:-DeepSeek}
+      AgentSettings__ModelId: ${AGENT_MODEL_ID:-deepseek-chat}
+      AgentSettings__Endpoint: ${AGENT_ENDPOINT:-https://api.deepseek.com/v1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes:
+      - ./demo/Middt.Demo.Api/appsettings.Local.json:/app/appsettings.Local.json:ro
     ports:
       # Local tooling only (Scalar, curl); browsers go through the BFFs.
       - "127.0.0.1:8180:8080"

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Middt.Framework.Agents;
 using Middt.Framework.Model.Enumerations;
 using Middt.Framework.Model.Workflow;
 using Middt.Framework.Ui.Model;
@@ -62,6 +63,9 @@ public sealed class SampleJsonWorkflowTests
             definitions: SampleWorkflowFiles(),
             services: s =>
             {
+                s.AddMiddtAgents(
+                    configure: a => a.AddAgentsFromDirectory(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Agents")));
+
                 if (publisher is not null)
                 {
                     s.AddSingleton<IWorkflowMessagePublisher>(publisher);

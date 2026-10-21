@@ -1,0 +1,124 @@
+{
+  "$schema": "../../../spec/ui-layout.schema.json",
+  "key": "ai-dispute-detail",
+  "title": "AI İtiraz ve Fraud İnceleme Detayı",
+  "kind": "view",
+  "version": 1,
+  "body": [
+    {
+      "widget": "alert",
+      "severity": "info",
+      "text": "AI Orkestratör (dispute-orchestrator) araçları ve MCP sunucusunu çalıştırarak bu dosyayı Uzman İncelemesine yönlendirdi.",
+      "visibleWhen": "instance.state == \"specialist-review\""
+    },
+    {
+      "widget": "alert",
+      "severity": "danger",
+      "text": "Yüksek risk / yetkisiz işlem şüphesi! AI Orkestratör bu dosyayı doğrudan Fraud ve Güvenlik İncelemesine yönlendirdi.",
+      "visibleWhen": "instance.state == \"fraud-investigation\""
+    },
+    {
+      "widget": "section",
+      "title": "İtiraz ve İşlem Bilgileri",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "İtiraz No", "value": "{{ data.disputeNo }}" },
+            { "label": "Müşteri Adı", "value": "{{ data.customerName }}" },
+            { "label": "Üye İşyeri", "value": "{{ data.merchantName }}" },
+            { "label": "İşlem Referansı", "value": "{{ data.transactionRef }}" },
+            { "label": "İtiraz Tutarı", "value": "{{ data.amount }}", "format": "N2" },
+            { "label": "Kategori", "value": "{{ data.category }}" },
+            { "label": "Müşteri Beyanı", "value": "{{ data.reason }}", "visibleWhen": "data.reason != null" }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "AI Orkestratör Kararı ve Akış Yönlendirmesi",
+      "visibleWhen": "data.aiDecision != null",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "AI Kararı", "value": "{{ data.aiDecision.decision }}" },
+            { "label": "Seçilen Akış Geçişi", "value": "{{ data.aiNextTransition }}" },
+            { "label": "Risk Seviyesi", "value": "{{ data.aiDecision.riskLevel }}" },
+            { "label": "Risk Skoru", "value": "{{ data.aiDecision.riskScore }} / 100" },
+            { "label": "Önerilen İade Tutarı", "value": "{{ data.aiDecision.recommendedRefund }}", "format": "N2" },
+            { "label": "Uygulanan Politika Kodu", "value": "{{ data.aiDecision.policyCode }}" },
+            { "label": "İşyeri Mutabakat Durumu", "value": "{{ data.aiDecision.settlementStatus }}", "visibleWhen": "data.aiDecision.settlementStatus != null" },
+            { "label": "Hız (Velocity) Skoru", "value": "{{ data.aiDecision.velocityScore }}", "visibleWhen": "data.aiDecision.velocityScore != null" },
+            { "label": "Analiz Özeti", "value": "{{ data.aiDecision.summary }}" },
+            { "label": "Önerilen Aksiyon", "value": "{{ data.aiDecision.recommendation }}" },
+            { "label": "Orkestratör Ajan", "value": "{{ data.aiMeta.agent }}", "visibleWhen": "data.aiMeta != null && data.aiMeta.agent != null" },
+            { "label": "Analiz Zamanı", "value": "{{ data.aiMeta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiMeta != null && data.aiMeta.evaluatedAt != null" }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "MCP (Model Context Protocol) Politika ve İşyeri Mutabakatı",
+      "visibleWhen": "data.mcpPolicy != null || data.mcpReceipt != null",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "MCP Politika Versiyonu", "value": "{{ data.mcpPolicy.policyVersion }}", "visibleWhen": "data.mcpPolicy != null" },
+            { "label": "Otomatik İade Limiti", "value": "{{ data.mcpPolicy.autoApproveLimit }}", "format": "N2", "visibleWhen": "data.mcpPolicy != null" },
+            { "label": "Fraud Eskalasyon Limiti", "value": "{{ data.mcpPolicy.fraudEscalationLimit }}", "format": "N2", "visibleWhen": "data.mcpPolicy != null" },
+            { "label": "MCP Provizyon Durumu", "value": "{{ data.mcpReceipt.settlementStatus }}", "visibleWhen": "data.mcpReceipt != null" },
+            { "label": "MCP İade Edilebilir Tutar", "value": "{{ data.mcpReceipt.refundableAmount }}", "format": "N2", "visibleWhen": "data.mcpReceipt != null" },
+            { "label": "Geçmiş İtiraz Sayısı", "value": "{{ data.mcpHistoryCheck.priorDisputes }}", "visibleWhen": "data.mcpHistoryCheck != null" },
+            { "label": "İşyeri Risk Sınıfı", "value": "{{ data.mcpHistoryCheck.merchantRisk }}", "visibleWhen": "data.mcpHistoryCheck != null" }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "Çağrılan AI Araçları (Function / MCP Tool Calls)",
+      "visibleWhen": "data.aiToolCalls != null && data.aiToolCalls.Count > 0",
+      "children": [
+        {
+          "widget": "list",
+          "source": "data.aiToolCalls",
+          "children": [
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "Araç Adı", "value": "{{ row.name }}" },
+                { "label": "Çağrı No", "value": "{{ row.callId }}" },
+                { "label": "Yönlendirme Kararı", "value": "{{ row.result.nextTransition }}", "visibleWhen": "row.result != null && row.result.nextTransition != null" },
+                { "label": "Politika Kodu", "value": "{{ row.result.policyCode }}", "visibleWhen": "row.result != null && row.result.policyCode != null" },
+                { "label": "Mutabakat Durumu", "value": "{{ row.result.settlementStatus }}", "visibleWhen": "row.result != null && row.result.settlementStatus != null" },
+                { "label": "Hız Skoru", "value": "{{ row.result.velocityScore }}", "visibleWhen": "row.result != null && row.result.velocityScore != null" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "AI Copilot Uzman Değerlendirmesi",
+      "visibleWhen": "data.copilotReview != null",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "Uzman Notu", "value": "{{ data.lastSpecialistNote }}", "visibleWhen": "data.lastSpecialistNote != null" },
+            { "label": "Copilot Görüşü", "value": "{{ data.copilotReview.copilotVerdict }}" },
+            { "label": "Hesaplanan İade Tutarı", "value": "{{ data.copilotReview.approvedRefundAmount }}", "format": "N2" },
+            { "label": "Toplam Alacak Kaydı", "value": "{{ data.copilotReview.totalCredit }}", "format": "N2" },
+            { "label": "Politika Kodu", "value": "{{ data.copilotReview.policyCode }}" }
+          ]
+        }
+      ]
+    },
+    { "widget": "layout", "key": "workflow-footer" }
+  ]
+}

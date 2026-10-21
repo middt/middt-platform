@@ -1,0 +1,368 @@
+{
+  "key": "ai-dispute-resolution",
+  "version": 1,
+  "title": "AI İtiraz ve Fraud Yönetimi",
+  "icon": "smart_toy",
+  "history": "delta",
+  "historySnapshotEvery": 10,
+  "dataSchema": {
+    "type": "object",
+    "properties": {
+      "disputeNo": { "type": "string", "title": "İtiraz No", "x-search": true },
+      "customerName": { "type": "string", "title": "Müşteri Adı", "x-search": true },
+      "merchantName": { "type": "string", "title": "Üye İşyeri", "x-search": true },
+      "amount": { "type": "number", "title": "İtiraz Tutarı (₺)", "x-search": true },
+      "category": { "type": "string", "title": "Kategori", "x-search": true }
+    }
+  },
+  "start": {
+    "key": "start",
+    "target": "ai-triage",
+    "input": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [ "disputeNo", "customerName", "merchantName", "amount", "category" ],
+        "properties": {
+          "disputeNo": { "type": "string", "minLength": 3, "maxLength": 40, "title": "İtiraz No", "default": "ITR-2026-0001" },
+          "customerName": { "type": "string", "minLength": 2, "maxLength": 120, "title": "Müşteri Adı", "default": "Ahmet Yılmaz" },
+          "merchantName": { "type": "string", "minLength": 2, "maxLength": 120, "title": "Üye İşyeri Adı", "default": "Global Elektronik A.Ş." },
+          "transactionRef": { "type": "string", "maxLength": 60, "title": "İşlem Referansı", "default": "TRX-2026-9901" },
+          "amount": { "type": "number", "minimum": 1, "title": "İtiraz Tutarı (₺)", "default": 3200 },
+          "category": {
+            "type": "string",
+            "title": "İtiraz Kategorisi",
+            "enum": [
+              "Mükerrer Çekim",
+              "Hizmet Alınamadı",
+              "Hatalı Tutar",
+              "Yetkisiz İşlem"
+            ],
+            "default": "Mükerrer Çekim"
+          },
+          "reason": { "type": "string", "maxLength": 500, "title": "Müşteri Beyanı", "default": "Kartımdan aynı işlem iki kez tahsil edildi." }
+        }
+      },
+      "set": {
+        "transactionRef": "input.transactionRef ?? \"TRX-2026-9901\"",
+        "createdBy": "user.Name",
+        "createdAt": "now"
+      }
+    }
+  },
+  "states": [
+    {
+      "key": "ai-triage",
+      "title": "AI Orkestratör Analizi",
+      "view": { "layout": "ai-dispute-detail" },
+      "step": 1,
+      "onEntry": [
+        {
+          "task": "setKey",
+          "config": { "key": "DSP-{{ data.disputeNo }}", "ensureUnique": true }
+        },
+        {
+          "task": "mcp",
+          "config": {
+            "server": "banking-mcp",
+            "action": "readResource",
+            "uri": "mcp://banking/policies/chargeback-2026",
+            "into": "mcpPolicy",
+            "metaInto": "mcpPolicyMeta"
+          }
+        },
+        {
+          "task": "mcp",
+          "config": {
+            "server": "banking-mcp",
+            "action": "callTool",
+            "tool": "verify_merchant_receipt",
+            "arguments": {
+              "transactionRef": "{{ data.transactionRef }}",
+              "merchantName": "{{ data.merchantName }}",
+              "amount": "{{ data.amount }}"
+            },
+            "into": "mcpReceipt"
+          }
+        },
+        {
+          "task": "agent",
+          "config": {
+            "agent": "dispute-orchestrator",
+            "prompt": "İtiraz No {{ data.disputeNo }} ({{ data.customerName }}) için {{ data.amount }} ₺ tutarındaki '{{ data.category }}' bildirimini araçları ve MCP sunucusunu kullanarak değerlendir ve akış yönlendirmesini belirle.",
+            "context": {
+              "disputeNo": "{{ data.disputeNo }}",
+              "customerName": "{{ data.customerName }}",
+              "merchantName": "{{ data.merchantName }}",
+              "transactionRef": "{{ data.transactionRef }}",
+              "amount": "{{ data.amount }}",
+              "category": "{{ data.category }}",
+              "reason": "{{ data.reason }}"
+            },
+            "into": "aiDecision",
+            "transitionInto": "aiNextTransition",
+            "toolCallsInto": "aiToolCalls",
+            "metaInto": "aiMeta"
+          }
+        }
+      ],
+      "transitions": [
+        {
+          "key": "route-auto-refund",
+          "title": "AI Otomatik İade Onayı",
+          "target": "auto-resolved",
+          "trigger": "Automatic",
+          "rule": "data.aiNextTransition == \"route-auto-refund\"",
+          "onExecute": [
+            {
+              "task": "set",
+              "config": {
+                "values": {
+                  "resolution.status": "\"AI Otomatik İade Onayı\"",
+                  "resolution.refundedAmount": "data.aiDecision.recommendedRefund",
+                  "resolution.policyCode": "data.aiDecision.policyCode",
+                  "resolution.note": "data.aiDecision.summary",
+                  "resolution.resolvedBy": "\"AI Orkestratör (dispute-orchestrator)\"",
+                  "resolution.resolvedAt": "now"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "key": "route-fraud-investigation",
+          "title": "AI Fraud Eskalasyonu",
+          "target": "fraud-investigation",
+          "trigger": "Automatic",
+          "rule": "data.aiNextTransition == \"route-fraud-investigation\""
+        },
+        {
+          "key": "route-specialist-review",
+          "title": "AI Uzman İnceleme Yönlendirmesi",
+          "target": "specialist-review",
+          "trigger": "Automatic",
+          "rule": "data.aiNextTransition == \"route-specialist-review\""
+        }
+      ]
+    },
+    {
+      "key": "specialist-review",
+      "title": "Uzman İncelemesi",
+      "view": { "layout": "ai-dispute-detail" },
+      "step": 2,
+      "transitions": [
+        {
+          "key": "re-evaluate-ai",
+          "title": "AI Copilot Analizi",
+          "target": "$self",
+          "style": "primary",
+          "icon": "smart_toy",
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [ "specialistNote" ],
+              "properties": {
+                "specialistNote": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 400,
+                  "title": "Uzman Notu / Ek Kanıt",
+                  "default": "Üye işyeri slip belgesi incelendi, mükerrer tahsilat doğrulandı."
+                }
+              }
+            },
+            "set": {
+              "lastSpecialistNote": "input.specialistNote"
+            }
+          },
+          "onExecute": [
+            {
+              "task": "agent",
+              "config": {
+                "agent": "dispute-specialist-copilot",
+                "prompt": "Uzman notu: '{{ data.lastSpecialistNote }}'. İtiraz tutarı {{ data.amount }} ₺ için nihai iade hesaplamasını yap.",
+                "context": {
+                  "transactionRef": "{{ data.transactionRef }}",
+                  "merchantName": "{{ data.merchantName }}",
+                  "customerName": "{{ data.customerName }}",
+                  "amount": "{{ data.amount }}",
+                  "category": "{{ data.category }}"
+                },
+                "into": "copilotReview",
+                "toolCallsInto": "copilotToolCalls",
+                "metaInto": "copilotMeta"
+              }
+            }
+          ]
+        },
+        {
+          "key": "invoke-mcp-audit",
+          "title": "MCP Tarihçe Sorgula",
+          "target": "$self",
+          "style": "secondary",
+          "icon": "hub",
+          "onExecute": [
+            {
+              "task": "mcp",
+              "config": {
+                "server": "banking-mcp",
+                "action": "callTool",
+                "tool": "lookup_chargeback_history",
+                "arguments": {
+                  "customerName": "{{ data.customerName }}",
+                  "amount": "{{ data.amount }}",
+                  "category": "{{ data.category }}"
+                },
+                "into": "mcpHistoryCheck",
+                "metaInto": "mcpHistoryMeta"
+              }
+            }
+          ]
+        },
+        {
+          "key": "approve-refund",
+          "title": "İadeyi Onayla",
+          "target": "resolved-refunded",
+          "style": "success",
+          "icon": "check_circle",
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [ "refundedAmount", "note" ],
+              "properties": {
+                "refundedAmount": { "type": "number", "minimum": 1, "title": "Onaylanan İade Tutarı (₺)", "default": 12500 },
+                "note": { "type": "string", "minLength": 3, "maxLength": 400, "title": "Karar Açıklaması", "default": "Belge incelemesi sonucunda müşteri lehine iade onaylandı." }
+              }
+            },
+            "set": {
+              "resolution.status": "\"Uzman Onayı ile İade\"",
+              "resolution.refundedAmount": "input.refundedAmount",
+              "resolution.policyCode": "data.aiDecision.policyCode ?? \"CB-STD-2026\"",
+              "resolution.note": "input.note",
+              "resolution.resolvedBy": "user.Name",
+              "resolution.resolvedAt": "now"
+            }
+          }
+        },
+        {
+          "key": "reject-dispute",
+          "title": "İtirazı Reddet",
+          "target": "rejected",
+          "style": "danger",
+          "icon": "cancel",
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [ "reason" ],
+              "properties": {
+                "reason": { "type": "string", "minLength": 5, "maxLength": 400, "title": "Red Gerekçesi", "default": "Üye işyeri 3D Secure ve teslimat kanıtı sunduğundan itiraz reddedildi." }
+              }
+            },
+            "set": {
+              "resolution.status": "\"İtiraz Reddedildi\"",
+              "resolution.refundedAmount": "0",
+              "resolution.note": "input.reason",
+              "resolution.resolvedBy": "user.Name",
+              "resolution.resolvedAt": "now"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "key": "fraud-investigation",
+      "title": "Fraud ve Güvenlik İncelemesi",
+      "view": { "layout": "ai-dispute-detail" },
+      "step": 2,
+      "transitions": [
+        {
+          "key": "confirm-fraud-refund",
+          "title": "Fraud Doğrulandı & İade Et",
+          "target": "resolved-refunded",
+          "style": "success",
+          "icon": "verified_user",
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [ "securityAction", "note" ],
+              "properties": {
+                "securityAction": {
+                  "type": "string",
+                  "title": "Güvenlik Aksiyonu",
+                  "enum": [
+                    "Kart Kapatıldı & Yenilendi",
+                    "Üye İşyeri Kara Listeye Alındı",
+                    "Geçici Blokaj Uygulandı"
+                  ],
+                  "default": "Kart Kapatıldı & Yenilendi"
+                },
+                "note": { "type": "string", "minLength": 5, "maxLength": 400, "title": "Fraud Raporu", "default": "Yetkisiz işlem doğrulandı, kart güvenlik blokajına alındı ve tutar müşteriye iade edildi." }
+              }
+            },
+            "set": {
+              "resolution.status": "\"Fraud Doğrulandı - Tam İade\"",
+              "resolution.refundedAmount": "data.amount",
+              "resolution.securityAction": "input.securityAction",
+              "resolution.policyCode": "\"CB-FRAUD-2026\"",
+              "resolution.note": "input.note",
+              "resolution.resolvedBy": "user.Name",
+              "resolution.resolvedAt": "now"
+            }
+          }
+        },
+        {
+          "key": "reject-fraud-claim",
+          "title": "Fraud Şüphesini Reddet",
+          "target": "rejected",
+          "style": "danger",
+          "icon": "gpp_bad",
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [ "reason" ],
+              "properties": {
+                "reason": { "type": "string", "minLength": 5, "maxLength": 400, "title": "Red Gerekçesi", "default": "3D Secure şifresi ve cihaz izi müşteriye ait olduğundan fraud iddiası reddedildi." }
+              }
+            },
+            "set": {
+              "resolution.status": "\"Fraud İddiası Reddedildi\"",
+              "resolution.refundedAmount": "0",
+              "resolution.note": "input.reason",
+              "resolution.resolvedBy": "user.Name",
+              "resolution.resolvedAt": "now"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "key": "auto-resolved",
+      "title": "AI Otomatik İade Tamamlandı",
+      "type": "Finish",
+      "subType": "Success",
+      "view": { "layout": "ai-dispute-result" },
+      "step": 3
+    },
+    {
+      "key": "resolved-refunded",
+      "title": "İade Tamamlandı",
+      "type": "Finish",
+      "subType": "Success",
+      "view": { "layout": "ai-dispute-result" },
+      "step": 3
+    },
+    {
+      "key": "rejected",
+      "title": "İtiraz Reddedildi",
+      "type": "Finish",
+      "subType": "Cancelled",
+      "view": { "layout": "ai-dispute-result" },
+      "step": 3
+    }
+  ]
+}

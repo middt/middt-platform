@@ -1,0 +1,24 @@
+{
+  "name": "evaluate_dispute_policy",
+  "kind": "expression",
+  "description": "İtiraz tutarı, kategori ve işlem bilgilerine göre AI yönlendirme kararını (nextTransition), risk skorunu ve öneriyi hesaplar.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "disputeNo": { "type": "string" },
+      "customerName": { "type": "string" },
+      "amount": { "type": "number" },
+      "category": { "type": "string" },
+      "merchantName": { "type": "string" }
+    }
+  },
+  "output": {
+    "nextTransition": "{{ (args.category == \"Yetkisiz İşlem\" || args.amount > 25000) ? \"route-fraud-investigation\" : (args.amount <= 5000 ? \"route-auto-refund\" : \"route-specialist-review\") }}",
+    "decision": "{{ (args.category == \"Yetkisiz İşlem\" || args.amount > 25000) ? \"Fraud Eskalasyonu\" : (args.amount <= 5000 ? \"Otomatik İade Onayı\" : \"Uzman İncelemesi\") }}",
+    "riskLevel": "{{ (args.category == \"Yetkisiz İşlem\" || args.amount > 25000) ? \"Yüksek\" : (args.amount <= 5000 ? \"Düşük\" : \"Orta\") }}",
+    "riskScore": "{{ (args.category == \"Yetkisiz İşlem\" || args.amount > 25000) ? 89 : (args.amount <= 5000 ? 14 : 52) }}",
+    "recommendedRefund": "{{ (args.category == \"Yetkisiz İşlem\" || args.amount > 25000) ? 0 : args.amount }}",
+    "summary": "{{ (args.category == \"Yetkisiz İşlem\" || args.amount > 25000) ? \"Yetkisiz işlem bildirimi veya yüksek tutar nedeniyle dosya AI Orkestratör tarafından Fraud İnceleme birimine yönlendirildi.\" : (args.amount <= 5000 ? \"Düşük tutarlı işlem itirazı politika limitleri dahilinde AI Orkestratör tarafından otomatik onaylanarak iade edildi.\" : \"Orta tutarlı işlem itirazı belge ve pos mutabakatı için Uzman İncelemesine yönlendirildi.\") }}",
+    "recommendation": "{{ (args.category == \"Yetkisiz İşlem\" || args.amount > 25000) ? \"Kart güvenlik blokajı ve 3D Secure log incelemesi başlatılmalı.\" : (args.amount <= 5000 ? \"Müşteri hesabına anında iade kaydı oluşturuldu.\" : \"Üye işyeri slip ve teslimat belgesi kontrol edilerek karar verilmeli.\") }}"
+  }
+}

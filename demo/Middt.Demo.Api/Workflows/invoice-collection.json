@@ -501,5 +501,39 @@
       "type": "Finish",
       "subType": "Cancelled"
     }
+  ],
+  "sharedTransitions": [
+    {
+      "key": "ai-risk-audit",
+      "title": "AI Risk Analizi",
+      "target": "$self",
+      "style": "secondary",
+      "icon": "psychology",
+      "availableIn": [ "awaiting-payment", "overdue" ],
+      "roles": [ "manager" ],
+      "onExecute": [
+        {
+          "key": "run-risk-auditor-agent",
+          "task": "agent",
+          "config": {
+            "agent": "invoice-risk-auditor",
+            "prompt": "Fatura {{ data.invoiceNo }} ({{ data.customerName }}) için tahsilat ve ödeme silme geçmişini analiz et.",
+            "context": {
+              "invoiceNo": "{{ data.invoiceNo }}",
+              "customerName": "{{ data.customerName }}",
+              "total": "{{ data.total }}",
+              "paidAmount": "{{ data.paidAmount }}",
+              "remainingAmount": "{{ data.remainingAmount }}",
+              "partialPayment": "{{ data.partialPayment }}",
+              "deletedPayment": "{{ data.deletedPayment }}"
+            },
+            "session": "aiAuditSession",
+            "sessionInto": "aiAuditSession",
+            "into": "aiAudit",
+            "metaInto": "aiAuditMeta"
+          }
+        }
+      ]
+    }
   ]
 }

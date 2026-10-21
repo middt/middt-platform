@@ -25,6 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\sdk\server\Middt.Framework.Agents\Middt.Framework.Agents.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Rebus\Middt.Framework.Rebus.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Api\Middt.Framework.Api.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Common\Middt.Framework.Common.csproj" />

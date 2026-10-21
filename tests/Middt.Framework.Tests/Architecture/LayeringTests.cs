@@ -26,6 +26,7 @@ public sealed class LayeringTests
             "Middt.Framework.Workflow",
             "Middt.Framework.Ui.Server",
             "Middt.Framework.Rebus",
+            "Middt.Framework.Agents",
         ];
 
     [Theory]
@@ -57,11 +58,11 @@ public sealed class LayeringTests
 
     // Expression trees (NotContain) cannot contain 'is' patterns, hence the helper methods.
     private static bool IsBackendOrUiTechnology(string r) =>
-        r is "Middt.Framework.Common" or "Middt.Framework.Api" or "Middt.Framework.Workflow" or "Middt.Framework.Ui.Server"
+        r is "Middt.Framework.Common" or "Middt.Framework.Api" or "Middt.Framework.Workflow" or "Middt.Framework.Ui.Server" or "Middt.Framework.Agents"
         || r.StartsWith("Microsoft.AspNetCore.Components", StringComparison.Ordinal) || IsFrontend(r);
 
     private static bool IsBackendEngine(string r) =>
-        r is "Middt.Framework.Api" or "Middt.Framework.Workflow" or "Middt.Framework.Ui.Server" || r.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal);
+        r is "Middt.Framework.Api" or "Middt.Framework.Workflow" or "Middt.Framework.Ui.Server" or "Middt.Framework.Agents" || r.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal);
 
     private static bool IsFrontend(string reference) =>
         FrontendAssemblies.Any(f => reference == f || reference.StartsWith(f + ".", StringComparison.Ordinal));

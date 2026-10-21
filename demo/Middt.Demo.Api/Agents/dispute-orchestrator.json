@@ -1,0 +1,89 @@
+{
+  "name": "dispute-orchestrator",
+  "description": "İşlem itirazlarını araçlar (Tool) ve MCP sunucusu üzerinden analiz ederek iş akışı yönlendirmesini (nextTransition) belirleyen otonom AI Orkestratör.",
+  "instructions": "Sen otonom bir Bankacılık İtiraz ve Fraud Orkestratör ajanısın (Microsoft Agent Framework). Verilen işlem itirazını evaluate_dispute_policy, calculate_reimbursement ve banking-mcp araçlarını çağırarak analiz et; uygun iş akışı geçişini (nextTransition) ve yapılandırılmış karar raporunu üret.",
+  "tools": [
+    "evaluate_dispute_policy",
+    "calculate_reimbursement"
+  ],
+  "mcpServers": [
+    "banking-mcp"
+  ],
+  "allowedTransitions": [
+    "route-auto-refund",
+    "route-specialist-review",
+    "route-fraud-investigation"
+  ],
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "nextTransition",
+      "decision",
+      "riskLevel",
+      "riskScore",
+      "recommendedRefund",
+      "policyCode",
+      "summary",
+      "recommendation"
+    ],
+    "properties": {
+      "nextTransition": {
+        "type": "string",
+        "enum": [
+          "route-auto-refund",
+          "route-specialist-review",
+          "route-fraud-investigation"
+        ],
+        "default": "route-specialist-review"
+      },
+      "decision": {
+        "type": "string",
+        "default": "Uzman İncelemesi"
+      },
+      "riskLevel": {
+        "type": "string",
+        "enum": [
+          "Düşük",
+          "Orta",
+          "Yüksek"
+        ],
+        "default": "Orta"
+      },
+      "riskScore": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 52
+      },
+      "recommendedRefund": {
+        "type": "number",
+        "minimum": 0,
+        "default": 0
+      },
+      "priorDisputes": {
+        "type": "number",
+        "default": 0
+      },
+      "velocityScore": {
+        "type": "number",
+        "default": 45
+      },
+      "settlementStatus": {
+        "type": "string",
+        "default": "Belge Bekleniyor"
+      },
+      "policyCode": {
+        "type": "string",
+        "default": "CB-STD-2026"
+      },
+      "summary": {
+        "type": "string",
+        "default": "İtiraz dosyası AI Orkestratör ve MCP araçları ile değerlendirildi."
+      },
+      "recommendation": {
+        "type": "string",
+        "default": "Politika kurallarına göre işlem yapılmalı."
+      }
+    }
+  }
+}

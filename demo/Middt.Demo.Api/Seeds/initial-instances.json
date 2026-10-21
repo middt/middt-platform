@@ -20,5 +20,41 @@
       "segment": "Kurumsal",
       "monthlyIncome": 450000
     }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1001",
+      "customerName": "Ahmet Yılmaz",
+      "merchantName": "Bulut Market Dijital A.Ş.",
+      "transactionRef": "TRX-2026-4410",
+      "amount": 2450,
+      "category": "Mükerrer Çekim",
+      "reason": "Aynı alışveriş tutarı kartımdan iki kez çekildi."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1002",
+      "customerName": "Anadolu Lojistik A.Ş.",
+      "merchantName": "Global Elektronik A.Ş.",
+      "transactionRef": "TRX-2026-4411",
+      "amount": 14500,
+      "category": "Hizmet Alınamadı",
+      "reason": "Sipariş edilen sunucu ekipmanı teslim edilmedi."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1003",
+      "customerName": "Zeynep Kaya",
+      "merchantName": "Yurt Dışı Döviz Oyun Ltd.",
+      "transactionRef": "TRX-2026-4412",
+      "amount": 38000,
+      "category": "Yetkisiz İşlem",
+      "reason": "Gece yarısı bilgim dışında yüksek tutarlı yurt dışı harcaması yapılmış."
+    }
   }
 ]

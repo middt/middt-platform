@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Middt.Framework.Agents;
 using Middt.Framework.Api.DependencyInjection;
 using Middt.Framework.Rebus;
 using Middt.Framework.Ui.Server.DependencyInjection;
@@ -12,6 +13,7 @@ using Middt.Demo.Api.Handlers;
 using Middt.Demo.Api.Messages;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
 builder.AddServiceDefaults(enableOpenTelemetry: true);
 builder.AddMiddtApi(options => options.Title = "Middt Sample API");
@@ -40,6 +42,11 @@ builder.Services.AddHostedService<RabbitMqQueueInitializer>();
 
 var dbConnectionString = builder.Configuration.GetConnectionString("WorkflowDb");
 
+// AI Agents (Microsoft Agent Framework): JSON agent definitions from ./Agents, OpenAI/compatible provider or local deterministic fallback.
+builder.Services.AddMiddtAgents(
+    builder.Configuration,
+    agents => agents.AddAgentsFromDirectory("Agents"));
+
 // Workflow engine: JSON definitions from ./Workflows, all domain data stored in WorkflowInstanceData.Data JSONB ("wf" schema).
 builder.Services.AddMiddtWorkflow(workflow =>
 {
@@ -48,6 +55,7 @@ builder.Services.AddMiddtWorkflow(workflow =>
     workflow.ExposeErrorDetails = builder.Environment.IsDevelopment();
     workflow.AddDefinitionsFromDirectory("Workflows");
     workflow.AddRebusTasks();
+    workflow.AddAgentTasks();
 });
 builder.Services.AddSingleton<IWorkflowMessagePublisher, RebusWorkflowMessagePublisher>();
 builder.Services.AddHostedService<DemoWorkflowSeeder>();

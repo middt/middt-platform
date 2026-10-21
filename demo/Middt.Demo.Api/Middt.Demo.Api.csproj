@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\sdk\server\Middt.Framework.Agents\Middt.Framework.Agents.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Api\Middt.Framework.Api.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Rebus\Middt.Framework.Rebus.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Workflow\Middt.Framework.Workflow.csproj" />
@@ -24,6 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Update="Agents\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Update="Workflows\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Update="Layouts\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Update="Seeds\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

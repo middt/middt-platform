@@ -1,0 +1,92 @@
+{
+  "$schema": "../../../spec/ui-layout.schema.json",
+  "key": "ai-dispute-result",
+  "title": "AI İtiraz ve Fraud Sonuç Raporu",
+  "kind": "view",
+  "version": 1,
+  "body": [
+    {
+      "widget": "alert",
+      "severity": "success",
+      "text": "Düşük tutarlı işlem itirazı AI Orkestratör tarafından insan müdahalesi olmadan otomatik onaylandı ve iade edildi.",
+      "visibleWhen": "instance.state == \"auto-resolved\""
+    },
+    {
+      "widget": "alert",
+      "severity": "success",
+      "text": "İnceleme tamamlandı ve tutar müşteri hesabına iade edildi: {{ data.resolution.status }}",
+      "visibleWhen": "instance.state == \"resolved-refunded\""
+    },
+    {
+      "widget": "alert",
+      "severity": "danger",
+      "text": "İtiraz başvurusu reddedildi: {{ data.resolution.note }}",
+      "visibleWhen": "instance.state == \"rejected\""
+    },
+    {
+      "widget": "section",
+      "title": "Karar ve Çözüm Özeti",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "İtiraz No", "value": "{{ data.disputeNo }}" },
+            { "label": "Müşteri Adı", "value": "{{ data.customerName }}" },
+            { "label": "Üye İşyeri", "value": "{{ data.merchantName }}" },
+            { "label": "İtiraz Tutarı", "value": "{{ data.amount }}", "format": "N2" },
+            { "label": "Kategori", "value": "{{ data.category }}" },
+            { "label": "Nihai Durum", "value": "{{ data.resolution.status }}", "visibleWhen": "data.resolution != null" },
+            { "label": "İade Edilen Tutar", "value": "{{ data.resolution.refundedAmount }}", "format": "N2", "visibleWhen": "data.resolution != null" },
+            { "label": "Güvenlik Aksiyonu", "value": "{{ data.resolution.securityAction }}", "visibleWhen": "data.resolution != null && data.resolution.securityAction != null" },
+            { "label": "Politika Kodu", "value": "{{ data.resolution.policyCode }}", "visibleWhen": "data.resolution != null && data.resolution.policyCode != null" },
+            { "label": "Karar Açıklaması", "value": "{{ data.resolution.note }}", "visibleWhen": "data.resolution != null && data.resolution.note != null" },
+            { "label": "Kararı Veren", "value": "{{ data.resolution.resolvedBy }}", "visibleWhen": "data.resolution != null && data.resolution.resolvedBy != null" },
+            { "label": "Karar Zamanı", "value": "{{ data.resolution.resolvedAt }}", "format": "g", "visibleWhen": "data.resolution != null && data.resolution.resolvedAt != null" }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "AI Orkestratör ve MCP Analiz Raporu",
+      "visibleWhen": "data.aiDecision != null",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "AI İlk Kararı", "value": "{{ data.aiDecision.decision }}" },
+            { "label": "AI Akış Yönlendirmesi", "value": "{{ data.aiNextTransition }}" },
+            { "label": "Risk Seviyesi", "value": "{{ data.aiDecision.riskLevel }}" },
+            { "label": "Risk Skoru", "value": "{{ data.aiDecision.riskScore }} / 100" },
+            { "label": "Analiz Özeti", "value": "{{ data.aiDecision.summary }}" },
+            { "label": "MCP Politika Versiyonu", "value": "{{ data.mcpPolicy.policyVersion }}", "visibleWhen": "data.mcpPolicy != null" }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "Çağrılan AI Araçları (Function / MCP Tool Calls)",
+      "visibleWhen": "data.aiToolCalls != null && data.aiToolCalls.Count > 0",
+      "children": [
+        {
+          "widget": "list",
+          "source": "data.aiToolCalls",
+          "children": [
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "Araç Adı", "value": "{{ row.name }}" },
+                { "label": "Çağrı No", "value": "{{ row.callId }}" },
+                { "label": "Yönlendirme Kararı", "value": "{{ row.result.nextTransition }}", "visibleWhen": "row.result != null && row.result.nextTransition != null" },
+                { "label": "Politika Kodu", "value": "{{ row.result.policyCode }}", "visibleWhen": "row.result != null && row.result.policyCode != null" },
+                { "label": "Mutabakat Durumu", "value": "{{ row.result.settlementStatus }}", "visibleWhen": "row.result != null && row.result.settlementStatus != null" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    { "widget": "layout", "key": "workflow-footer" }
+  ]
+}

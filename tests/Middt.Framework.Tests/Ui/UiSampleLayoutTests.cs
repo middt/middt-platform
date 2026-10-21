@@ -1,3 +1,4 @@
+using Middt.Framework.Agents;
 using Middt.Framework.Rebus;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -53,6 +54,7 @@ public sealed class UiSampleLayoutTests
             }
 
             o.AddRebusTasks();
+            o.AddAgentTasks();
         });
 
         try

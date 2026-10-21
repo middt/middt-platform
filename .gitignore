@@ -21,3 +21,5 @@ node_modules/
 
 # Local secrets for docker compose
 .env
+**/appsettings.Local.json
+**/appsettings.*.local.json

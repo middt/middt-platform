@@ -1,0 +1,65 @@
+{
+  "name": "banking-mcp",
+  "description": "Bankacılık Chargeback, Üye İşyeri Slip ve Fraud Politikası MCP Sunucusu",
+  "tools": [
+    {
+      "name": "lookup_chargeback_history",
+      "kind": "expression",
+      "description": "Müşterinin geçmiş chargeback kayıtlarını ve işlem hız (velocity) skorunu sorgular.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customerName": { "type": "string", "description": "Müşteri adı" },
+          "amount": { "type": "number", "description": "İtiraz tutarı" },
+          "category": { "type": "string", "description": "İtiraz kategorisi" }
+        }
+      },
+      "output": {
+        "priorDisputes": "{{ args.category == \"Yetkisiz İşlem\" ? 2 : 0 }}",
+        "velocityScore": "{{ args.amount > 25000 ? 88 : (args.amount <= 5000 ? 12 : 45) }}",
+        "merchantRisk": "{{ args.category == \"Yetkisiz İşlem\" ? \"Yüksek\" : \"Düşük\" }}"
+      }
+    },
+    {
+      "name": "verify_merchant_receipt",
+      "kind": "expression",
+      "description": "Üye işyeri provizyon, slip ve teslimat mutabakat durumunu MCP üzerinden doğrular.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "transactionRef": { "type": "string", "description": "İşlem referans numarası" },
+          "merchantName": { "type": "string", "description": "Üye işyeri adı" },
+          "amount": { "type": "number", "description": "İşlem tutarı" }
+        }
+      },
+      "output": {
+        "transactionRef": "{{ args.transactionRef }}",
+        "merchantName": "{{ args.merchantName }}",
+        "settlementStatus": "{{ args.amount <= 5000 ? \"Otomatik İadeye Uygun\" : (args.amount > 25000 ? \"Blokeli / İncelemede\" : \"Belge Bekleniyor\") }}",
+        "refundableAmount": "{{ args.amount }}"
+      }
+    }
+  ],
+  "resources": [
+    {
+      "uri": "mcp://banking/policies/chargeback-2026",
+      "name": "Chargeback ve Fraud Politikası 2026",
+      "description": "Otomatik iade üst limiti, uzman inceleme eşiği ve fraud eskalasyon kuralları.",
+      "mimeType": "application/json",
+      "content": {
+        "policyVersion": "CB-2026.4",
+        "autoApproveLimit": 5000,
+        "fraudEscalationLimit": 25000,
+        "slaHours": 24,
+        "channel": "MCP-Standard-v1"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "name": "dispute-triage-prompt",
+      "description": "İtiraz değerlendirme istem şablonu",
+      "template": "İtiraz No: {{ args.disputeNo }}, Müşteri: {{ args.customerName }}, Tutar: {{ args.amount }} ₺, Kategori: {{ args.category }} için chargeback politikasını uygula."
+    }
+  ]
+}

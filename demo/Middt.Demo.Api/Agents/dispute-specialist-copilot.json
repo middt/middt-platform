@@ -1,0 +1,43 @@
+{
+  "name": "dispute-specialist-copilot",
+  "description": "Uzman incelemesindeki itiraz dosyaları için ek kanıt ve notları değerlendirerek nihai karar önerisi sunan yardımcı AI ajanı.",
+  "instructions": "Sen kıdemli bir chargeback uzman asistanısın. Uzman notlarını, işlem tutarını ve MCP verilerini değerlendirerek güncellenmiş karar önerisi üret.",
+  "tools": [
+    "calculate_reimbursement"
+  ],
+  "mcpServers": [
+    "banking-mcp"
+  ],
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "copilotVerdict",
+      "approvedRefundAmount",
+      "totalCredit",
+      "policyCode",
+      "settlementStatus"
+    ],
+    "properties": {
+      "copilotVerdict": {
+        "type": "string",
+        "default": "Ek kanıtlar ve üye işyeri mutabakat durumu doğrultusunda iade onayı önerilir."
+      },
+      "approvedRefundAmount": {
+        "type": "number",
+        "default": 0
+      },
+      "totalCredit": {
+        "type": "number",
+        "default": 0
+      },
+      "policyCode": {
+        "type": "string",
+        "default": "CB-STD-2026"
+      },
+      "settlementStatus": {
+        "type": "string",
+        "default": "Belge Bekleniyor"
+      }
+    }
+  }
+}

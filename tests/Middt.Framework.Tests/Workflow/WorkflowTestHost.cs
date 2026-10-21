@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Middt.Framework.Agents;
 using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow;
 using Middt.Framework.Workflow.DependencyInjection;
@@ -145,8 +146,10 @@ public sealed class WorkflowTestHost : IAsyncDisposable
             o.AddTask<RecordTask>("record");
             o.AddTask<FlakyTask>("flaky");
             o.AddTask<FailTask>("fail");
+            o.AddAgentTasks();
             configure?.Invoke(o);
         });
+        builder.Services.AddMiddtAgents();
 
         // EnableJobProcessor = false: register the processor without the hosted loop so tests drive it.
         builder.Services.AddSingleton<WorkflowJobProcessor>();

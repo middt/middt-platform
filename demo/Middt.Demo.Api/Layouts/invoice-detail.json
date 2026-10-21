@@ -3,7 +3,7 @@
   "key": "invoice-detail",
   "title": "Fatura Tahsilat Durumu",
   "kind": "view",
-  "version": 6,
+  "version": 7,
   "body": [
     {
       "widget": "alert",
@@ -114,6 +114,24 @@
                 { "label": "Silinme Zamanı", "value": "{{ row.deletedAt }}", "format": "g", "visibleWhen": "row.deletedAt != null" }
               ]
             }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "AI Risk Analizi",
+      "visibleWhen": "data.aiAudit != null",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "Risk Seviyesi", "value": "{{ data.aiAudit.riskLevel }}", "visibleWhen": "data.aiAudit.riskLevel != null" },
+            { "label": "Risk Skoru", "value": "{{ data.aiAudit.score }}", "visibleWhen": "data.aiAudit.score != null" },
+            { "label": "Analiz Özeti", "value": "{{ data.aiAudit.summary }}", "visibleWhen": "data.aiAudit.summary != null" },
+            { "label": "Öneri", "value": "{{ data.aiAudit.recommendation }}", "visibleWhen": "data.aiAudit.recommendation != null" },
+            { "label": "Ajan", "value": "{{ data.aiAuditMeta.agent }}", "visibleWhen": "data.aiAuditMeta != null && data.aiAuditMeta.agent != null" },
+            { "label": "Analiz Zamanı", "value": "{{ data.aiAuditMeta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiAuditMeta != null && data.aiAuditMeta.evaluatedAt != null" }
           ]
         }
       ]

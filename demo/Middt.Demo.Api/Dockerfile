@@ -16,6 +16,7 @@ COPY sdk/client/Middt.Framework.Client/*.csproj sdk/client/Middt.Framework.Clien
 COPY sdk/server/Middt.Framework.Workflow/*.csproj sdk/server/Middt.Framework.Workflow/
 COPY sdk/server/Middt.Framework.Ui.Server/*.csproj sdk/server/Middt.Framework.Ui.Server/
 COPY sdk/server/Middt.Framework.Rebus/*.csproj sdk/server/Middt.Framework.Rebus/
+COPY sdk/server/Middt.Framework.Agents/*.csproj sdk/server/Middt.Framework.Agents/
 COPY demo/Middt.Demo.ServiceDefaults/*.csproj demo/Middt.Demo.ServiceDefaults/
 COPY demo/Middt.Demo.Api/*.csproj demo/Middt.Demo.Api/
 RUN dotnet restore demo/Middt.Demo.Api/Middt.Demo.Api.csproj

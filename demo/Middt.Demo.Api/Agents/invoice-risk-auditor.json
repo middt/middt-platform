@@ -1,0 +1,42 @@
+{
+  "name": "invoice-risk-auditor",
+  "description": "Fatura ödeme hızı, kalan bakiye ve iptal edilen ödemeleri değerlendirerek yapılandırılmış risk analizi üretir.",
+  "instructions": "Sen kurumsal bir finansal risk ve tahsilat denetim ajanısın (Microsoft Agent Framework). Verilen fatura tutarı, tahsil edilen tutar, kalan bakiye, kısmi ödemeler ve silinen ödemeleri değerlendirerek Türkçe risk seviyesi, risk skoru, özet ve aksiyon önerisi üret.",
+  "tools": [
+    "workflow_evaluate_expression"
+  ],
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "riskLevel",
+      "score",
+      "summary",
+      "recommendation"
+    ],
+    "properties": {
+      "riskLevel": {
+        "type": "string",
+        "enum": [
+          "Düşük",
+          "Orta",
+          "Yüksek"
+        ],
+        "default": "Düşük"
+      },
+      "score": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 92
+      },
+      "summary": {
+        "type": "string",
+        "default": "Tahsilat ve ödeme geçmişi Microsoft Agent Framework ile denetlendi."
+      },
+      "recommendation": {
+        "type": "string",
+        "default": "Standart tahsilat akışına devam edilebilir."
+      }
+    }
+  }
+}

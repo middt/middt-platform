@@ -12,6 +12,7 @@
     <Project Path="sdk/server/Middt.Framework.Workflow/Middt.Framework.Workflow.csproj" />
     <Project Path="sdk/server/Middt.Framework.Ui.Server/Middt.Framework.Ui.Server.csproj" />
     <Project Path="sdk/server/Middt.Framework.Rebus/Middt.Framework.Rebus.csproj" />
+    <Project Path="sdk/server/Middt.Framework.Agents/Middt.Framework.Agents.csproj" />
   </Folder>
   <Folder Name="/sdk/client/">
     <Project Path="sdk/client/Middt.Framework.Client/Middt.Framework.Client.csproj" />

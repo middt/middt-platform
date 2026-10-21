@@ -1,3 +1,4 @@
+using Middt.Framework.Agents;
 using Middt.Framework.Rebus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
@@ -39,6 +40,7 @@ public sealed class WorkflowDefinitionTests
 
             o.AddTask<RecordTask>("record");
             o.AddRebusTasks();
+            o.AddAgentTasks();
         });
         services.AddSingleton<TaskLog>();
 
@@ -100,7 +102,8 @@ public sealed class WorkflowDefinitionTests
             "order-payment-orchestration",
             "sla-escalation",
             "risk-limit-eval",
-            "invoice-collection");
+            "invoice-collection",
+            "ai-dispute-resolution");
 
         var invoice = registry.GetLatest("invoice-collection");
         invoice.History.Should().Be(HistoryMode.Delta);
@@ -128,12 +131,13 @@ public sealed class WorkflowDefinitionTests
             o.EnableJobProcessor = false;
             o.AddDefinitionsFromDirectory(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Workflows"));
             o.AddRebusTasks();
+            o.AddAgentTasks();
         });
 
         var registry = services.BuildServiceProvider().GetRequiredService<WorkflowRegistry>();
 
         registry.Invoking(r => r.EnsureLoaded()).Should().NotThrow();
-        registry.Latest.Should().HaveCount(6);
+        registry.Latest.Should().HaveCount(7);
     }
 
     [Fact]

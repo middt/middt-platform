@@ -19,7 +19,8 @@ backend-for-frontend blocks (`sdk/client/Middt.Framework.Bff`), so no frontend e
 │ Ui.Server  (layout store, REST, schema,    │   └───────────────▲──────────────────┘   └───────────────▲────────────────┘
 │            plain C# static HTML renderer)  │                   │                                      │
 │ Rebus      (RabbitMQ / in-memory messaging)│   ┌──── 4. Blazor frontend ┴──────────┐   ┌──── Angular frontend ─────────┴┐
-└─────────────────────▲──────────────────────┘   │ Blazor      BFF auth, workflow    │   │ @middt/angular: widgets as     │
+│ Agents     (Microsoft Agent Framework AI)  │   │ Blazor      BFF auth, workflow    │   │ @middt/angular: widgets as     │
+└─────────────────────▲──────────────────────┘   │             screens, layout       │   │ Angular components, BFF/cookie │
                       │  HTTPS / JSON (REST,     │             screens, layout       │   │ Angular components, BFF/cookie │
                       │  ProblemDetails)         │             widgets + editor (Ui/)│   │ auth, workflow screens         │
                       └──────────────────────────└───────────────────────────────────┘   └────────────────────────────────┘

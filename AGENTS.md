@@ -29,7 +29,7 @@ A .NET 10 framework for line-of-business apps with **two interchangeable fronten
 ```
 sdk/                              the framework (NuGet + npm packages)
   shared/                         Model · Expressions · Ui.Abstractions        contracts, NO UI technology / ASP.NET
-  server/                         Common · Api · Workflow · Ui.Server · Rebus  backend, NO frontend dependencies
+  server/                         Common · Api · Workflow · Ui.Server · Rebus · Agents  backend, NO frontend dependencies
   client/
     Middt.Framework.Client        typed API clients (.NET)
     Middt.Framework.Bff           cookie session, login pages, YARP proxy
