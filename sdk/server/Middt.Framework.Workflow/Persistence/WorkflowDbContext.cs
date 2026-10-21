@@ -17,6 +17,12 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
 
     public DbSet<WorkflowIncident> Incidents => Set<WorkflowIncident>();
 
+    public DbSet<WorkflowAgentSession> AgentSessions => Set<WorkflowAgentSession>();
+
+    public DbSet<WorkflowAgentRun> AgentRuns => Set<WorkflowAgentRun>();
+
+    public DbSet<WorkflowAgentToolCall> AgentToolCalls => Set<WorkflowAgentToolCall>();
+
     /// <summary>
     /// New time-ordered UUIDv7 key for workflow instances and jobs.
     /// </summary>
@@ -137,6 +143,66 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             e.Property(x => x.TransitionKey).HasMaxLength(128);
             e.Property(x => x.TaskKey).HasMaxLength(128);
             e.HasIndex(x => new { x.WorkflowKey, x.InstanceId });
+            e.HasIndex(x => x.InstanceId);
+        });
+
+        modelBuilder.Entity<WorkflowAgentSession>(e =>
+        {
+            e.ToTable("WorkflowAgentSessions", schema);
+            e.HasKey(x => new { x.Id, x.WorkflowKey });
+            e.Property(x => x.WorkflowKey).HasMaxLength(128).IsRequired();
+            e.Property(x => x.AgentName).HasMaxLength(128).IsRequired();
+            e.Property(x => x.TaskKey).HasMaxLength(128).IsRequired();
+            e.Property(x => x.SessionData).IsRequired();
+            if (isPostgres)
+            {
+                e.Property(x => x.SessionData).HasColumnType("jsonb");
+            }
+
+            e.HasIndex(x => new { x.WorkflowKey, x.InstanceId, x.AgentName, x.TaskKey }).IsUnique();
+            e.HasIndex(x => x.InstanceId);
+        });
+
+        modelBuilder.Entity<WorkflowAgentRun>(e =>
+        {
+            e.ToTable("WorkflowAgentRuns", schema);
+            e.HasKey(x => new { x.Id, x.WorkflowKey });
+            e.Property(x => x.WorkflowKey).HasMaxLength(128).IsRequired();
+            e.Property(x => x.State).HasMaxLength(128).IsRequired();
+            e.Property(x => x.TransitionKey).HasMaxLength(128);
+            e.Property(x => x.TaskKey).HasMaxLength(128).IsRequired();
+            e.Property(x => x.AgentName).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Mode).HasMaxLength(32).IsRequired();
+            e.Property(x => x.SelectedTransition).HasMaxLength(128);
+            e.Property(x => x.ResponseId).HasMaxLength(128);
+            e.Property(x => x.FinishReason).HasMaxLength(64);
+            if (isPostgres)
+            {
+                e.Property(x => x.AllowedTransitions).HasColumnType("jsonb");
+                e.Property(x => x.Output).HasColumnType("jsonb");
+            }
+
+            e.HasIndex(x => new { x.WorkflowKey, x.InstanceId, x.CreatedAt });
+            e.HasIndex(x => x.InstanceId);
+        });
+
+        modelBuilder.Entity<WorkflowAgentToolCall>(e =>
+        {
+            e.ToTable("WorkflowAgentToolCalls", schema);
+            e.HasKey(x => new { x.Id, x.WorkflowKey });
+            e.Property(x => x.WorkflowKey).HasMaxLength(128).IsRequired();
+            e.Property(x => x.AgentName).HasMaxLength(128).IsRequired();
+            e.Property(x => x.TaskKey).HasMaxLength(128).IsRequired();
+            e.Property(x => x.CallId).HasMaxLength(128).IsRequired();
+            e.Property(x => x.ToolName).HasMaxLength(128).IsRequired();
+            if (isPostgres)
+            {
+                e.Property(x => x.Arguments).HasColumnType("jsonb");
+                e.Property(x => x.Result).HasColumnType("jsonb");
+            }
+
+            e.HasIndex(x => new { x.WorkflowKey, x.InstanceId, x.Order });
+            e.HasIndex(x => new { x.WorkflowKey, x.RunId, x.Order });
             e.HasIndex(x => x.InstanceId);
         });
 

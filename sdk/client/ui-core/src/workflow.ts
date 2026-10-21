@@ -45,6 +45,7 @@ export interface WorkflowSummaryModel {
 export interface WorkflowStateModel {
   key: string;
   title?: string | null;
+  description?: string | null;
   /** `Start`, `Normal`, `SubFlow`, `Finish`, … */
   type: string;
   /** `None`, `Human`, `Success`, `Error`, `Cancelled`, `Timeout`. */
@@ -60,6 +61,7 @@ export interface WorkflowStateModel {
 export interface WorkflowTransitionModel {
   key: string;
   title?: string | null;
+  description?: string | null;
   /** Source state; null for shared transitions. */
   from?: string | null;
   target: string;
@@ -69,6 +71,14 @@ export interface WorkflowTransitionModel {
   style?: string | null;
   /** Optional Material icon name for transition buttons. */
   icon?: string | null;
+}
+
+/** Transition option exposed to AI agents for dynamic state routing, including its key, title, description, and target state. */
+export interface WorkflowTransitionOptionModel {
+  key: string;
+  title?: string | null;
+  description?: string | null;
+  target?: string | null;
 }
 
 /** States and transitions of a workflow (e.g. for diagrams). */
@@ -88,6 +98,7 @@ export interface WorkflowDefinitionModel {
 export interface AvailableTransitionModel {
   key: string;
   title?: string | null;
+  description?: string | null;
   target: string;
   /** Optional button style (`primary`, `secondary`, `success`, `warning`, `danger`, `light`). */
   style?: string | null;
@@ -124,6 +135,41 @@ export interface ScheduledTransitionModel {
   dueAt: string;
 }
 
+export interface WorkflowAgentToolCallModel {
+  id: string;
+  runId: string;
+  agentName: string;
+  taskKey: string;
+  callId: string;
+  name: string;
+  arguments?: unknown;
+  result?: unknown;
+  order: number;
+  createdAt: string;
+}
+
+export interface WorkflowAgentRunModel {
+  id: string;
+  instanceId: string;
+  workflow: string;
+  state: string;
+  transitionKey?: string | null;
+  taskKey: string;
+  agentName: string;
+  mode: string;
+  selectedTransition?: string | null;
+  allowedTransitions?: WorkflowTransitionOptionModel[];
+  responseId?: string | null;
+  finishReason?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  toolCallCount: number;
+  output?: unknown;
+  createdAt: string;
+  toolCalls?: WorkflowAgentToolCallModel[];
+}
+
 export interface WorkflowInstanceModel {
   id: string;
   key?: string | null;
@@ -151,6 +197,12 @@ export interface WorkflowInstanceModel {
   scheduledTransitions: ScheduledTransitionModel[];
   /** Projected state and available transitions of the active child subflow when `waitingForInstanceId` is set. */
   activeSubFlow?: WorkflowInstanceModel | null;
+  /** Latest output and metadata per AI agent / MCP task (from `WorkflowAgentRuns`). */
+  agents?: WorkflowData;
+  /** Chronological AI agent and MCP execution runs (from `WorkflowAgentRuns`). */
+  agentRuns?: WorkflowAgentRunModel[];
+  /** Flattened tool calls across all AI agent and MCP runs (from `WorkflowAgentToolCalls`). */
+  toolCalls?: WorkflowAgentToolCallModel[];
 }
 
 export interface WorkflowTaskExecutionModel {

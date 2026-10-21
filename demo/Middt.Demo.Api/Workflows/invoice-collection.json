@@ -617,8 +617,7 @@
               "remainingAmount": "{{ data.remainingAmount }}",
               "partialPayment": "{{ data.partialPayment }}",
               "deletedPayment": "{{ data.deletedPayment }}"
-            },
-            "into": "aiAudit"
+            }
           }
         }
       ]

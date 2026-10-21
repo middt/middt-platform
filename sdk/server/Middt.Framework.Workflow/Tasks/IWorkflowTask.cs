@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow.Definitions;
 using Middt.Framework.Workflow.Expressions;
 
@@ -38,6 +39,9 @@ public sealed class WorkflowTaskContext
 
     public required string State { get; init; }
 
+    /// <summary>Key of the transition currently being executed, if any.</summary>
+    public string? Transition { get; init; }
+
     public required IServiceProvider Services { get; init; }
 
     public required ILogger Logger { get; init; }
@@ -61,6 +65,9 @@ public sealed class WorkflowTaskContext
 
     /// <summary>Selects the outgoing transition key to be taken automatically after the current state's entry tasks finish.</summary>
     public Action<string>? SelectTransition { get; init; }
+
+    /// <summary>Records an AI agent or MCP task execution into the active workflow run scope.</summary>
+    public Action<WorkflowAgentRunModel>? RecordAgentRun { get; init; }
 }
 
 /// <summary>Publishes workflow messages (<c>publish</c> task); register an implementation, e.g. on Rebus.</summary>

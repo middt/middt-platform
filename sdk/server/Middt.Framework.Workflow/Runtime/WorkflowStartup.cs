@@ -57,7 +57,12 @@ internal sealed class WorkflowStartup(
         }
         else
         {
-            // CreateTables only runs for a new database: add nullable columns introduced by later framework versions.
+            // CreateTables only runs for a new database: ensure any newly added partitioned tables and nullable columns exist.
+            if (isPostgres)
+            {
+                await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
+            }
+
             await EnsureWorkflowKeyMigrationAsync(db, options.Value.Schema, cancellationToken);
             await EnsureColumnsAsync(db, cancellationToken);
         }

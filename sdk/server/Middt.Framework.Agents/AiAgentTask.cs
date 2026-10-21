@@ -3,11 +3,14 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.AI;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Middt.Framework.Expressions;
+using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow.Definitions;
 using Middt.Framework.Workflow.Expressions;
+using Middt.Framework.Workflow.Persistence;
 using Middt.Framework.Workflow.Runtime;
 using Middt.Framework.Workflow.Schema;
 using Middt.Framework.Workflow.Tasks;
@@ -25,6 +28,11 @@ public sealed class AiAgentTask : IWorkflowTask
 {
     /// <summary>Default JSON property name inspected on structured agent output when <c>transitionInto</c> is configured.</summary>
     public const string DefaultTransitionProperty = "nextTransition";
+
+    private static readonly JsonSerializerOptions CamelCaseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
 
     public IEnumerable<string> Validate(TaskDefinition task, WorkflowExpressionEngine expressions)
     {
@@ -95,6 +103,7 @@ public sealed class AiAgentTask : IWorkflowTask
 
         AIAgent agent;
         JsonObject? effectiveOutputSchema = inlineOutputSchema;
+        List<WorkflowTransitionOptionModel> allowedTransitionOptions = [];
 
         if (mode is "sequential" or "concurrent" or "parallel" or "handoff")
         {
@@ -111,7 +120,8 @@ public sealed class AiAgentTask : IWorkflowTask
             }
 
             PopulateDynamicTransitions(allowedTransitions, explicitAllowedTransitions.Count > 0, stateTransitions, effectiveOutputSchema, transitionProperty, hasTransitionInto);
-            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, transitionProperty, hasTransitionInto);
+            allowedTransitionOptions = BuildTransitionOptions(allowedTransitions, stateTransitions);
+            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, allowedTransitionOptions, transitionProperty, hasTransitionInto);
 
             var mergedTools = new List<string>(registeredDef.Tools);
             foreach (var t in toolsList.Where(t => !mergedTools.Contains(t, StringComparer.OrdinalIgnoreCase)))
@@ -125,11 +135,12 @@ public sealed class AiAgentTask : IWorkflowTask
                 mergedMcp.Add(s);
             }
 
+            var baseInstructions = !string.IsNullOrWhiteSpace(instructions) ? instructions : registeredDef.Instructions;
             agent = registry.CreateAgent(new AgentDefinition
             {
                 Name = registeredDef.Name,
                 Description = registeredDef.Description,
-                Instructions = !string.IsNullOrWhiteSpace(instructions) ? instructions : registeredDef.Instructions,
+                Instructions = AppendTransitionRoutingGuidance(baseInstructions, allowedTransitionOptions, transitionProperty),
                 ModelId = !string.IsNullOrWhiteSpace(modelOverride) ? modelOverride : registeredDef.ModelId,
                 Temperature = registeredDef.Temperature,
                 MaxOutputTokens = registeredDef.MaxOutputTokens,
@@ -142,13 +153,14 @@ public sealed class AiAgentTask : IWorkflowTask
         else
         {
             PopulateDynamicTransitions(allowedTransitions, explicitAllowedTransitions.Count > 0, stateTransitions, effectiveOutputSchema, transitionProperty, hasTransitionInto);
-            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, transitionProperty, hasTransitionInto);
+            allowedTransitionOptions = BuildTransitionOptions(allowedTransitions, stateTransitions);
+            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, allowedTransitionOptions, transitionProperty, hasTransitionInto);
 
             var adHocDef = new AgentDefinition
             {
                 Name = !string.IsNullOrWhiteSpace(agentName) ? agentName : $"{context.Workflow}-{context.State}-agent",
                 Description = context.RenderText("description"),
-                Instructions = instructions,
+                Instructions = AppendTransitionRoutingGuidance(instructions, allowedTransitionOptions, transitionProperty),
                 ModelId = modelOverride,
                 Temperature = config["temperature"]?.GetValue<float>(),
                 MaxOutputTokens = config["maxOutputTokens"]?.GetValue<int>(),
@@ -163,11 +175,24 @@ public sealed class AiAgentTask : IWorkflowTask
         if (mode is "sequential" or "concurrent" or "parallel" or "handoff")
         {
             PopulateDynamicTransitions(allowedTransitions, explicitAllowedTransitions.Count > 0, stateTransitions, effectiveOutputSchema, transitionProperty, hasTransitionInto);
-            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, transitionProperty, hasTransitionInto);
+            allowedTransitionOptions = BuildTransitionOptions(allowedTransitions, stateTransitions);
+            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, allowedTransitionOptions, transitionProperty, hasTransitionInto);
         }
 
-        var messages = BuildMessages(context, allowedTransitions, stateTransitions);
-        var (session, hasRestoredSession) = await RestoreOrCreateSessionAsync(agent, context, cancellationToken);
+        var messages = BuildMessages(context, allowedTransitionOptions);
+        var db = context.Services.GetService<WorkflowDbContext>();
+        var resolvedAgentName = !string.IsNullOrWhiteSpace(agent.Name)
+            ? agent.Name
+            : (!string.IsNullOrWhiteSpace(agentName) ? agentName : $"{context.Workflow}-{context.State}-agent");
+        var taskKey = context.Task.DisplayKey;
+        var sessionAgentKey = context.RenderText("sessionKey") ?? resolvedAgentName;
+        var (session, hasRestoredSession, existingSessionEntity) = await RestoreOrCreateSessionAsync(
+            agent,
+            context,
+            db,
+            sessionAgentKey,
+            taskKey,
+            cancellationToken);
 
         AgentRunOptions? runOptions = null;
         if (effectiveOutputSchema is not null && mode is "sequential" or "concurrent" or "parallel" or "handoff")
@@ -204,10 +229,40 @@ public sealed class AiAgentTask : IWorkflowTask
             throw new WorkflowTaskException($"agent '{agent.Name}' execution failed: {ex.Message}", ex);
         }
 
+        var nowUtc = DateTime.UtcNow;
         var serializedSessionElement = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken);
         var normalizedSessionNode = serializedSessionElement.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)
             ? NormalizePolymorphicJson(JsonNode.Parse(serializedSessionElement.GetRawText()))
             : null;
+
+        if (db is not null
+            && context.InstanceId != Guid.Empty
+            && !string.IsNullOrWhiteSpace(context.Workflow)
+            && normalizedSessionNode is not null)
+        {
+            var serializedSessionJson = normalizedSessionNode.ToJsonString();
+            if (existingSessionEntity is not null)
+            {
+                existingSessionEntity.SessionData = serializedSessionJson;
+                existingSessionEntity.TurnCount += 1;
+                existingSessionEntity.UpdatedAt = nowUtc;
+            }
+            else
+            {
+                db.AgentSessions.Add(new WorkflowAgentSession
+                {
+                    Id = Guid.CreateVersion7(),
+                    InstanceId = context.InstanceId,
+                    WorkflowKey = context.Workflow,
+                    AgentName = sessionAgentKey,
+                    TaskKey = taskKey,
+                    SessionData = serializedSessionJson,
+                    TurnCount = 1,
+                    CreatedAt = nowUtc,
+                    UpdatedAt = nowUtc,
+                });
+            }
+        }
 
         var sessionInto = config["sessionInto"]?.GetValue<string>() ?? config["threadInto"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(sessionInto) && normalizedSessionNode is not null)
@@ -218,7 +273,7 @@ public sealed class AiAgentTask : IWorkflowTask
         var toolCallsArray = ExtractToolCalls(response.Messages);
         var meta = new JsonObject
         {
-            ["agent"] = agent.Name,
+            ["agent"] = resolvedAgentName,
             ["mode"] = mode,
             ["responseId"] = response.ResponseId,
             ["finishReason"] = response.FinishReason?.Value,
@@ -227,35 +282,33 @@ public sealed class AiAgentTask : IWorkflowTask
             ["totalTokens"] = response.Usage?.TotalTokenCount,
             ["toolCallCount"] = toolCallsArray.Count,
             ["toolCalls"] = toolCallsArray.DeepClone(),
-            ["allowedTransitions"] = new JsonArray([.. allowedTransitions.Select(t => (JsonNode?)JsonValue.Create(t))]),
-            ["evaluatedAt"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            ["allowedTransitions"] = ToJsonArray(allowedTransitionOptions),
+            ["evaluatedAt"] = new DateTimeOffset(nowUtc, TimeSpan.Zero).ToString("O", CultureInfo.InvariantCulture),
         };
 
         var into = config["into"]?.GetValue<string>();
         var transitionInto = config["transitionInto"]?.GetValue<string>();
         var shouldRoute = !string.IsNullOrWhiteSpace(transitionInto) || allowedTransitions.Count > 0;
 
-        JsonNode? outputNode = null;
-        if (!string.IsNullOrWhiteSpace(into) || shouldRoute)
-        {
-            outputNode = ParseAndValidateOutput(response.Text, response.Messages, effectiveOutputSchema, config, agent.Name ?? "agent");
-        }
+        var outputNode = ParseAndValidateOutput(response.Text, response.Messages, effectiveOutputSchema, config, resolvedAgentName);
+        string? selectedTransition = null;
 
         if (shouldRoute)
         {
-            var selectedTransition = ExtractSelectedTransition(outputNode, response.Text, transitionProperty);
+            selectedTransition = ExtractSelectedTransition(outputNode, response.Text, transitionProperty);
             if (!string.IsNullOrWhiteSpace(selectedTransition))
             {
                 if (allowedTransitions.Count > 0 && !allowedTransitions.Contains(selectedTransition, StringComparer.OrdinalIgnoreCase))
                 {
                     throw new WorkflowTaskException(
-                        $"agent '{agent.Name}' selected transition '{selectedTransition}', which is not in allowedTransitions [{string.Join(", ", allowedTransitions)}].");
+                        $"agent '{resolvedAgentName}' selected transition '{selectedTransition}', which is not in allowedTransitions [{string.Join(", ", allowedTransitions)}].");
                 }
 
                 context.SelectTransition?.Invoke(selectedTransition);
-                if (outputNode is JsonObject routedObj && routedObj[transitionProperty] is null)
+
+                if (outputNode is JsonObject routedObj)
                 {
-                    routedObj[transitionProperty] = JsonValue.Create(selectedTransition);
+                    RemovePropertyCaseInsensitive(routedObj, transitionProperty);
                 }
 
                 if (!string.IsNullOrWhiteSpace(transitionInto))
@@ -265,19 +318,111 @@ public sealed class AiAgentTask : IWorkflowTask
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(into))
+        var runId = Guid.CreateVersion7();
+        var toolCallModels = new List<WorkflowAgentToolCallModel>(toolCallsArray.Count);
+        var toolCallEntities = new List<WorkflowAgentToolCall>(toolCallsArray.Count);
+        for (var i = 0; i < toolCallsArray.Count; i++)
         {
-            if (outputNode is JsonObject outputObj)
+            if (toolCallsArray[i] is not JsonObject tcObj)
             {
-                outputObj["toolCalls"] ??= toolCallsArray.DeepClone();
-                outputObj["meta"] ??= meta.DeepClone();
-                if (normalizedSessionNode is not null)
-                {
-                    outputObj["session"] = normalizedSessionNode.DeepClone();
-                }
+                continue;
             }
 
-            JsonPath.Set(context.Data, into, outputNode);
+            var tcId = Guid.CreateVersion7();
+            var callId = tcObj["callId"]?.GetValue<string>() ?? $"call_{i + 1}";
+            var toolName = tcObj["name"]?.GetValue<string>() ?? string.Empty;
+            var argsClone = tcObj["arguments"]?.DeepClone();
+            var resultClone = tcObj["result"]?.DeepClone();
+
+            toolCallModels.Add(new WorkflowAgentToolCallModel
+            {
+                Id = tcId,
+                RunId = runId,
+                AgentName = resolvedAgentName,
+                TaskKey = taskKey,
+                CallId = callId,
+                Name = toolName,
+                Arguments = argsClone,
+                Result = resultClone,
+                Order = i,
+                CreatedAt = nowUtc,
+            });
+
+            toolCallEntities.Add(new WorkflowAgentToolCall
+            {
+                Id = tcId,
+                RunId = runId,
+                InstanceId = context.InstanceId,
+                WorkflowKey = context.Workflow,
+                AgentName = resolvedAgentName,
+                TaskKey = taskKey,
+                CallId = callId,
+                ToolName = toolName,
+                Arguments = argsClone?.ToJsonString(),
+                Result = resultClone?.ToJsonString(),
+                Order = i,
+                CreatedAt = nowUtc,
+            });
+        }
+
+        var runModel = new WorkflowAgentRunModel
+        {
+            Id = runId,
+            State = context.State,
+            TransitionKey = context.Transition,
+            TaskKey = taskKey,
+            AgentName = resolvedAgentName,
+            Mode = mode,
+            SelectedTransition = selectedTransition,
+            AllowedTransitions = [.. allowedTransitionOptions],
+            ResponseId = response.ResponseId,
+            FinishReason = response.FinishReason?.Value,
+            InputTokens = response.Usage?.InputTokenCount,
+            OutputTokens = response.Usage?.OutputTokenCount,
+            TotalTokens = response.Usage?.TotalTokenCount,
+            ToolCallCount = toolCallModels.Count,
+            Output = outputNode?.DeepClone(),
+            CreatedAt = nowUtc,
+            ToolCalls = toolCallModels,
+        };
+
+        context.RecordAgentRun?.Invoke(runModel);
+
+        if (db is not null && context.InstanceId != Guid.Empty && !string.IsNullOrWhiteSpace(context.Workflow))
+        {
+            db.AgentRuns.Add(new WorkflowAgentRun
+            {
+                Id = runId,
+                InstanceId = context.InstanceId,
+                WorkflowKey = context.Workflow,
+                State = context.State,
+                TransitionKey = context.Transition,
+                TaskKey = taskKey,
+                AgentName = resolvedAgentName,
+                Mode = mode,
+                SelectedTransition = selectedTransition,
+                AllowedTransitions = allowedTransitionOptions.Count > 0
+                    ? JsonSerializer.Serialize(allowedTransitionOptions, CamelCaseJsonOptions)
+                    : null,
+                ResponseId = response.ResponseId,
+                FinishReason = response.FinishReason?.Value,
+                InputTokens = response.Usage?.InputTokenCount,
+                OutputTokens = response.Usage?.OutputTokenCount,
+                TotalTokens = response.Usage?.TotalTokenCount,
+                ToolCallCount = toolCallEntities.Count,
+                Output = outputNode?.ToJsonString(),
+                CreatedAt = nowUtc,
+            });
+
+            if (toolCallEntities.Count > 0)
+            {
+                db.AgentToolCalls.AddRange(toolCallEntities);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(into))
+        {
+            JsonPath.Set(context.Data, into, outputNode?.DeepClone());
         }
 
         if (config["toolCallsInto"]?.GetValue<string>() is { Length: > 0 } toolCallsInto)
@@ -288,6 +433,16 @@ public sealed class AiAgentTask : IWorkflowTask
         if (config["metaInto"]?.GetValue<string>() is { Length: > 0 } metaInto)
         {
             JsonPath.Set(context.Data, metaInto, meta.DeepClone());
+        }
+    }
+
+    private static void RemovePropertyCaseInsensitive(JsonObject obj, string propertyName)
+    {
+        var matchingKey = obj.Select(kv => kv.Key)
+            .FirstOrDefault(k => string.Equals(k, propertyName, StringComparison.OrdinalIgnoreCase));
+        if (matchingKey is not null)
+        {
+            obj.Remove(matchingKey);
         }
     }
 
@@ -489,9 +644,125 @@ public sealed class AiAgentTask : IWorkflowTask
         }
     }
 
+    private static List<WorkflowTransitionOptionModel> BuildTransitionOptions(
+        List<string> allowedTransitions,
+        List<TransitionDefinition> stateTransitions)
+    {
+        if (allowedTransitions.Count == 0)
+        {
+            return [];
+        }
+
+        var list = new List<WorkflowTransitionOptionModel>(allowedTransitions.Count);
+        foreach (var key in allowedTransitions)
+        {
+            var match = stateTransitions.FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase));
+            list.Add(new WorkflowTransitionOptionModel
+            {
+                Key = match?.Key ?? key,
+                Title = string.IsNullOrWhiteSpace(match?.Title) ? null : match.Title,
+                Description = string.IsNullOrWhiteSpace(match?.Description) ? null : match.Description,
+                Target = string.IsNullOrWhiteSpace(match?.Target) ? null : match.Target,
+            });
+        }
+
+        return list;
+    }
+
+    private static JsonArray ToJsonArray(List<WorkflowTransitionOptionModel> options) =>
+        new([.. options.Select(t => (JsonNode?)new JsonObject
+        {
+            ["key"] = t.Key,
+            ["title"] = t.Title,
+            ["description"] = t.Description,
+            ["target"] = t.Target,
+        })]);
+
+    private static string? AppendTransitionRoutingGuidance(
+        string? instructions,
+        List<WorkflowTransitionOptionModel> options,
+        string transitionProperty)
+    {
+        var guidance = BuildTransitionRoutingGuidance(options, transitionProperty);
+        if (string.IsNullOrWhiteSpace(guidance))
+        {
+            return instructions;
+        }
+
+        if (string.IsNullOrWhiteSpace(instructions))
+        {
+            return guidance;
+        }
+
+        return instructions.TrimEnd() + "\n\n" + guidance;
+    }
+
+    private static string BuildTransitionRoutingGuidance(
+        List<WorkflowTransitionOptionModel> options,
+        string transitionProperty)
+    {
+        if (options.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("Available workflow transitions for '")
+          .Append(transitionProperty)
+          .Append("': ");
+
+        for (var i = 0; i < options.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append("; ");
+            }
+
+            var opt = options[i];
+            sb.Append(opt.Key);
+            if (!string.IsNullOrWhiteSpace(opt.Title) || !string.IsNullOrWhiteSpace(opt.Target) || !string.IsNullOrWhiteSpace(opt.Description))
+            {
+                sb.Append(" (");
+                var hasPart = false;
+                if (!string.IsNullOrWhiteSpace(opt.Title))
+                {
+                    sb.Append(opt.Title);
+                    hasPart = true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(opt.Target))
+                {
+                    if (hasPart)
+                    {
+                        sb.Append(" -> ");
+                    }
+
+                    sb.Append(opt.Target);
+                    hasPart = true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(opt.Description))
+                {
+                    if (hasPart)
+                    {
+                        sb.Append(": ");
+                    }
+
+                    sb.Append(opt.Description);
+                }
+
+                sb.Append(')');
+            }
+        }
+
+        sb.Append('.');
+        return sb.ToString();
+    }
+
     private static JsonObject? ApplyDynamicTransitionsToSchema(
         JsonObject? schema,
         List<string> allowedTransitions,
+        List<WorkflowTransitionOptionModel> transitionOptions,
         string transitionProperty,
         bool hasTransitionInto)
     {
@@ -537,6 +808,15 @@ public sealed class AiAgentTask : IWorkflowTask
         }
 
         propSchema["type"] ??= "string";
+
+        var guidance = BuildTransitionRoutingGuidance(transitionOptions, targetPropKey);
+        if (!string.IsNullOrWhiteSpace(guidance))
+        {
+            var existingDescription = propSchema["description"]?.GetValue<string>();
+            propSchema["description"] = string.IsNullOrWhiteSpace(existingDescription)
+                ? guidance
+                : existingDescription.TrimEnd() + " " + guidance;
+        }
 
         var enumArray = new JsonArray();
         if (propSchema["enum"] is JsonArray existingEnum)
@@ -587,8 +867,7 @@ public sealed class AiAgentTask : IWorkflowTask
 
     private static List<ChatMessage> BuildMessages(
         WorkflowTaskContext context,
-        List<string> allowedTransitions,
-        List<TransitionDefinition> stateTransitions)
+        List<WorkflowTransitionOptionModel> allowedTransitions)
     {
         var messages = new List<ChatMessage>();
 
@@ -624,24 +903,7 @@ public sealed class AiAgentTask : IWorkflowTask
         if (allowedTransitions.Count > 0)
         {
             var contextObj = contextNode as JsonObject ?? [];
-            contextObj["allowedTransitions"] = new JsonArray([.. allowedTransitions.Select(t => (JsonNode?)JsonValue.Create(t))]);
-
-            var allowedSet = new HashSet<string>(allowedTransitions, StringComparer.OrdinalIgnoreCase);
-            var transitionDetails = stateTransitions
-                .Where(t => allowedSet.Contains(t.Key))
-                .Select(t => (JsonNode?)new JsonObject
-                {
-                    ["key"] = t.Key,
-                    ["title"] = t.Title,
-                    ["target"] = t.Target,
-                    ["trigger"] = t.Trigger.ToString(),
-                })
-                .ToArray();
-            if (transitionDetails.Length > 0)
-            {
-                contextObj["stateTransitions"] = new JsonArray(transitionDetails);
-            }
-
+            contextObj["allowedTransitions"] = ToJsonArray(allowedTransitions);
             contextNode = contextObj;
         }
 
@@ -671,21 +933,59 @@ public sealed class AiAgentTask : IWorkflowTask
         return messages;
     }
 
-    private static async Task<(AgentSession Session, bool Restored)> RestoreOrCreateSessionAsync(
+    private static async Task<(AgentSession Session, bool Restored, WorkflowAgentSession? Entity)> RestoreOrCreateSessionAsync(
         AIAgent agent,
         WorkflowTaskContext context,
+        WorkflowDbContext? db,
+        string sessionAgentKey,
+        string taskKey,
         CancellationToken cancellationToken)
     {
-        var sessionPath = context.Config["session"]?.GetValue<string>() ?? context.Config["thread"]?.GetValue<string>();
+        WorkflowAgentSession? sessionEntity = null;
         JsonNode? existingNode = null;
-        if (!string.IsNullOrWhiteSpace(sessionPath))
+
+        if (db is not null && context.InstanceId != Guid.Empty && !string.IsNullOrWhiteSpace(context.Workflow))
         {
-            existingNode = JsonPath.Get(context.Data, sessionPath) ?? context.Render("session") ?? context.Render("thread");
+            sessionEntity = db.AgentSessions.Local.FirstOrDefault(s =>
+                                s.InstanceId == context.InstanceId
+                                && string.Equals(s.WorkflowKey, context.Workflow, StringComparison.Ordinal)
+                                && string.Equals(s.AgentName, sessionAgentKey, StringComparison.Ordinal)
+                                && string.Equals(s.TaskKey, taskKey, StringComparison.Ordinal))
+                            ?? db.AgentSessions.Local.FirstOrDefault(s =>
+                                s.InstanceId == context.InstanceId
+                                && string.Equals(s.WorkflowKey, context.Workflow, StringComparison.Ordinal)
+                                && string.Equals(s.AgentName, sessionAgentKey, StringComparison.Ordinal));
+
+            if (sessionEntity is null && context.Scope.Instance["agentRuns"] is JsonArray { Count: > 0 })
+            {
+                var instanceSessions = await db.AgentSessions
+                    .Where(s => s.InstanceId == context.InstanceId && s.WorkflowKey == context.Workflow && s.AgentName == sessionAgentKey)
+                    .ToListAsync(cancellationToken);
+
+                sessionEntity = instanceSessions.FirstOrDefault(s => string.Equals(s.TaskKey, taskKey, StringComparison.Ordinal))
+                                ?? instanceSessions.FirstOrDefault();
+            }
+
+            if (sessionEntity is not null && !string.IsNullOrWhiteSpace(sessionEntity.SessionData))
+            {
+                try
+                {
+                    existingNode = JsonNode.Parse(sessionEntity.SessionData);
+                }
+                catch (JsonException)
+                {
+                    existingNode = null;
+                }
+            }
         }
-        else if (context.Config["into"]?.GetValue<string>() is { Length: > 0 } intoPath
-                 && JsonPath.Get(context.Data, intoPath) is JsonObject prevIntoObj)
+
+        if (existingNode is null)
         {
-            existingNode = prevIntoObj["session"];
+            var sessionPath = context.Config["session"]?.GetValue<string>() ?? context.Config["thread"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(sessionPath))
+            {
+                existingNode = JsonPath.Get(context.Data, sessionPath) ?? context.Render("session") ?? context.Render("thread");
+            }
         }
 
         if (existingNode is JsonObject or JsonArray)
@@ -695,7 +995,7 @@ public sealed class AiAgentTask : IWorkflowTask
                 var normalizedNode = NormalizePolymorphicJson(existingNode)!;
                 using var doc = JsonDocument.Parse(normalizedNode.ToJsonString());
                 var restored = await agent.DeserializeSessionAsync(doc.RootElement.Clone(), cancellationToken: cancellationToken);
-                return (restored, true);
+                return (restored, true, sessionEntity);
             }
             catch (JsonException)
             {
@@ -703,7 +1003,7 @@ public sealed class AiAgentTask : IWorkflowTask
             }
         }
 
-        return (await agent.CreateSessionAsync(cancellationToken), false);
+        return (await agent.CreateSessionAsync(cancellationToken), false, sessionEntity);
     }
 
     /// <summary>

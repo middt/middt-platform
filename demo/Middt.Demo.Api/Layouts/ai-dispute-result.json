@@ -3,7 +3,7 @@
   "key": "ai-dispute-result",
   "title": "AI İtiraz ve Fraud Sonuç Raporu",
   "kind": "view",
-  "version": 2,
+  "version": 3,
   "body": [
     {
       "widget": "alert",
@@ -49,17 +49,17 @@
     {
       "widget": "section",
       "title": "AI Orkestratör ve MCP Analiz Raporu",
-      "visibleWhen": "data.aiDecision != null",
+      "visibleWhen": "instance.agents != null && instance.agents.disputeOrchestrator != null",
       "children": [
         {
           "widget": "fields",
           "items": [
-            { "label": "AI İlk Kararı", "value": "{{ data.aiDecision.decision }}" },
-            { "label": "AI Akış Yönlendirmesi", "value": "{{ data.aiDecision.nextTransition }}" },
-            { "label": "Risk Seviyesi", "value": "{{ data.aiDecision.riskLevel }}" },
-            { "label": "Risk Skoru", "value": "{{ data.aiDecision.riskScore }} / 100" },
-            { "label": "Analiz Özeti", "value": "{{ data.aiDecision.summary }}" },
-            { "label": "MCP Politika Versiyonu", "value": "{{ data.mcpPolicy.policyVersion }}", "visibleWhen": "data.mcpPolicy != null" }
+            { "label": "AI İlk Kararı", "value": "{{ instance.agents.disputeOrchestrator.decision }}" },
+            { "label": "AI Akış Yönlendirmesi", "value": "{{ instance.agents.disputeOrchestrator.selectedTransition }}" },
+            { "label": "Risk Seviyesi", "value": "{{ instance.agents.disputeOrchestrator.riskLevel }}" },
+            { "label": "Risk Skoru", "value": "{{ instance.agents.disputeOrchestrator.riskScore }} / 100" },
+            { "label": "Analiz Özeti", "value": "{{ instance.agents.disputeOrchestrator.summary }}" },
+            { "label": "MCP Politika Versiyonu", "value": "{{ instance.agents.readChargebackPolicy.policyVersion }}", "visibleWhen": "instance.agents.readChargebackPolicy != null" }
           ]
         }
       ]
@@ -67,15 +67,16 @@
     {
       "widget": "section",
       "title": "Çağrılan AI Araçları (Function / MCP Tool Calls)",
-      "visibleWhen": "data.aiDecision != null && data.aiDecision.toolCalls != null && data.aiDecision.toolCalls.Count > 0",
+      "visibleWhen": "instance.toolCalls != null && instance.toolCalls.Count > 0",
       "children": [
         {
           "widget": "list",
-          "source": "data.aiDecision.toolCalls",
+          "source": "instance.toolCalls",
           "children": [
             {
               "widget": "fields",
               "items": [
+                { "label": "Ajan / Sunucu", "value": "{{ row.agent }}", "visibleWhen": "row.agent != null" },
                 { "label": "Araç Adı", "value": "{{ row.name }}" },
                 { "label": "Çağrı No", "value": "{{ row.callId }}" },
                 { "label": "Yönlendirme Kararı", "value": "{{ row.result.nextTransition }}", "visibleWhen": "row.result != null && row.result.nextTransition != null" },

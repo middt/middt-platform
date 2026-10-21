@@ -41,6 +41,7 @@ public sealed class WorkflowStateModel
 {
     public string Key { get; set; } = string.Empty;
     public string? Title { get; set; }
+    public string? Description { get; set; }
     public string Type { get; set; } = string.Empty;
     public string SubType { get; set; } = string.Empty;
 
@@ -58,11 +59,21 @@ public sealed class WorkflowTransitionModel
 {
     public string Key { get; set; } = string.Empty;
     public string? Title { get; set; }
+    public string? Description { get; set; }
     public string? From { get; set; }
     public string Target { get; set; } = string.Empty;
     public string Trigger { get; set; } = string.Empty;
     public string? Style { get; set; }
     public string? Icon { get; set; }
+}
+
+/// <summary>Transition option exposed to AI agents for dynamic state routing, including its key, title, description, and target state.</summary>
+public sealed class WorkflowTransitionOptionModel
+{
+    public string Key { get; set; } = string.Empty;
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? Target { get; set; }
 }
 
 /// <summary>States and transitions of a workflow (e.g. for diagrams).</summary>
@@ -84,6 +95,7 @@ public sealed class AvailableTransitionModel
 {
     public string Key { get; set; } = string.Empty;
     public string? Title { get; set; }
+    public string? Description { get; set; }
     public string Target { get; set; } = string.Empty;
 
     /// <summary>Optional button style (<c>primary</c>, <c>secondary</c>, <c>success</c>, <c>warning</c>, <c>danger</c>, <c>light</c>).</summary>
@@ -151,8 +163,54 @@ public sealed class WorkflowInstanceModel
     public List<AvailableTransitionModel> AvailableTransitions { get; set; } = [];
     public List<ScheduledTransitionModel> ScheduledTransitions { get; set; } = [];
 
+    /// <summary>Latest agent/MCP execution state indexed by agent name and task key (populated from <c>WorkflowAgentRuns</c>).</summary>
+    public JsonObject Agents { get; set; } = [];
+
+    /// <summary>Chronological execution records of all AI agents and MCP tasks for this instance.</summary>
+    public List<WorkflowAgentRunModel> AgentRuns { get; set; } = [];
+
+    /// <summary>Chronological tool call records across all AI agent and MCP executions for this instance.</summary>
+    public List<WorkflowAgentToolCallModel> ToolCalls { get; set; } = [];
+
     /// <summary>Projected state and available transitions of the active child subflow when <see cref="WaitingForInstanceId"/> is set.</summary>
     public WorkflowInstanceModel? ActiveSubFlow { get; set; }
+}
+
+/// <summary>Execution record of an AI agent or MCP task persisted in <c>WorkflowAgentRuns</c>.</summary>
+public sealed class WorkflowAgentRunModel
+{
+    public Guid Id { get; set; }
+    public string State { get; set; } = string.Empty;
+    public string? TransitionKey { get; set; }
+    public string TaskKey { get; set; } = string.Empty;
+    public string AgentName { get; set; } = string.Empty;
+    public string Mode { get; set; } = string.Empty;
+    public string? SelectedTransition { get; set; }
+    public List<WorkflowTransitionOptionModel> AllowedTransitions { get; set; } = [];
+    public string? ResponseId { get; set; }
+    public string? FinishReason { get; set; }
+    public long? InputTokens { get; set; }
+    public long? OutputTokens { get; set; }
+    public long? TotalTokens { get; set; }
+    public int ToolCallCount { get; set; }
+    public JsonNode? Output { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public List<WorkflowAgentToolCallModel> ToolCalls { get; set; } = [];
+}
+
+/// <summary>Execution record of a single tool invocation persisted in <c>WorkflowAgentToolCalls</c>.</summary>
+public sealed class WorkflowAgentToolCallModel
+{
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+    public string AgentName { get; set; } = string.Empty;
+    public string TaskKey { get; set; } = string.Empty;
+    public string CallId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public JsonNode? Arguments { get; set; }
+    public JsonNode? Result { get; set; }
+    public int Order { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
 
 /// <summary>Execution record of a single task within a transition.</summary>

@@ -91,7 +91,7 @@ public sealed partial class WorkflowEngine
         }
     }
 
-    private ExpressionScope RuleScope(WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user, JsonObject? input = null) => new()
+    private ExpressionScope RuleScope(WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user, JsonObject? input = null, JsonObject? agents = null, JsonArray? agentRuns = null, JsonArray? toolCalls = null) => new()
     {
         Data = data,
         Input = input,
@@ -104,6 +104,9 @@ public sealed partial class WorkflowEngine
             ["state"] = instance.State,
             ["workflow"] = definition.Key,
             ["version"] = definition.Version,
+            ["agents"] = agents?.DeepClone() ?? new JsonObject(),
+            ["agentRuns"] = agentRuns?.DeepClone() ?? new JsonArray(),
+            ["toolCalls"] = toolCalls?.DeepClone() ?? new JsonArray(),
         },
     };
 
@@ -226,22 +229,30 @@ public sealed partial class WorkflowEngine
     private async Task<WorkflowInstanceModel> ToModelAsync(Run run, CancellationToken cancellationToken)
     {
         var instance = run.Instance;
+        List<ScheduledTransitionModel> scheduled;
         if (!run.ClearAllJobs && instance.State == run.InitialState && !run.LeftStates.Contains(instance.State))
         {
-            return await ToModelAsync(instance, run.User, cancellationToken);
-        }
-
-        var scheduled = run.ClearAllJobs
-            ? []
-            : run.NewJobs
-                .Where(j => j.Kind == WorkflowJobKind.Scheduled && j.State == instance.State)
+            scheduled = await db.Jobs.AsNoTracking()
+                .Where(j => j.InstanceId == instance.Id && j.Kind == WorkflowJobKind.Scheduled)
                 .OrderBy(j => j.DueAt)
                 .Select(j => new ScheduledTransitionModel { Key = j.TransitionKey!, DueAt = j.DueAt })
-                .ToList();
+                .ToListAsync(cancellationToken);
+        }
+        else
+        {
+            scheduled = run.ClearAllJobs
+                ? []
+                : run.NewJobs
+                    .Where(j => j.Kind == WorkflowJobKind.Scheduled && j.State == instance.State)
+                    .OrderBy(j => j.DueAt)
+                    .Select(j => new ScheduledTransitionModel { Key = j.TransitionKey!, DueAt = j.DueAt })
+                    .ToList();
+        }
+
         var activeSubFlow = instance.WaitingForInstanceId is { } waitingId
             ? run.ActiveSubFlowModel ?? await LoadActiveSubFlowAsync(waitingId, run.User, cancellationToken)
             : null;
-        return ToModel(instance, run.User, scheduled, activeSubFlow);
+        return ToModel(instance, run.User, scheduled, activeSubFlow, run.AgentRuns);
     }
 
     private async Task<WorkflowInstance> FindAsync(Guid id, CancellationToken cancellationToken) =>
@@ -259,7 +270,12 @@ public sealed partial class WorkflowEngine
         var activeSubFlow = instance.WaitingForInstanceId is { } waitingId
             ? await LoadActiveSubFlowAsync(waitingId, user, cancellationToken)
             : null;
-        return ToModel(instance, user, scheduled, activeSubFlow);
+
+        var definition = registry.Get(instance.WorkflowKey, instance.WorkflowVersion);
+        var agentRuns = HasAgentOrMcpTasks(definition)
+            ? await LoadAgentRunsAsync(instance.Id, cancellationToken)
+            : null;
+        return ToModel(instance, user, scheduled, activeSubFlow, agentRuns);
     }
 
     private async Task<WorkflowInstanceModel?> LoadActiveSubFlowAsync(Guid childId, WorkflowUser user, CancellationToken cancellationToken)
@@ -272,13 +288,15 @@ public sealed partial class WorkflowEngine
         WorkflowInstance instance,
         WorkflowUser user,
         List<ScheduledTransitionModel> scheduled,
-        WorkflowInstanceModel? activeSubFlow = null)
+        WorkflowInstanceModel? activeSubFlow = null,
+        List<WorkflowAgentRunModel>? agentRuns = null)
     {
         var definition = registry.Get(instance.WorkflowKey, instance.WorkflowVersion);
         var state = definition.FindState(instance.State);
 
+        var (agentsObj, agentRunsArr, toolCallsArr) = BuildAgentsScope(agentRuns);
         var data = JsonPath.ParseObject(instance.Data);
-        var scope = RuleScope(definition, instance, data, user);
+        var scope = RuleScope(definition, instance, data, user, null, agentsObj, agentRunsArr, toolCallsArr);
         var available = instance.Status == WorkflowInstanceStatus.Active
             ? AvailableIn(definition, instance.State)
                 .Where(t => t.Trigger == TriggerType.Manual && CanExecute(t, definition, instance, data, user))
@@ -288,6 +306,7 @@ public sealed partial class WorkflowEngine
                 {
                     Key = t.Key,
                     Title = t.Title,
+                    Description = string.IsNullOrWhiteSpace(t.Description) ? null : t.Description,
                     Target = t.Target,
                     Style = string.IsNullOrWhiteSpace(t.Style) ? null : t.Style,
                     Icon = string.IsNullOrWhiteSpace(t.Icon) ? null : t.Icon,
@@ -328,7 +347,264 @@ public sealed partial class WorkflowEngine
             CompletedAt = instance.CompletedAt,
             AvailableTransitions = available,
             ScheduledTransitions = scheduled,
+            Agents = agentsObj,
+            AgentRuns = agentRuns ?? [],
+            ToolCalls = agentRuns is { Count: > 0 } ? [.. agentRuns.SelectMany(r => r.ToolCalls)] : [],
         };
+    }
+
+    private static bool HasAgentOrMcpTasks(WorkflowDefinition definition)
+    {
+        static bool IsAgentOrMcp(TaskDefinition t) =>
+            string.Equals(t.Task, "agent", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t.Task, "aiAgent", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t.Task, "ai-agent", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t.Task, "mcp", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t.Task, "mcp-call", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t.Task, "mcp-tool", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t.Task, "mcp-resource", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t.Task, "mcp-prompt", StringComparison.OrdinalIgnoreCase);
+
+        if (definition.Start.OnExecute.Any(IsAgentOrMcp)
+            || definition.SharedTransitions.Any(tr => tr.OnExecute.Any(IsAgentOrMcp)))
+        {
+            return true;
+        }
+
+        foreach (var state in definition.States)
+        {
+            if (state.OnEntry.Any(IsAgentOrMcp)
+                || state.OnExit.Any(IsAgentOrMcp)
+                || state.Transitions.Any(tr => tr.OnExecute.Any(IsAgentOrMcp)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async Task<List<WorkflowAgentRunModel>> LoadAgentRunsAsync(Guid instanceId, CancellationToken cancellationToken)
+    {
+        var runRows = await db.AgentRuns.AsNoTracking()
+            .Where(r => r.InstanceId == instanceId)
+            .OrderBy(r => r.CreatedAt)
+            .ThenBy(r => r.Id)
+            .ToListAsync(cancellationToken);
+
+        if (runRows.Count == 0)
+        {
+            return [];
+        }
+
+        var toolCallRows = await db.AgentToolCalls.AsNoTracking()
+            .Where(t => t.InstanceId == instanceId)
+            .OrderBy(t => t.Order)
+            .ThenBy(t => t.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        var callsByRun = toolCallRows
+            .GroupBy(t => t.RunId)
+            .ToDictionary(g => g.Key, g => g.Select(t => new WorkflowAgentToolCallModel
+            {
+                Id = t.Id,
+                RunId = t.RunId,
+                AgentName = t.AgentName,
+                TaskKey = t.TaskKey,
+                CallId = t.CallId,
+                Name = t.ToolName,
+                Arguments = TryParseJsonNode(t.Arguments),
+                Result = TryParseJsonNode(t.Result),
+                Order = t.Order,
+                CreatedAt = t.CreatedAt,
+            }).ToList());
+
+        var models = new List<WorkflowAgentRunModel>(runRows.Count);
+        foreach (var row in runRows)
+        {
+            var allowed = new List<WorkflowTransitionOptionModel>();
+            if (!string.IsNullOrWhiteSpace(row.AllowedTransitions) && TryParseJsonNode(row.AllowedTransitions) is JsonArray arr)
+            {
+                foreach (var item in arr)
+                {
+                    if (item is JsonObject obj && obj["key"]?.GetValue<string>() is { Length: > 0 } k)
+                    {
+                        allowed.Add(new WorkflowTransitionOptionModel
+                        {
+                            Key = k,
+                            Title = obj["title"]?.GetValue<string>(),
+                            Description = obj["description"]?.GetValue<string>(),
+                            Target = obj["target"]?.GetValue<string>(),
+                        });
+                    }
+                    else if (item is JsonValue val && val.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
+                    {
+                        allowed.Add(new WorkflowTransitionOptionModel { Key = s });
+                    }
+                }
+            }
+
+            models.Add(new WorkflowAgentRunModel
+            {
+                Id = row.Id,
+                State = row.State,
+                TransitionKey = row.TransitionKey,
+                TaskKey = row.TaskKey,
+                AgentName = row.AgentName,
+                Mode = row.Mode,
+                SelectedTransition = row.SelectedTransition,
+                AllowedTransitions = allowed,
+                ResponseId = row.ResponseId,
+                FinishReason = row.FinishReason,
+                InputTokens = row.InputTokens,
+                OutputTokens = row.OutputTokens,
+                TotalTokens = row.TotalTokens,
+                ToolCallCount = row.ToolCallCount,
+                Output = TryParseJsonNode(row.Output),
+                CreatedAt = row.CreatedAt,
+                ToolCalls = callsByRun.TryGetValue(row.Id, out var calls) ? calls : [],
+            });
+        }
+
+        return models;
+    }
+
+    private static JsonNode? TryParseJsonNode(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonNode.Parse(json);
+        }
+        catch
+        {
+            return JsonValue.Create(json);
+        }
+    }
+
+    internal static (JsonObject Agents, JsonArray AgentRuns, JsonArray ToolCalls) BuildAgentsScope(IReadOnlyList<WorkflowAgentRunModel>? runs)
+    {
+        var agentsObj = new JsonObject();
+        var runsArray = new JsonArray();
+        var allToolCallsArray = new JsonArray();
+
+        if (runs is null || runs.Count == 0)
+        {
+            return (agentsObj, runsArray, allToolCallsArray);
+        }
+
+        foreach (var run in runs)
+        {
+            var entry = new JsonObject();
+            if (run.Output is JsonObject outputObj)
+            {
+                foreach (var (k, v) in outputObj)
+                {
+                    entry[k] = v?.DeepClone();
+                }
+
+                entry["output"] = outputObj.DeepClone();
+            }
+            else if (run.Output is not null)
+            {
+                entry["output"] = run.Output.DeepClone();
+            }
+
+            var runToolCalls = new JsonArray();
+            foreach (var tc in run.ToolCalls)
+            {
+                var tcNode = new JsonObject
+                {
+                    ["id"] = tc.Id.ToString(),
+                    ["runId"] = tc.RunId.ToString(),
+                    ["agent"] = tc.AgentName,
+                    ["taskKey"] = tc.TaskKey,
+                    ["callId"] = tc.CallId,
+                    ["name"] = tc.Name,
+                    ["arguments"] = tc.Arguments?.DeepClone(),
+                    ["result"] = tc.Result?.DeepClone(),
+                    ["order"] = tc.Order,
+                    ["createdAt"] = tc.CreatedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                };
+                runToolCalls.Add(tcNode);
+                allToolCallsArray.Add(tcNode.DeepClone());
+            }
+
+            var allowedArr = new JsonArray([.. run.AllowedTransitions.Select(t => (JsonNode?)new JsonObject
+            {
+                ["key"] = t.Key,
+                ["title"] = t.Title,
+                ["description"] = t.Description,
+                ["target"] = t.Target,
+            })]);
+            var evaluatedAt = run.CreatedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+
+            entry["id"] = run.Id.ToString();
+            entry["agent"] = run.AgentName;
+            entry["taskKey"] = run.TaskKey;
+            entry["state"] = run.State;
+            entry["transitionKey"] = run.TransitionKey;
+            entry["mode"] = run.Mode;
+            entry["selectedTransition"] = run.SelectedTransition;
+            entry["nextTransition"] = run.SelectedTransition;
+            entry["allowedTransitions"] = allowedArr;
+            entry["responseId"] = run.ResponseId;
+            entry["finishReason"] = run.FinishReason;
+            entry["inputTokens"] = run.InputTokens;
+            entry["outputTokens"] = run.OutputTokens;
+            entry["totalTokens"] = run.TotalTokens;
+            entry["toolCallCount"] = run.ToolCallCount;
+            entry["evaluatedAt"] = evaluatedAt;
+            entry["createdAt"] = evaluatedAt;
+            entry["toolCalls"] = runToolCalls;
+
+            runsArray.Add(entry.DeepClone());
+
+            if (!string.IsNullOrWhiteSpace(run.AgentName))
+            {
+                agentsObj[run.AgentName] = entry.DeepClone();
+                var camelAgent = ToCamelIdentifier(run.AgentName);
+                if (!string.IsNullOrWhiteSpace(camelAgent))
+                {
+                    agentsObj[camelAgent] = entry.DeepClone();
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(run.TaskKey))
+            {
+                agentsObj[run.TaskKey] = entry.DeepClone();
+                var camelTask = ToCamelIdentifier(run.TaskKey);
+                if (!string.IsNullOrWhiteSpace(camelTask))
+                {
+                    agentsObj[camelTask] = entry.DeepClone();
+                }
+            }
+        }
+
+        return (agentsObj, runsArray, allToolCallsArray);
+    }
+
+    private static string ToCamelIdentifier(string value)
+    {
+        var parts = value.Split(['-', '_', '.', ' ', ':'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var first = parts[0].Length > 1
+            ? char.ToLowerInvariant(parts[0][0]) + parts[0][1..]
+            : parts[0].ToLowerInvariant();
+        if (parts.Length == 1)
+        {
+            return first;
+        }
+
+        return first + string.Concat(parts.Skip(1).Select(p => char.ToUpperInvariant(p[0]) + (p.Length > 1 ? p[1..] : string.Empty)));
     }
 
     private JsonObject? ProjectInputSchema(JsonObject? schema, ExpressionScope scope)

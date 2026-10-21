@@ -374,33 +374,52 @@ public sealed class MiddtAgentTests
 
         var audited = await host.TransitionAsync(invoice.Id, "ai-risk-audit", new { }, user: Manager);
         audited.State.Should().Be("awaiting-payment");
-        audited.Data["aiAudit"]!["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
-        audited.Data["aiAudit"]!["score"]!.GetValue<double>().Should().Be(92);
-        audited.Data["aiAudit"]!["summary"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
-        audited.Data["aiAudit"]!["recommendation"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
-        audited.Data["aiAudit"]!["meta"]!["agent"]!.GetValue<string>().Should().Be("invoice-risk-auditor");
-        audited.Data["lastAuditedWorkflow"]!.GetValue<string>().Should().Be("invoice-collection");
-        audited.Data["aiAudit"]!["session"].Should().NotBeNull();
+
+        // instance.Data contains ONLY flow business data (no agent/session/meta clutter)
+        audited.Data["aiAudit"].Should().BeNull();
+        audited.Data["lastAuditedWorkflow"].Should().BeNull();
+        audited.Data["invoiceNo"]!.GetValue<string>().Should().Be("FAT-2026-9001");
+
+        // Dedicated tables / instance.Agents hold the agent run, metadata, and tool calls
+        var auditorNode = audited.Agents["invoiceRiskAuditor"]!;
+        auditorNode["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
+        auditorNode["score"]!.GetValue<double>().Should().Be(92);
+        auditorNode["summary"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
+        auditorNode["recommendation"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
+        auditorNode["agent"]!.GetValue<string>().Should().Be("invoice-risk-auditor");
+        audited.AgentRuns.Should().ContainSingle(r => r.AgentName == "invoice-risk-auditor");
+        audited.ToolCalls.Should().Contain(tc => tc.Name == "audit_invoice_payments");
 
         // Simulate PostgreSQL jsonb key reordering (shorter keys like "text" / "name" sorted before "$type")
-        // in the persisted WorkflowInstanceData and verify a second multi-turn execution of ai-risk-audit succeeds cleanly.
+        // in the persisted WorkflowAgentSessions table and verify a second multi-turn execution of ai-risk-audit succeeds cleanly.
         await using (var scope = host.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<Middt.Framework.Workflow.Persistence.WorkflowDbContext>();
-            var dataRow = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstAsync(
-                db.InstanceData,
-                d => d.InstanceId == invoice.Id,
+            var sessionRow = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstAsync(
+                db.AgentSessions,
+                s => s.InstanceId == invoice.Id && s.AgentName == "invoice-risk-auditor",
                 ct);
-            var mutated = JsonNode.Parse(dataRow.Data)!.AsObject();
-            mutated["aiAudit"]!["session"] = SimulatePostgresJsonbKeyOrder(mutated["aiAudit"]!["session"]);
-            dataRow.Data = mutated.ToJsonString();
+            sessionRow.TurnCount.Should().Be(1);
+            var mutatedSession = SimulatePostgresJsonbKeyOrder(JsonNode.Parse(sessionRow.SessionData))!;
+            sessionRow.SessionData = mutatedSession.ToJsonString();
             await db.SaveChangesAsync(ct);
         }
 
         var reAudited = await host.TransitionAsync(invoice.Id, "ai-risk-audit", new { }, user: Manager);
         reAudited.State.Should().Be("awaiting-payment");
         reAudited.Status.Should().Be(WorkflowInstanceStatus.Active);
-        reAudited.Data["aiAudit"]!["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
+        reAudited.Agents["invoiceRiskAuditor"]!["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
+        reAudited.AgentRuns.Count(r => r.AgentName == "invoice-risk-auditor").Should().Be(2);
+
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<Middt.Framework.Workflow.Persistence.WorkflowDbContext>();
+            var sessionRow = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstAsync(
+                db.AgentSessions,
+                s => s.InstanceId == invoice.Id && s.AgentName == "invoice-risk-auditor",
+                ct);
+            sessionRow.TurnCount.Should().Be(2);
+        }
 
         var layout = UiJson.Parse(await File.ReadAllTextAsync(layoutPath, ct));
         var uiOptions = new MiddtUiOptions();
@@ -409,7 +428,15 @@ public sealed class MiddtAgentTests
             new Dictionary<string, JsonNode?>
             {
                 [UiExpressions.Data] = audited.Data.DeepClone(),
-                [UiExpressions.Instance] = new JsonObject { ["state"] = audited.State, ["stateTitle"] = audited.StateTitle, ["workflow"] = audited.Workflow },
+                [UiExpressions.Instance] = new JsonObject
+                {
+                    ["state"] = audited.State,
+                    ["stateTitle"] = audited.StateTitle,
+                    ["workflow"] = audited.Workflow,
+                    ["agents"] = audited.Agents.DeepClone(),
+                    ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(audited.AgentRuns),
+                    ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(audited.ToolCalls),
+                },
             },
             new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] },
             CultureInfo.InvariantCulture);
@@ -561,19 +588,32 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         autoResolved.State.Should().Be("auto-resolved");
-        autoResolved.Data["aiDecision"]!["nextTransition"]!.GetValue<string>().Should().Be("route-auto-refund");
-        autoResolved.Data["aiDecision"]!["meta"]!["allowedTransitions"]!.AsArray()
-            .Select(x => x!.GetValue<string>())
-            .Should().BeEquivalentTo(["route-auto-refund", "route-fraud-investigation", "route-specialist-review"]);
-        autoResolved.Data["aiDecision"]!["decision"]!.GetValue<string>().Should().Be("Otomatik İade Onayı");
-        autoResolved.Data["aiDecision"]!["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
-        autoResolved.Data["aiDecision"]!["recommendedRefund"]!.GetValue<double>().Should().Be(2450);
-        autoResolved.Data["aiDecision"]!["policyCode"]!.GetValue<string>().Should().Be("CB-FAST-2026");
-        autoResolved.Data["mcpPolicy"]!["policyVersion"]!.GetValue<string>().Should().Be("CB-2026.4");
-        autoResolved.Data["mcpReceipt"]!["settlementStatus"]!.GetValue<string>().Should().Be("Otomatik İadeye Uygun");
-        autoResolved.Data["aiDecision"]!["toolCalls"]!.AsArray().Count.Should().BeGreaterThanOrEqualTo(3);
+
+        // Verify instance.Data contains ONLY flow business data (no aiMeta, aiToolCalls, aiDecision, mcpPolicy, mcpReceipt)
+        autoResolved.Data.Select(kv => kv.Key).Should().BeEquivalentTo(
+            ["disputeNo", "customerName", "merchantName", "transactionRef", "amount", "category", "reason", "createdBy", "createdAt", "resolution"]);
         autoResolved.Data["resolution"]!["status"]!.GetValue<string>().Should().Be("AI Otomatik İade Onayı");
         autoResolved.Data["resolution"]!["refundedAmount"]!.GetValue<double>().Should().Be(2450);
+
+        // Verify dedicated agent/MCP projections in instance.Agents, instance.AgentRuns, and instance.ToolCalls
+        var orchestrator = autoResolved.Agents["disputeOrchestrator"]!;
+        orchestrator["selectedTransition"]!.GetValue<string>().Should().Be("route-auto-refund");
+        var allowedArray = orchestrator["allowedTransitions"]!.AsArray();
+        allowedArray.Select(x => x!["key"]!.GetValue<string>())
+            .Should().BeEquivalentTo(["route-auto-refund", "route-fraud-investigation", "route-specialist-review"]);
+        allowedArray.Select(x => x!["description"]!.GetValue<string>())
+            .Should().AllSatisfy(d => d.Should().NotBeNullOrWhiteSpace());
+        allowedArray.Select(x => x!["title"]!.GetValue<string>())
+            .Should().AllSatisfy(t => t.Should().NotBeNullOrWhiteSpace());
+        autoResolved.AgentRuns.First(r => r.AgentName == "dispute-orchestrator").AllowedTransitions
+            .Should().Contain(t => t.Key == "route-auto-refund" && !string.IsNullOrWhiteSpace(t.Description));
+        orchestrator["decision"]!.GetValue<string>().Should().Be("Otomatik İade Onayı");
+        orchestrator["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
+        orchestrator["recommendedRefund"]!.GetValue<double>().Should().Be(2450);
+        orchestrator["policyCode"]!.GetValue<string>().Should().Be("CB-FAST-2026");
+        autoResolved.Agents["readChargebackPolicy"]!["policyVersion"]!.GetValue<string>().Should().Be("CB-2026.4");
+        autoResolved.Agents["verifyMerchantReceipt"]!["settlementStatus"]!.GetValue<string>().Should().Be("Otomatik İadeye Uygun");
+        autoResolved.ToolCalls.Count.Should().BeGreaterThanOrEqualTo(4);
 
         // 2. Medium-amount dispute (14500): AI Orchestrator routes to specialist-review; specialist runs Copilot + MCP audit + approves
         var specialistCase = await host.StartInstanceAsync(
@@ -591,9 +631,9 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         specialistCase.State.Should().Be("specialist-review");
-        specialistCase.Data["aiDecision"]!["nextTransition"]!.GetValue<string>().Should().Be("route-specialist-review");
-        specialistCase.Data["aiDecision"]!["decision"]!.GetValue<string>().Should().Be("Uzman İncelemesi");
-        specialistCase.Data["aiDecision"]!["riskLevel"]!.GetValue<string>().Should().Be("Orta");
+        specialistCase.Agents["disputeOrchestrator"]!["selectedTransition"]!.GetValue<string>().Should().Be("route-specialist-review");
+        specialistCase.Agents["disputeOrchestrator"]!["decision"]!.GetValue<string>().Should().Be("Uzman İncelemesi");
+        specialistCase.Agents["disputeOrchestrator"]!["riskLevel"]!.GetValue<string>().Should().Be("Orta");
 
         var afterCopilot = await host.TransitionAsync(
             specialistCase.Id,
@@ -602,9 +642,20 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         afterCopilot.State.Should().Be("specialist-review");
-        afterCopilot.Data["copilotReview"]!["approvedRefundAmount"]!.GetValue<double>().Should().Be(14500);
-        afterCopilot.Data["copilotReview"]!["totalCredit"]!.GetValue<double>().Should().Be(14650);
-        afterCopilot.Data["copilotReview"]!["toolCalls"]!.AsArray().Should().NotBeEmpty();
+        // Both agents (dispute-orchestrator AND dispute-specialist-copilot) coexist in instance.Agents and WorkflowAgentSessions/Runs!
+        afterCopilot.Agents["disputeOrchestrator"]!["decision"]!.GetValue<string>().Should().Be("Uzman İncelemesi");
+        afterCopilot.Agents["disputeSpecialistCopilot"]!["approvedRefundAmount"]!.GetValue<double>().Should().Be(14500);
+        afterCopilot.Agents["disputeSpecialistCopilot"]!["totalCredit"]!.GetValue<double>().Should().Be(14650);
+        afterCopilot.Agents["disputeSpecialistCopilot"]!["toolCalls"]!.AsArray().Should().NotBeEmpty();
+
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<Middt.Framework.Workflow.Persistence.WorkflowDbContext>();
+            var sessions = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+                db.AgentSessions.Where(s => s.InstanceId == specialistCase.Id),
+                ct);
+            sessions.Select(s => s.AgentName).Should().Contain(["dispute-orchestrator", "dispute-specialist-copilot"]);
+        }
 
         var afterMcpAudit = await host.TransitionAsync(
             specialistCase.Id,
@@ -612,7 +663,7 @@ public sealed class MiddtAgentTests
             new { },
             user: Manager);
 
-        afterMcpAudit.Data["mcpHistoryCheck"]!["velocityScore"]!.GetValue<int>().Should().Be(45);
+        afterMcpAudit.Agents["lookupChargebackHistory"]!["velocityScore"]!.GetValue<int>().Should().Be(45);
 
         // Verify Server-Driven UI detail layout renders AI & MCP sections
         var detailLayout = UiJson.Parse(await File.ReadAllTextAsync(detailLayoutPath, ct));
@@ -623,7 +674,15 @@ public sealed class MiddtAgentTests
                 new Dictionary<string, JsonNode?>
                 {
                     [UiExpressions.Data] = afterMcpAudit.Data.DeepClone(),
-                    [UiExpressions.Instance] = new JsonObject { ["state"] = afterMcpAudit.State, ["stateTitle"] = afterMcpAudit.StateTitle, ["workflow"] = afterMcpAudit.Workflow },
+                    [UiExpressions.Instance] = new JsonObject
+                    {
+                        ["state"] = afterMcpAudit.State,
+                        ["stateTitle"] = afterMcpAudit.StateTitle,
+                        ["workflow"] = afterMcpAudit.Workflow,
+                        ["agents"] = afterMcpAudit.Agents.DeepClone(),
+                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(afterMcpAudit.AgentRuns),
+                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(afterMcpAudit.ToolCalls),
+                    },
                 },
                 new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] },
                 CultureInfo.InvariantCulture));
@@ -640,6 +699,7 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         specialistApproved.State.Should().Be("resolved-refunded");
+        specialistApproved.Data["resolution"]!["policyCode"]!.GetValue<string>().Should().Be("CB-STD-2026");
 
         // 3. High-risk / unauthorized transaction (38000, Yetkisiz İşlem): AI Orchestrator routes to fraud-investigation
         var fraudCase = await host.StartInstanceAsync(
@@ -657,10 +717,10 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         fraudCase.State.Should().Be("fraud-investigation");
-        fraudCase.Data["aiDecision"]!["nextTransition"]!.GetValue<string>().Should().Be("route-fraud-investigation");
-        fraudCase.Data["aiDecision"]!["decision"]!.GetValue<string>().Should().Be("Fraud Eskalasyonu");
-        fraudCase.Data["aiDecision"]!["riskLevel"]!.GetValue<string>().Should().Be("Yüksek");
-        fraudCase.Data["aiDecision"]!["riskScore"]!.GetValue<double>().Should().Be(89);
+        fraudCase.Agents["disputeOrchestrator"]!["selectedTransition"]!.GetValue<string>().Should().Be("route-fraud-investigation");
+        fraudCase.Agents["disputeOrchestrator"]!["decision"]!.GetValue<string>().Should().Be("Fraud Eskalasyonu");
+        fraudCase.Agents["disputeOrchestrator"]!["riskLevel"]!.GetValue<string>().Should().Be("Yüksek");
+        fraudCase.Agents["disputeOrchestrator"]!["riskScore"]!.GetValue<double>().Should().Be(89);
 
         var committeeEvaluated = await host.TransitionAsync(
             fraudCase.Id,
@@ -668,8 +728,9 @@ public sealed class MiddtAgentTests
             new { },
             user: Manager);
         committeeEvaluated.State.Should().Be("fraud-investigation");
-        committeeEvaluated.Data["committeeReview"].Should().NotBeNull();
-        committeeEvaluated.Data["committeeReview"]!["meta"]!["mode"]!.GetValue<string>().Should().Be("sequential");
+        committeeEvaluated.Agents["fraudCommittee"].Should().NotBeNull();
+        committeeEvaluated.Agents["fraudCommittee"]!["mode"]!.GetValue<string>().Should().Be("sequential");
+        committeeEvaluated.Agents["disputeOrchestrator"]!["decision"]!.GetValue<string>().Should().Be("Fraud Eskalasyonu");
 
         var fraudResolved = await host.TransitionAsync(
             fraudCase.Id,
@@ -687,7 +748,15 @@ public sealed class MiddtAgentTests
                 new Dictionary<string, JsonNode?>
                 {
                     [UiExpressions.Data] = fraudResolved.Data.DeepClone(),
-                    [UiExpressions.Instance] = new JsonObject { ["state"] = fraudResolved.State, ["stateTitle"] = fraudResolved.StateTitle, ["workflow"] = fraudResolved.Workflow },
+                    [UiExpressions.Instance] = new JsonObject
+                    {
+                        ["state"] = fraudResolved.State,
+                        ["stateTitle"] = fraudResolved.StateTitle,
+                        ["workflow"] = fraudResolved.Workflow,
+                        ["agents"] = fraudResolved.Agents.DeepClone(),
+                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(fraudResolved.AgentRuns),
+                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(fraudResolved.ToolCalls),
+                    },
                 },
                 new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] },
                 CultureInfo.InvariantCulture));

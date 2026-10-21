@@ -30,6 +30,9 @@ public sealed class WorkflowLayoutRenderer(UiLayoutStore store, UiHtmlRenderer r
                 ["workflow"] = instance.Workflow,
                 ["status"] = instance.Status.ToString(),
                 ["startedBy"] = instance.StartedBy,
+                ["agents"] = instance.Agents.DeepClone(),
+                ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.AgentRuns),
+                ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ToolCalls),
             },
         }, user);
     }

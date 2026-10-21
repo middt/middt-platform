@@ -220,7 +220,7 @@ public partial class WorkflowInstanceDetail
         get
         {
             var key = instance is null ? default(LayoutVariablesKey?)
-                : new LayoutVariablesKey(instance.Id, instance.DataVersion, instance.Layout, instance.Key, instance.State, instance.StateTitle, instance.Workflow, instance.Status, instance.StartedBy);
+                : new LayoutVariablesKey(instance.Id, instance.DataVersion, instance.AgentRuns.Count, instance.UpdatedAt, instance.Layout, instance.Key, instance.State, instance.StateTitle, instance.Workflow, instance.Status, instance.StartedBy);
             if (layoutVariables is null || layoutVariablesKey != key)
             {
                 layoutVariablesKey = key;
@@ -237,6 +237,9 @@ public partial class WorkflowInstanceDetail
                         ["workflow"] = instance.Workflow,
                         ["status"] = instance.Status.ToString(),
                         ["startedBy"] = instance.StartedBy,
+                        ["agents"] = instance.Agents.DeepClone(),
+                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.AgentRuns),
+                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ToolCalls),
                     },
                 };
             }
@@ -269,7 +272,7 @@ public partial class WorkflowInstanceDetail
     private LayoutVariablesKey? layoutVariablesKey;
 
     private readonly record struct LayoutVariablesKey(
-        Guid Id, int DataVersion, string? Layout, string? Key, string State, string? StateTitle, string Workflow, WorkflowInstanceStatus Status, string? StartedBy);
+        Guid Id, int DataVersion, int AgentRunCount, DateTime UpdatedAt, string? Layout, string? Key, string State, string? StateTitle, string Workflow, WorkflowInstanceStatus Status, string? StartedBy);
 
     /// <summary>Whether a step form is rendered inside the screen (wizard).</summary>
     private bool ShowStepForm => stepTransition is not null && instance is not null;

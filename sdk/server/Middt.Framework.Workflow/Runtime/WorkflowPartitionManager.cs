@@ -130,6 +130,60 @@ public static class WorkflowPartitionManager
                 CONSTRAINT "PK_WorkflowIncidents" PRIMARY KEY ("Id", "WorkflowKey")
             ) PARTITION BY LIST ("WorkflowKey");
             """,
+            $"""
+            CREATE TABLE IF NOT EXISTS {validatedSchema}."WorkflowAgentSessions" (
+                "Id" uuid NOT NULL,
+                "InstanceId" uuid NOT NULL,
+                "WorkflowKey" varchar(128) NOT NULL,
+                "AgentName" varchar(128) NOT NULL,
+                "TaskKey" varchar(128) NOT NULL,
+                "SessionData" jsonb NOT NULL,
+                "TurnCount" int NOT NULL DEFAULT 1,
+                "CreatedAt" timestamptz NOT NULL,
+                "UpdatedAt" timestamptz NOT NULL,
+                CONSTRAINT "PK_WorkflowAgentSessions" PRIMARY KEY ("Id", "WorkflowKey")
+            ) PARTITION BY LIST ("WorkflowKey");
+            """,
+            $"""
+            CREATE TABLE IF NOT EXISTS {validatedSchema}."WorkflowAgentRuns" (
+                "Id" uuid NOT NULL,
+                "InstanceId" uuid NOT NULL,
+                "WorkflowKey" varchar(128) NOT NULL,
+                "State" varchar(128) NOT NULL,
+                "TransitionKey" varchar(128),
+                "TaskKey" varchar(128) NOT NULL,
+                "AgentName" varchar(128) NOT NULL,
+                "Mode" varchar(32) NOT NULL,
+                "SelectedTransition" varchar(128),
+                "AllowedTransitions" jsonb,
+                "ResponseId" varchar(128),
+                "FinishReason" varchar(64),
+                "InputTokens" bigint,
+                "OutputTokens" bigint,
+                "TotalTokens" bigint,
+                "ToolCallCount" int NOT NULL DEFAULT 0,
+                "Output" jsonb,
+                "CreatedAt" timestamptz NOT NULL,
+                CONSTRAINT "PK_WorkflowAgentRuns" PRIMARY KEY ("Id", "WorkflowKey")
+            ) PARTITION BY LIST ("WorkflowKey");
+            """,
+            $"""
+            CREATE TABLE IF NOT EXISTS {validatedSchema}."WorkflowAgentToolCalls" (
+                "Id" uuid NOT NULL,
+                "RunId" uuid NOT NULL,
+                "InstanceId" uuid NOT NULL,
+                "WorkflowKey" varchar(128) NOT NULL,
+                "AgentName" varchar(128) NOT NULL,
+                "TaskKey" varchar(128) NOT NULL,
+                "CallId" varchar(128) NOT NULL,
+                "ToolName" varchar(128) NOT NULL,
+                "Arguments" jsonb,
+                "Result" jsonb,
+                "Order" int NOT NULL DEFAULT 1,
+                "CreatedAt" timestamptz NOT NULL,
+                CONSTRAINT "PK_WorkflowAgentToolCalls" PRIMARY KEY ("Id", "WorkflowKey")
+            ) PARTITION BY LIST ("WorkflowKey");
+            """,
         };
 
         foreach (var sql in statements)
@@ -174,6 +228,7 @@ public static class WorkflowPartitionManager
 
         if (isPostgres && isPartitioned)
         {
+            await CreatePartitionedTablesAsync(db, schema, cancellationToken);
             await EnsureDefaultPartitionsAsync(db, validatedSchema, logger, cancellationToken);
         }
 
@@ -205,6 +260,9 @@ public static class WorkflowPartitionManager
             $"CREATE TABLE IF NOT EXISTS {schema}.\"WorkflowHistory_Default\" PARTITION OF {schema}.\"WorkflowHistory\" DEFAULT;",
             $"CREATE TABLE IF NOT EXISTS {schema}.\"WorkflowJobs_Default\" PARTITION OF {schema}.\"WorkflowJobs\" DEFAULT;",
             $"CREATE TABLE IF NOT EXISTS {schema}.\"WorkflowIncidents_Default\" PARTITION OF {schema}.\"WorkflowIncidents\" DEFAULT;",
+            $"CREATE TABLE IF NOT EXISTS {schema}.\"WorkflowAgentSessions_Default\" PARTITION OF {schema}.\"WorkflowAgentSessions\" DEFAULT;",
+            $"CREATE TABLE IF NOT EXISTS {schema}.\"WorkflowAgentRuns_Default\" PARTITION OF {schema}.\"WorkflowAgentRuns\" DEFAULT;",
+            $"CREATE TABLE IF NOT EXISTS {schema}.\"WorkflowAgentToolCalls_Default\" PARTITION OF {schema}.\"WorkflowAgentToolCalls\" DEFAULT;",
         };
 
         foreach (var sql in defaultTables)
@@ -256,6 +314,34 @@ public static class WorkflowPartitionManager
                     INSERT INTO {schema}."WorkflowIncidents" SELECT * FROM "_tmp_winc_{suffix}";
 
                     DROP TABLE "_tmp_wi_{suffix}", "_tmp_wid_{suffix}", "_tmp_wh_{suffix}", "_tmp_wj_{suffix}", "_tmp_winc_{suffix}";
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_class c
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = '{rawSchema}' AND c.relname = 'WorkflowAgentRuns_{suffix}'
+                ) THEN
+                    CREATE TEMP TABLE "_tmp_was_{suffix}" ON COMMIT DROP AS
+                        SELECT * FROM {schema}."WorkflowAgentSessions_Default" WHERE "WorkflowKey" = '{escapedKey}';
+                    CREATE TEMP TABLE "_tmp_war_{suffix}" ON COMMIT DROP AS
+                        SELECT * FROM {schema}."WorkflowAgentRuns_Default" WHERE "WorkflowKey" = '{escapedKey}';
+                    CREATE TEMP TABLE "_tmp_watc_{suffix}" ON COMMIT DROP AS
+                        SELECT * FROM {schema}."WorkflowAgentToolCalls_Default" WHERE "WorkflowKey" = '{escapedKey}';
+
+                    DELETE FROM {schema}."WorkflowAgentSessions_Default" WHERE "WorkflowKey" = '{escapedKey}';
+                    DELETE FROM {schema}."WorkflowAgentRuns_Default" WHERE "WorkflowKey" = '{escapedKey}';
+                    DELETE FROM {schema}."WorkflowAgentToolCalls_Default" WHERE "WorkflowKey" = '{escapedKey}';
+
+                    CREATE TABLE IF NOT EXISTS {schema}."WorkflowAgentSessions_{suffix}" PARTITION OF {schema}."WorkflowAgentSessions" FOR VALUES IN ('{escapedKey}');
+                    CREATE TABLE IF NOT EXISTS {schema}."WorkflowAgentRuns_{suffix}" PARTITION OF {schema}."WorkflowAgentRuns" FOR VALUES IN ('{escapedKey}');
+                    CREATE TABLE IF NOT EXISTS {schema}."WorkflowAgentToolCalls_{suffix}" PARTITION OF {schema}."WorkflowAgentToolCalls" FOR VALUES IN ('{escapedKey}');
+
+                    INSERT INTO {schema}."WorkflowAgentSessions" SELECT * FROM "_tmp_was_{suffix}";
+                    INSERT INTO {schema}."WorkflowAgentRuns" SELECT * FROM "_tmp_war_{suffix}";
+                    INSERT INTO {schema}."WorkflowAgentToolCalls" SELECT * FROM "_tmp_watc_{suffix}";
+
+                    DROP TABLE "_tmp_was_{suffix}", "_tmp_war_{suffix}", "_tmp_watc_{suffix}";
                 END IF;
             END $$;
             """;

@@ -3,7 +3,7 @@
   "key": "invoice-detail",
   "title": "Fatura Tahsilat Durumu",
   "kind": "view",
-  "version": 8,
+  "version": 9,
   "body": [
     {
       "widget": "alert",
@@ -121,17 +121,17 @@
     {
       "widget": "section",
       "title": "AI Risk Analizi",
-      "visibleWhen": "data.aiAudit != null",
+      "visibleWhen": "instance.agents != null && instance.agents.invoiceRiskAuditor != null",
       "children": [
         {
           "widget": "fields",
           "items": [
-            { "label": "Risk Seviyesi", "value": "{{ data.aiAudit.riskLevel }}", "visibleWhen": "data.aiAudit.riskLevel != null" },
-            { "label": "Risk Skoru", "value": "{{ data.aiAudit.score }}", "visibleWhen": "data.aiAudit.score != null" },
-            { "label": "Analiz Özeti", "value": "{{ data.aiAudit.summary }}", "visibleWhen": "data.aiAudit.summary != null" },
-            { "label": "Öneri", "value": "{{ data.aiAudit.recommendation }}", "visibleWhen": "data.aiAudit.recommendation != null" },
-            { "label": "Ajan", "value": "{{ data.aiAudit.meta.agent }}", "visibleWhen": "data.aiAudit.meta != null && data.aiAudit.meta.agent != null" },
-            { "label": "Analiz Zamanı", "value": "{{ data.aiAudit.meta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiAudit.meta != null && data.aiAudit.meta.evaluatedAt != null" }
+            { "label": "Risk Seviyesi", "value": "{{ instance.agents.invoiceRiskAuditor.riskLevel }}", "visibleWhen": "instance.agents.invoiceRiskAuditor.riskLevel != null" },
+            { "label": "Risk Skoru", "value": "{{ instance.agents.invoiceRiskAuditor.score }}", "visibleWhen": "instance.agents.invoiceRiskAuditor.score != null" },
+            { "label": "Analiz Özeti", "value": "{{ instance.agents.invoiceRiskAuditor.summary }}", "visibleWhen": "instance.agents.invoiceRiskAuditor.summary != null" },
+            { "label": "Öneri", "value": "{{ instance.agents.invoiceRiskAuditor.recommendation }}", "visibleWhen": "instance.agents.invoiceRiskAuditor.recommendation != null" },
+            { "label": "Ajan", "value": "{{ instance.agents.invoiceRiskAuditor.agent }}", "visibleWhen": "instance.agents.invoiceRiskAuditor.agent != null" },
+            { "label": "Analiz Zamanı", "value": "{{ instance.agents.invoiceRiskAuditor.evaluatedAt }}", "format": "g", "visibleWhen": "instance.agents.invoiceRiskAuditor.evaluatedAt != null" }
           ]
         }
       ]

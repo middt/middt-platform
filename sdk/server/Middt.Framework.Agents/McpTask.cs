@@ -2,8 +2,10 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Middt.Framework.Expressions;
+using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow.Definitions;
 using Middt.Framework.Workflow.Expressions;
+using Middt.Framework.Workflow.Persistence;
 using Middt.Framework.Workflow.Runtime;
 using Middt.Framework.Workflow.Tasks;
 
@@ -144,23 +146,103 @@ public sealed class McpTask : IWorkflowTask
             throw new WorkflowTaskException($"mcp '{server}' ({action}) failed: {ex.Message}", ex);
         }
 
+        var nowUtc = DateTime.UtcNow;
+        var resolvedToolName = context.RenderText("tool") ?? context.RenderText("name");
+        var resolvedUri = context.RenderText("uri") ?? context.RenderText("resource");
+        var taskKey = context.Task.DisplayKey;
         var meta = new JsonObject
         {
             ["server"] = server,
             ["action"] = action,
-            ["tool"] = context.RenderText("tool") ?? context.RenderText("name"),
-            ["uri"] = context.RenderText("uri") ?? context.RenderText("resource"),
-            ["executedAt"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            ["tool"] = resolvedToolName,
+            ["uri"] = resolvedUri,
+            ["executedAt"] = new DateTimeOffset(nowUtc, TimeSpan.Zero).ToString("O", CultureInfo.InvariantCulture),
         };
+
+        var runId = Guid.CreateVersion7();
+        var toolCallModels = new List<WorkflowAgentToolCallModel>();
+        var toolCallEntities = new List<WorkflowAgentToolCall>();
+
+        if (action is "calltool" or "call" or "tool" && !string.IsNullOrWhiteSpace(resolvedToolName))
+        {
+            var tcId = Guid.CreateVersion7();
+            var argsClone = argsNode.DeepClone();
+            var resultClone = output?.DeepClone();
+
+            toolCallModels.Add(new WorkflowAgentToolCallModel
+            {
+                Id = tcId,
+                RunId = runId,
+                AgentName = server,
+                TaskKey = taskKey,
+                CallId = $"mcp_{tcId:N}",
+                Name = resolvedToolName,
+                Arguments = argsClone,
+                Result = resultClone,
+                Order = 0,
+                CreatedAt = nowUtc,
+            });
+
+            toolCallEntities.Add(new WorkflowAgentToolCall
+            {
+                Id = tcId,
+                RunId = runId,
+                InstanceId = context.InstanceId,
+                WorkflowKey = context.Workflow,
+                AgentName = server,
+                TaskKey = taskKey,
+                CallId = $"mcp_{tcId:N}",
+                ToolName = resolvedToolName,
+                Arguments = argsClone.ToJsonString(),
+                Result = resultClone?.ToJsonString(),
+                Order = 0,
+                CreatedAt = nowUtc,
+            });
+        }
+
+        var runModel = new WorkflowAgentRunModel
+        {
+            Id = runId,
+            State = context.State,
+            TransitionKey = context.Transition,
+            TaskKey = taskKey,
+            AgentName = server,
+            Mode = $"mcp:{action}",
+            ToolCallCount = toolCallModels.Count,
+            Output = output?.DeepClone(),
+            CreatedAt = nowUtc,
+            ToolCalls = toolCallModels,
+        };
+
+        context.RecordAgentRun?.Invoke(runModel);
+
+        var db = context.Services.GetService<WorkflowDbContext>();
+        if (db is not null && context.InstanceId != Guid.Empty && !string.IsNullOrWhiteSpace(context.Workflow))
+        {
+            db.AgentRuns.Add(new WorkflowAgentRun
+            {
+                Id = runId,
+                InstanceId = context.InstanceId,
+                WorkflowKey = context.Workflow,
+                State = context.State,
+                TransitionKey = context.Transition,
+                TaskKey = taskKey,
+                AgentName = server,
+                Mode = $"mcp:{action}",
+                ToolCallCount = toolCallEntities.Count,
+                Output = output?.ToJsonString(),
+                CreatedAt = nowUtc,
+            });
+
+            if (toolCallEntities.Count > 0)
+            {
+                db.AgentToolCalls.AddRange(toolCallEntities);
+            }
+        }
 
         if (config["into"]?.GetValue<string>() is { Length: > 0 } into)
         {
-            if (output is JsonObject outputObj)
-            {
-                outputObj["meta"] ??= meta.DeepClone();
-            }
-
-            JsonPath.Set(context.Data, into, output);
+            JsonPath.Set(context.Data, into, output?.DeepClone());
         }
 
         if (config["metaInto"]?.GetValue<string>() is { Length: > 0 } metaInto)

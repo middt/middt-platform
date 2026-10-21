@@ -329,7 +329,18 @@ test('step prefill, inline transition and pending state', () => {
 test('layout variables and data helpers', () => {
   const model = instance({ data: { orderId: 7, amount: 25000.5, credit: { score: 42, checkedAt: '2026-03-04T05:06:07Z' }, flag: true } });
   const variables = workflowLayoutVariables(model);
-  assert.deepEqual(variables['instance'], { id: ID, key: 'K-1', state: 'customer', stateTitle: 'Müşteri bilgileri', workflow: 'order-approval', status: 'Active', startedBy: 'alice' });
+  assert.deepEqual(variables['instance'], {
+    id: ID,
+    key: 'K-1',
+    state: 'customer',
+    stateTitle: 'Müşteri bilgileri',
+    workflow: 'order-approval',
+    status: 'Active',
+    startedBy: 'alice',
+    agents: {},
+    agentRuns: [],
+    toolCalls: [],
+  });
   assert.deepEqual(variables['data'], model.data);
   assert.notEqual(variables['data'], model.data, 'data is a copy');
   assert.equal(workflowDataGet(model.data, 'credit.score'), 42);

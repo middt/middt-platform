@@ -332,7 +332,7 @@ public sealed class IdentityProtocolTests
             return (tableNames, columns, instanceDataCount, keys);
         });
 
-        tables.Should().BeEquivalentTo(["WorkflowHistory", "WorkflowIncidents", "WorkflowInstanceData", "WorkflowInstances", "WorkflowJobs"]);
+        tables.Should().BeEquivalentTo(["WorkflowAgentRuns", "WorkflowAgentSessions", "WorkflowAgentToolCalls", "WorkflowHistory", "WorkflowIncidents", "WorkflowInstanceData", "WorkflowInstances", "WorkflowJobs"]);
         instanceColumns.Should().NotContain(["Data", "DataVersion"]);
         dataCount.Should().BeGreaterThan(0);
         workflowKeys.Should().Contain(["idp-user", "idp-role", "oauth-application", "oauth-scope", "oauth-authorization", "oauth-token"]);

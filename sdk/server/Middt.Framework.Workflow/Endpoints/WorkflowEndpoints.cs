@@ -146,6 +146,12 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<List<WorkflowIncidentModel>>.Success(items, items.Count);
         }).WithName("GetWorkflowInstanceIncidents");
 
+        group.MapGet("{workflow}/instances/{id:guid}/agent-runs", async (string workflow, Guid id, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var items = await engine.AgentRunsAsync(workflow, id, WorkflowUser.From(principal), ct);
+            return BaseResponseDataModel<List<WorkflowAgentRunModel>>.Success(items, items.Count);
+        }).WithName("GetWorkflowInstanceAgentRuns");
+
         group.MapPost("{workflow}/instances/{id:guid}/retry", async (string workflow, Guid id, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
         {
             return BaseResponseDataModel<WorkflowInstanceModel>.Success(await engine.RetryAsync(workflow, id, WorkflowUser.From(principal), ct), 1);
@@ -210,6 +216,7 @@ public static class WorkflowEndpoints
             {
                 Key = s.Key,
                 Title = s.Title,
+                Description = string.IsNullOrWhiteSpace(s.Description) ? null : s.Description,
                 Type = s.Type.ToString(),
                 SubType = s.SubType.ToString(),
                 View = s.View?.Component,
@@ -223,6 +230,7 @@ public static class WorkflowEndpoints
                 {
                     Key = x.Transition.Key,
                     Title = x.Transition.Title,
+                    Description = string.IsNullOrWhiteSpace(x.Transition.Description) ? null : x.Transition.Description,
                     From = x.From,
                     Target = x.Transition.Target,
                     Trigger = x.Transition.Trigger.ToString(),

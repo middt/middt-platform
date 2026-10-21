@@ -62,15 +62,16 @@
           "config": { "key": "DSP-{{ data.disputeNo }}", "ensureUnique": true }
         },
         {
+          "key": "read-chargeback-policy",
           "task": "mcp",
           "config": {
             "server": "banking-mcp",
             "action": "readResource",
-            "uri": "mcp://banking/policies/chargeback-2026",
-            "into": "mcpPolicy"
+            "uri": "mcp://banking/policies/chargeback-2026"
           }
         },
         {
+          "key": "verify-merchant-receipt",
           "task": "mcp",
           "config": {
             "server": "banking-mcp",
@@ -80,11 +81,11 @@
               "transactionRef": "{{ data.transactionRef }}",
               "merchantName": "{{ data.merchantName }}",
               "amount": "{{ data.amount }}"
-            },
-            "into": "mcpReceipt"
+            }
           }
         },
         {
+          "key": "triage-dispute",
           "task": "agent",
           "config": {
             "agent": "dispute-orchestrator",
@@ -97,8 +98,7 @@
               "amount": "{{ data.amount }}",
               "category": "{{ data.category }}",
               "reason": "{{ data.reason }}"
-            },
-            "into": "aiDecision"
+            }
           }
         }
       ],
@@ -106,6 +106,7 @@
         {
           "key": "route-auto-refund",
           "title": "AI Otomatik İade Onayı",
+          "description": "5.000 ₺ ve altındaki düşük riskli işlem itirazlarını (örn. mükerrer çekim, hatalı tutar) politika limitleri dahilinde otomatik onaylayarak müşteriye anında iade yapar.",
           "target": "auto-resolved",
           "trigger": "Automatic",
           "onExecute": [
@@ -114,9 +115,9 @@
               "config": {
                 "values": {
                   "resolution.status": "\"AI Otomatik İade Onayı\"",
-                  "resolution.refundedAmount": "data.aiDecision.recommendedRefund",
-                  "resolution.policyCode": "data.aiDecision.policyCode",
-                  "resolution.note": "data.aiDecision.summary",
+                  "resolution.refundedAmount": "instance.agents.disputeOrchestrator.recommendedRefund",
+                  "resolution.policyCode": "instance.agents.disputeOrchestrator.policyCode",
+                  "resolution.note": "instance.agents.disputeOrchestrator.summary",
                   "resolution.resolvedBy": "\"AI Orkestratör (dispute-orchestrator)\"",
                   "resolution.resolvedAt": "now"
                 }
@@ -127,12 +128,14 @@
         {
           "key": "route-fraud-investigation",
           "title": "AI Fraud Eskalasyonu",
+          "description": "Yetkisiz işlem bildirimlerini veya 25.000 ₺ üzerindeki yüksek riskli/şüpheli işlemleri güvenlik ve fraud inceleme ekibine eskale eder.",
           "target": "fraud-investigation",
           "trigger": "Automatic"
         },
         {
           "key": "route-specialist-review",
           "title": "AI Uzman İnceleme Yönlendirmesi",
+          "description": "5.000 ₺ - 25.000 ₺ arasındaki orta tutarlı veya üye işyeri slip/teslimat belgesi kontrolü gerektiren standart itirazları uzman incelemesine yönlendirir.",
           "target": "specialist-review",
           "trigger": "Automatic"
         }
@@ -171,6 +174,7 @@
           },
           "onExecute": [
             {
+              "key": "copilot-review",
               "task": "agent",
               "config": {
                 "agent": "dispute-specialist-copilot",
@@ -181,8 +185,7 @@
                   "customerName": "{{ data.customerName }}",
                   "amount": "{{ data.amount }}",
                   "category": "{{ data.category }}"
-                },
-                "into": "copilotReview"
+                }
               }
             }
           ]
@@ -195,6 +198,7 @@
           "icon": "hub",
           "onExecute": [
             {
+              "key": "lookup-chargeback-history",
               "task": "mcp",
               "config": {
                 "server": "banking-mcp",
@@ -204,8 +208,7 @@
                   "customerName": "{{ data.customerName }}",
                   "amount": "{{ data.amount }}",
                   "category": "{{ data.category }}"
-                },
-                "into": "mcpHistoryCheck"
+                }
               }
             }
           ]
@@ -229,7 +232,7 @@
             "set": {
               "resolution.status": "\"Uzman Onayı ile İade\"",
               "resolution.refundedAmount": "input.refundedAmount",
-              "resolution.policyCode": "data.aiDecision.policyCode ?? \"CB-STD-2026\"",
+              "resolution.policyCode": "instance.agents.disputeOrchestrator.policyCode ?? \"CB-STD-2026\"",
               "resolution.note": "input.note",
               "resolution.resolvedBy": "user.Name",
               "resolution.resolvedAt": "now"
@@ -276,9 +279,11 @@
           "icon": "groups",
           "onExecute": [
             {
+              "key": "fraud-committee",
               "task": "agent",
               "config": {
                 "mode": "sequential",
+                "agent": "fraud-committee",
                 "agents": [ "dispute-orchestrator", "dispute-specialist-copilot" ],
                 "prompt": "Fraud şüphesi taşıyan {{ data.disputeNo }} numaralı ({{ data.amount }} ₺ - {{ data.category }}) işlemi sıralı çoklu ajan (Orchestrator + Specialist Copilot) komitesi olarak değerlendir.",
                 "context": {
@@ -288,8 +293,7 @@
                   "transactionRef": "{{ data.transactionRef }}",
                   "amount": "{{ data.amount }}",
                   "category": "{{ data.category }}"
-                },
-                "into": "committeeReview"
+                }
               }
             }
           ]

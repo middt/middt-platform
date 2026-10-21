@@ -450,6 +450,9 @@ export function workflowLayoutVariables(instance: WorkflowInstanceModel): Record
       workflow: instance.workflow,
       status: instance.status,
       startedBy: instance.startedBy ?? null,
+      agents: cloneJson(instance.agents ?? {}),
+      agentRuns: cloneJson(instance.agentRuns ?? []),
+      toolCalls: cloneJson(instance.toolCalls ?? []),
     },
   };
 }

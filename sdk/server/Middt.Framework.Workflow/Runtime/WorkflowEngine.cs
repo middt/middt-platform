@@ -597,6 +597,25 @@ public sealed partial class WorkflowEngine(
     public Task<List<WorkflowIncidentModel>> IncidentsAsync(Guid instanceId, WorkflowUser user, CancellationToken cancellationToken = default) =>
         IncidentsAsync(null, instanceId, user, cancellationToken);
 
+    public Task<List<WorkflowAgentRunModel>> AgentRunsAsync(Guid instanceId, WorkflowUser user, CancellationToken cancellationToken = default) =>
+        AgentRunsAsync(null, instanceId, user, cancellationToken);
+
+    internal async Task<List<WorkflowAgentRunModel>> AgentRunsAsync(string? workflow, Guid instanceId, WorkflowUser user, CancellationToken cancellationToken)
+    {
+        using var activity = WorkflowDiagnostics.ActivitySource.StartActivity($"workflow.agent_runs {workflow ?? "instance"}");
+        if (!string.IsNullOrEmpty(workflow))
+        {
+            activity?.SetTag("middt.workflow.key", workflow);
+        }
+
+        activity?.SetTag("middt.workflow.instance_id", instanceId.ToString());
+
+        await FindAccessibleAsync(instanceId, workflow, user, cancellationToken);
+        var runs = await LoadAgentRunsAsync(instanceId, cancellationToken);
+        activity?.SetTag("middt.workflow.result_count", runs.Count);
+        return runs;
+    }
+
     internal async Task<List<WorkflowIncidentModel>> IncidentsAsync(string? workflow, Guid instanceId, WorkflowUser user, CancellationToken cancellationToken)
     {
         using var activity = WorkflowDiagnostics.ActivitySource.StartActivity($"workflow.incidents {workflow ?? "instance"}");
@@ -668,6 +687,9 @@ public sealed partial class WorkflowEngine(
 
         /// <summary>Outgoing transition key selected by a task (e.g. an AI agent task) to be taken automatically after the current hop.</summary>
         public string? SelectedTransition { get; set; }
+
+        /// <summary>Chronological AI agent and MCP execution records for this instance.</summary>
+        public List<WorkflowAgentRunModel> AgentRuns { get; } = [];
     }
 
     internal enum JobOutcome
@@ -793,7 +815,12 @@ public sealed partial class WorkflowEngine(
             }
         }
 
-        var run = new Run(registry.Get(instance.WorkflowKey, instance.WorkflowVersion), instance, JsonPath.ParseObject(instance.Data), user);
+        var definition = registry.Get(instance.WorkflowKey, instance.WorkflowVersion);
+        var run = new Run(definition, instance, JsonPath.ParseObject(instance.Data), user);
+        if (HasAgentOrMcpTasks(definition))
+        {
+            run.AgentRuns.AddRange(await LoadAgentRunsAsync(instance.Id, cancellationToken));
+        }
 
         try
         {
@@ -1160,6 +1187,7 @@ public sealed partial class WorkflowEngine(
                     IdempotencyKey = $"{run.IdempotencyScope ?? $"{run.Instance.Id:N}:{run.Instance.Revision}"}:{transitionKey}:{taskIndex}",
                     Workflow = run.Definition.Key,
                     State = run.Instance.State,
+                    Transition = transitionKey,
                     Services = services,
                     Logger = logger,
                     StartWorkflow = async (workflow, data, key, ct) =>
@@ -1177,6 +1205,7 @@ public sealed partial class WorkflowEngine(
                     BusinessKey = run.Instance.BusinessKey,
                     SetBusinessKey = (key, ct) => SetBusinessKeyAsync(run, key, ct),
                     SelectTransition = key => run.SelectedTransition = key,
+                    RecordAgentRun = agentRun => run.AgentRuns.Add(agentRun),
                 };
 
                 try
@@ -1884,6 +1913,7 @@ public sealed partial class WorkflowEngine(
     private ExpressionScope Scope(Run run, JsonObject? input, JsonObject? data = null)
     {
         var activeState = string.IsNullOrEmpty(run.Instance.State) ? run.Definition.Start.Target : run.Instance.State;
+        var (agentsObj, agentRunsArr, toolCallsArr) = BuildAgentsScope(run.AgentRuns);
         return new()
         {
             Data = data ?? run.Data,
@@ -1899,6 +1929,9 @@ public sealed partial class WorkflowEngine(
                 ["workflow"] = run.Definition.Key,
                 ["version"] = run.Definition.Version,
                 ["transitions"] = new JsonArray([.. AvailableIn(run.Definition, activeState).Select(t => (JsonNode?)JsonValue.Create(t.Key))]),
+                ["agents"] = agentsObj,
+                ["agentRuns"] = agentRunsArr,
+                ["toolCalls"] = toolCallsArr,
             },
         };
     }

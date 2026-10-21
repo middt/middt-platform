@@ -241,3 +241,65 @@ public sealed class WorkflowIncident
     public DateTime CreatedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }
 }
+
+/// <summary>
+/// Multi-turn conversation session state of an AI agent scoped to a workflow instance, agent name, and task key,
+/// stored in the dedicated <c>WorkflowAgentSessions</c> table so multiple agents in the same workflow never collide
+/// and <c>WorkflowInstanceData</c> stays clean.
+/// </summary>
+public sealed class WorkflowAgentSession
+{
+    public Guid Id { get; set; }
+    public Guid InstanceId { get; set; }
+    public string WorkflowKey { get; set; } = string.Empty;
+    public string AgentName { get; set; } = string.Empty;
+    public string TaskKey { get; set; } = string.Empty;
+    public string SessionData { get; set; } = "{}";
+    public int TurnCount { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Execution record of an AI agent or MCP task for a workflow instance, stored in <c>WorkflowAgentRuns</c>.
+/// </summary>
+public sealed class WorkflowAgentRun
+{
+    public Guid Id { get; set; }
+    public Guid InstanceId { get; set; }
+    public string WorkflowKey { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string? TransitionKey { get; set; }
+    public string TaskKey { get; set; } = string.Empty;
+    public string AgentName { get; set; } = string.Empty;
+    public string Mode { get; set; } = string.Empty;
+    public string? SelectedTransition { get; set; }
+    public string? AllowedTransitions { get; set; }
+    public string? ResponseId { get; set; }
+    public string? FinishReason { get; set; }
+    public long? InputTokens { get; set; }
+    public long? OutputTokens { get; set; }
+    public long? TotalTokens { get; set; }
+    public int ToolCallCount { get; set; }
+    public string? Output { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Individual tool call (<c>AIFunction</c> or MCP tool) executed during a <see cref="WorkflowAgentRun"/>, stored in <c>WorkflowAgentToolCalls</c>.
+/// </summary>
+public sealed class WorkflowAgentToolCall
+{
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+    public Guid InstanceId { get; set; }
+    public string WorkflowKey { get; set; } = string.Empty;
+    public string AgentName { get; set; } = string.Empty;
+    public string TaskKey { get; set; } = string.Empty;
+    public string CallId { get; set; } = string.Empty;
+    public string ToolName { get; set; } = string.Empty;
+    public string? Arguments { get; set; }
+    public string? Result { get; set; }
+    public int Order { get; set; }
+    public DateTime CreatedAt { get; set; }
+}

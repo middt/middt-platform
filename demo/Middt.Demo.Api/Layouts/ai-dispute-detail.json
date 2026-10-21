@@ -3,7 +3,7 @@
   "key": "ai-dispute-detail",
   "title": "AI İtiraz ve Fraud İnceleme Detayı",
   "kind": "view",
-  "version": 2,
+  "version": 3,
   "body": [
     {
       "widget": "alert",
@@ -38,23 +38,23 @@
     {
       "widget": "section",
       "title": "AI Orkestratör Kararı ve Akış Yönlendirmesi",
-      "visibleWhen": "data.aiDecision != null",
+      "visibleWhen": "instance.agents != null && instance.agents.disputeOrchestrator != null",
       "children": [
         {
           "widget": "fields",
           "items": [
-            { "label": "AI Kararı", "value": "{{ data.aiDecision.decision }}" },
-            { "label": "Seçilen Akış Geçişi", "value": "{{ data.aiDecision.nextTransition }}" },
-            { "label": "Risk Seviyesi", "value": "{{ data.aiDecision.riskLevel }}" },
-            { "label": "Risk Skoru", "value": "{{ data.aiDecision.riskScore }} / 100" },
-            { "label": "Önerilen İade Tutarı", "value": "{{ data.aiDecision.recommendedRefund }}", "format": "N2" },
-            { "label": "Uygulanan Politika Kodu", "value": "{{ data.aiDecision.policyCode }}" },
-            { "label": "İşyeri Mutabakat Durumu", "value": "{{ data.aiDecision.settlementStatus }}", "visibleWhen": "data.aiDecision.settlementStatus != null" },
-            { "label": "Hız (Velocity) Skoru", "value": "{{ data.aiDecision.velocityScore }}", "visibleWhen": "data.aiDecision.velocityScore != null" },
-            { "label": "Analiz Özeti", "value": "{{ data.aiDecision.summary }}" },
-            { "label": "Önerilen Aksiyon", "value": "{{ data.aiDecision.recommendation }}" },
-            { "label": "Orkestratör Ajan", "value": "{{ data.aiDecision.meta.agent }}", "visibleWhen": "data.aiDecision.meta != null && data.aiDecision.meta.agent != null" },
-            { "label": "Analiz Zamanı", "value": "{{ data.aiDecision.meta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiDecision.meta != null && data.aiDecision.meta.evaluatedAt != null" }
+            { "label": "AI Kararı", "value": "{{ instance.agents.disputeOrchestrator.decision }}" },
+            { "label": "Seçilen Akış Geçişi", "value": "{{ instance.agents.disputeOrchestrator.selectedTransition }}" },
+            { "label": "Risk Seviyesi", "value": "{{ instance.agents.disputeOrchestrator.riskLevel }}" },
+            { "label": "Risk Skoru", "value": "{{ instance.agents.disputeOrchestrator.riskScore }} / 100" },
+            { "label": "Önerilen İade Tutarı", "value": "{{ instance.agents.disputeOrchestrator.recommendedRefund }}", "format": "N2" },
+            { "label": "Uygulanan Politika Kodu", "value": "{{ instance.agents.disputeOrchestrator.policyCode }}" },
+            { "label": "İşyeri Mutabakat Durumu", "value": "{{ instance.agents.disputeOrchestrator.settlementStatus }}", "visibleWhen": "instance.agents.disputeOrchestrator.settlementStatus != null" },
+            { "label": "Hız (Velocity) Skoru", "value": "{{ instance.agents.disputeOrchestrator.velocityScore }}", "visibleWhen": "instance.agents.disputeOrchestrator.velocityScore != null" },
+            { "label": "Analiz Özeti", "value": "{{ instance.agents.disputeOrchestrator.summary }}" },
+            { "label": "Önerilen Aksiyon", "value": "{{ instance.agents.disputeOrchestrator.recommendation }}" },
+            { "label": "Orkestratör Ajan", "value": "{{ instance.agents.disputeOrchestrator.agent }}" },
+            { "label": "Analiz Zamanı", "value": "{{ instance.agents.disputeOrchestrator.evaluatedAt }}", "format": "g" }
           ]
         }
       ]
@@ -62,18 +62,18 @@
     {
       "widget": "section",
       "title": "MCP (Model Context Protocol) Politika ve İşyeri Mutabakatı",
-      "visibleWhen": "data.mcpPolicy != null || data.mcpReceipt != null",
+      "visibleWhen": "instance.agents != null && (instance.agents.readChargebackPolicy != null || instance.agents.verifyMerchantReceipt != null)",
       "children": [
         {
           "widget": "fields",
           "items": [
-            { "label": "MCP Politika Versiyonu", "value": "{{ data.mcpPolicy.policyVersion }}", "visibleWhen": "data.mcpPolicy != null" },
-            { "label": "Otomatik İade Limiti", "value": "{{ data.mcpPolicy.autoApproveLimit }}", "format": "N2", "visibleWhen": "data.mcpPolicy != null" },
-            { "label": "Fraud Eskalasyon Limiti", "value": "{{ data.mcpPolicy.fraudEscalationLimit }}", "format": "N2", "visibleWhen": "data.mcpPolicy != null" },
-            { "label": "MCP Provizyon Durumu", "value": "{{ data.mcpReceipt.settlementStatus }}", "visibleWhen": "data.mcpReceipt != null" },
-            { "label": "MCP İade Edilebilir Tutar", "value": "{{ data.mcpReceipt.refundableAmount }}", "format": "N2", "visibleWhen": "data.mcpReceipt != null" },
-            { "label": "Geçmiş İtiraz Sayısı", "value": "{{ data.mcpHistoryCheck.priorDisputes }}", "visibleWhen": "data.mcpHistoryCheck != null" },
-            { "label": "İşyeri Risk Sınıfı", "value": "{{ data.mcpHistoryCheck.merchantRisk }}", "visibleWhen": "data.mcpHistoryCheck != null" }
+            { "label": "MCP Politika Versiyonu", "value": "{{ instance.agents.readChargebackPolicy.policyVersion }}", "visibleWhen": "instance.agents.readChargebackPolicy != null" },
+            { "label": "Otomatik İade Limiti", "value": "{{ instance.agents.readChargebackPolicy.autoApproveLimit }}", "format": "N2", "visibleWhen": "instance.agents.readChargebackPolicy != null" },
+            { "label": "Fraud Eskalasyon Limiti", "value": "{{ instance.agents.readChargebackPolicy.fraudEscalationLimit }}", "format": "N2", "visibleWhen": "instance.agents.readChargebackPolicy != null" },
+            { "label": "MCP Provizyon Durumu", "value": "{{ instance.agents.verifyMerchantReceipt.settlementStatus }}", "visibleWhen": "instance.agents.verifyMerchantReceipt != null" },
+            { "label": "MCP İade Edilebilir Tutar", "value": "{{ instance.agents.verifyMerchantReceipt.refundableAmount }}", "format": "N2", "visibleWhen": "instance.agents.verifyMerchantReceipt != null" },
+            { "label": "Geçmiş İtiraz Sayısı", "value": "{{ instance.agents.lookupChargebackHistory.priorDisputes }}", "visibleWhen": "instance.agents.lookupChargebackHistory != null" },
+            { "label": "İşyeri Risk Sınıfı", "value": "{{ instance.agents.lookupChargebackHistory.merchantRisk }}", "visibleWhen": "instance.agents.lookupChargebackHistory != null" }
           ]
         }
       ]
@@ -81,15 +81,16 @@
     {
       "widget": "section",
       "title": "Çağrılan AI Araçları (Function / MCP Tool Calls)",
-      "visibleWhen": "data.aiDecision != null && data.aiDecision.toolCalls != null && data.aiDecision.toolCalls.Count > 0",
+      "visibleWhen": "instance.toolCalls != null && instance.toolCalls.Count > 0",
       "children": [
         {
           "widget": "list",
-          "source": "data.aiDecision.toolCalls",
+          "source": "instance.toolCalls",
           "children": [
             {
               "widget": "fields",
               "items": [
+                { "label": "Ajan / Sunucu", "value": "{{ row.agent }}", "visibleWhen": "row.agent != null" },
                 { "label": "Araç Adı", "value": "{{ row.name }}" },
                 { "label": "Çağrı No", "value": "{{ row.callId }}" },
                 { "label": "Yönlendirme Kararı", "value": "{{ row.result.nextTransition }}", "visibleWhen": "row.result != null && row.result.nextTransition != null" },
@@ -105,16 +106,16 @@
     {
       "widget": "section",
       "title": "AI Copilot Uzman Değerlendirmesi",
-      "visibleWhen": "data.copilotReview != null",
+      "visibleWhen": "instance.agents != null && instance.agents.disputeSpecialistCopilot != null",
       "children": [
         {
           "widget": "fields",
           "items": [
             { "label": "Uzman Notu", "value": "{{ data.lastSpecialistNote }}", "visibleWhen": "data.lastSpecialistNote != null" },
-            { "label": "Copilot Görüşü", "value": "{{ data.copilotReview.copilotVerdict }}" },
-            { "label": "Hesaplanan İade Tutarı", "value": "{{ data.copilotReview.approvedRefundAmount }}", "format": "N2" },
-            { "label": "Toplam Alacak Kaydı", "value": "{{ data.copilotReview.totalCredit }}", "format": "N2" },
-            { "label": "Politika Kodu", "value": "{{ data.copilotReview.policyCode }}" }
+            { "label": "Copilot Görüşü", "value": "{{ instance.agents.disputeSpecialistCopilot.copilotVerdict }}" },
+            { "label": "Hesaplanan İade Tutarı", "value": "{{ instance.agents.disputeSpecialistCopilot.approvedRefundAmount }}", "format": "N2" },
+            { "label": "Toplam Alacak Kaydı", "value": "{{ instance.agents.disputeSpecialistCopilot.totalCredit }}", "format": "N2" },
+            { "label": "Politika Kodu", "value": "{{ instance.agents.disputeSpecialistCopilot.policyCode }}" }
           ]
         }
       ]
@@ -122,16 +123,16 @@
     {
       "widget": "section",
       "title": "AI Çoklu Ajan (Multi-Agent) Fraud Komitesi Raporu",
-      "visibleWhen": "data.committeeReview != null",
+      "visibleWhen": "instance.agents != null && instance.agents.fraudCommittee != null",
       "children": [
         {
           "widget": "fields",
           "items": [
-            { "label": "Orkestratör Kararı", "value": "{{ data.committeeReview.decision }}" },
-            { "label": "Risk Seviyesi", "value": "{{ data.committeeReview.riskLevel }}" },
-            { "label": "Copilot Görüşü", "value": "{{ data.committeeReview.copilotVerdict }}", "visibleWhen": "data.committeeReview.copilotVerdict != null" },
-            { "label": "Komite Gerekçesi", "value": "{{ data.committeeReview.rationale }}", "visibleWhen": "data.committeeReview.rationale != null" },
-            { "label": "Çalışma Modu", "value": "{{ data.committeeReview.meta.mode }}", "visibleWhen": "data.committeeReview.meta != null" }
+            { "label": "Orkestratör Kararı", "value": "{{ instance.agents.fraudCommittee.decision }}" },
+            { "label": "Risk Seviyesi", "value": "{{ instance.agents.fraudCommittee.riskLevel }}" },
+            { "label": "Copilot Görüşü", "value": "{{ instance.agents.fraudCommittee.copilotVerdict }}", "visibleWhen": "instance.agents.fraudCommittee.copilotVerdict != null" },
+            { "label": "Komite Gerekçesi", "value": "{{ instance.agents.fraudCommittee.rationale }}", "visibleWhen": "instance.agents.fraudCommittee.rationale != null" },
+            { "label": "Çalışma Modu", "value": "{{ instance.agents.fraudCommittee.mode }}" }
           ]
         }
       ]

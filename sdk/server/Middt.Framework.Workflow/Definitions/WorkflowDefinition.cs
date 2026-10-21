@@ -121,6 +121,9 @@ public sealed class StateDefinition
 
     public string? Title { get; set; }
 
+    /// <summary>Optional description of the state's business purpose.</summary>
+    public string? Description { get; set; }
+
     /// <summary>Wizard step number shown as progress in UIs (states of alternative branches may share a number).</summary>
     public int? Step { get; set; }
 
@@ -174,6 +177,9 @@ public sealed class TransitionDefinition
     public TriggerType Trigger { get; set; } = TriggerType.Manual;
 
     public string? Title { get; set; }
+
+    /// <summary>Optional description explaining when and why this transition is taken (also provided to AI agents for dynamic routing).</summary>
+    public string? Description { get; set; }
 
     /// <summary>Optional button style (<c>primary</c>, <c>secondary</c>, <c>success</c>, <c>warning</c>, <c>danger</c>, <c>light</c>); defaults to target state subtype.</summary>
     public string? Style { get; set; }
