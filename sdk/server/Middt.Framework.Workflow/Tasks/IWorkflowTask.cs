@@ -58,6 +58,9 @@ public sealed class WorkflowTaskContext
 
     /// <summary>Starts another workflow (wired by the engine).</summary>
     public Func<string, JsonObject, string?, CancellationToken, Task<Guid>>? StartWorkflow { get; init; }
+
+    /// <summary>Selects the outgoing transition key to be taken automatically after the current state's entry tasks finish.</summary>
+    public Action<string>? SelectTransition { get; init; }
 }
 
 /// <summary>Publishes workflow messages (<c>publish</c> task); register an implementation, e.g. on Rebus.</summary>

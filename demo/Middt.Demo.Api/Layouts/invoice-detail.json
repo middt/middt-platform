@@ -3,7 +3,7 @@
   "key": "invoice-detail",
   "title": "Fatura Tahsilat Durumu",
   "kind": "view",
-  "version": 7,
+  "version": 8,
   "body": [
     {
       "widget": "alert",
@@ -130,8 +130,8 @@
             { "label": "Risk Skoru", "value": "{{ data.aiAudit.score }}", "visibleWhen": "data.aiAudit.score != null" },
             { "label": "Analiz Özeti", "value": "{{ data.aiAudit.summary }}", "visibleWhen": "data.aiAudit.summary != null" },
             { "label": "Öneri", "value": "{{ data.aiAudit.recommendation }}", "visibleWhen": "data.aiAudit.recommendation != null" },
-            { "label": "Ajan", "value": "{{ data.aiAuditMeta.agent }}", "visibleWhen": "data.aiAuditMeta != null && data.aiAuditMeta.agent != null" },
-            { "label": "Analiz Zamanı", "value": "{{ data.aiAuditMeta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiAuditMeta != null && data.aiAuditMeta.evaluatedAt != null" }
+            { "label": "Ajan", "value": "{{ data.aiAudit.meta.agent }}", "visibleWhen": "data.aiAudit.meta != null && data.aiAudit.meta.agent != null" },
+            { "label": "Analiz Zamanı", "value": "{{ data.aiAudit.meta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiAudit.meta != null && data.aiAudit.meta.evaluatedAt != null" }
           ]
         }
       ]

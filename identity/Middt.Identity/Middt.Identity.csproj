@@ -35,6 +35,7 @@
     <!-- Default journeys (workflow definitions), embedded; Identity:JourneyDirectory can override them by key. -->
     <Content Remove="Journeys\*.json" />
     <EmbeddedResource Include="Journeys\*.json" />
+    <Content Update="Seeds\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

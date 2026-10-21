@@ -67,8 +67,7 @@
             "server": "banking-mcp",
             "action": "readResource",
             "uri": "mcp://banking/policies/chargeback-2026",
-            "into": "mcpPolicy",
-            "metaInto": "mcpPolicyMeta"
+            "into": "mcpPolicy"
           }
         },
         {
@@ -99,10 +98,7 @@
               "category": "{{ data.category }}",
               "reason": "{{ data.reason }}"
             },
-            "into": "aiDecision",
-            "transitionInto": "aiNextTransition",
-            "toolCallsInto": "aiToolCalls",
-            "metaInto": "aiMeta"
+            "into": "aiDecision"
           }
         }
       ],
@@ -112,7 +108,6 @@
           "title": "AI Otomatik İade Onayı",
           "target": "auto-resolved",
           "trigger": "Automatic",
-          "rule": "data.aiNextTransition == \"route-auto-refund\"",
           "onExecute": [
             {
               "task": "set",
@@ -133,15 +128,13 @@
           "key": "route-fraud-investigation",
           "title": "AI Fraud Eskalasyonu",
           "target": "fraud-investigation",
-          "trigger": "Automatic",
-          "rule": "data.aiNextTransition == \"route-fraud-investigation\""
+          "trigger": "Automatic"
         },
         {
           "key": "route-specialist-review",
           "title": "AI Uzman İnceleme Yönlendirmesi",
           "target": "specialist-review",
-          "trigger": "Automatic",
-          "rule": "data.aiNextTransition == \"route-specialist-review\""
+          "trigger": "Automatic"
         }
       ]
     },
@@ -189,9 +182,7 @@
                   "amount": "{{ data.amount }}",
                   "category": "{{ data.category }}"
                 },
-                "into": "copilotReview",
-                "toolCallsInto": "copilotToolCalls",
-                "metaInto": "copilotMeta"
+                "into": "copilotReview"
               }
             }
           ]
@@ -214,8 +205,7 @@
                   "amount": "{{ data.amount }}",
                   "category": "{{ data.category }}"
                 },
-                "into": "mcpHistoryCheck",
-                "metaInto": "mcpHistoryMeta"
+                "into": "mcpHistoryCheck"
               }
             }
           ]
@@ -299,8 +289,7 @@
                   "amount": "{{ data.amount }}",
                   "category": "{{ data.category }}"
                 },
-                "into": "committeeReview",
-                "metaInto": "committeeMeta"
+                "into": "committeeReview"
               }
             }
           ]

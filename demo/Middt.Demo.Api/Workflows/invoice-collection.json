@@ -618,10 +618,7 @@
               "partialPayment": "{{ data.partialPayment }}",
               "deletedPayment": "{{ data.deletedPayment }}"
             },
-            "session": "aiAuditSession",
-            "sessionInto": "aiAuditSession",
-            "into": "aiAudit",
-            "metaInto": "aiAuditMeta"
+            "into": "aiAudit"
           }
         }
       ]

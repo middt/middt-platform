@@ -109,13 +109,18 @@ public sealed class LocalAgentChatClient(string modelId = "") : IChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var response = await GetResponseAsync(messages, options, cancellationToken);
-        yield return new ChatResponseUpdate(ChatRole.Assistant, response.Text)
+        var firstMessage = response.Messages.FirstOrDefault();
+        var contents = firstMessage?.Contents is { Count: > 0 } msgContents
+            ? msgContents
+            : [new TextContent(response.Text)];
+
+        yield return new ChatResponseUpdate(firstMessage?.Role ?? ChatRole.Assistant, contents)
         {
             ResponseId = response.ResponseId,
-            MessageId = response.Messages.FirstOrDefault()?.MessageId,
+            MessageId = firstMessage?.MessageId,
             ModelId = response.ModelId,
             CreatedAt = response.CreatedAt,
-            FinishReason = ChatFinishReason.Stop,
+            FinishReason = response.FinishReason ?? ChatFinishReason.Stop,
         };
     }
 

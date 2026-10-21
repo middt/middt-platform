@@ -6,7 +6,7 @@
       "applicationUrl": "http://localhost:8083",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "Identity__ConfigFile": "../../demo/identity.json"
+        "Identity__ConfigFile": "Seeds/identity.json"
       }
     }
   }

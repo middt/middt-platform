@@ -665,6 +665,9 @@ public sealed partial class WorkflowEngine(
 
         /// <summary>Buffered messages were woken because the instance now waits for them.</summary>
         public bool MessagesWoken { get; set; }
+
+        /// <summary>Outgoing transition key selected by a task (e.g. an AI agent task) to be taken automatically after the current hop.</summary>
+        public string? SelectedTransition { get; set; }
     }
 
     internal enum JobOutcome
@@ -901,6 +904,7 @@ public sealed partial class WorkflowEngine(
         var startedAt = Now;
         var hopStart = time.GetTimestamp();
         run.CurrentHopTasks.Clear();
+        run.SelectedTransition = null;
         using var activity = WorkflowDiagnostics.StartTransitionActivity(definition.Key, definition.Version, instance.Id, from, transition.Key, trigger);
 
         // Rollback point: a failed hop leaves state and data exactly as they were before it.
@@ -1172,6 +1176,7 @@ public sealed partial class WorkflowEngine(
                     },
                     BusinessKey = run.Instance.BusinessKey,
                     SetBusinessKey = (key, ct) => SetBusinessKeyAsync(run, key, ct),
+                    SelectTransition = key => run.SelectedTransition = key,
                 };
 
                 try
@@ -1411,8 +1416,20 @@ public sealed partial class WorkflowEngine(
         }
 
         var automatic = state.Transitions.Where(t => t.Trigger == TriggerType.Automatic).ToList();
+        if (!string.IsNullOrWhiteSpace(run.SelectedTransition))
+        {
+            var selectedKey = run.SelectedTransition;
+            run.SelectedTransition = null;
+            var selected = automatic.FirstOrDefault(t => string.Equals(t.Key, selectedKey, StringComparison.OrdinalIgnoreCase))
+                           ?? state.Transitions.FirstOrDefault(t => string.Equals(t.Key, selectedKey, StringComparison.OrdinalIgnoreCase));
+            if (selected is not null)
+            {
+                return selected;
+            }
+        }
+
         var scope = Scope(run, null);
-        return automatic.Where(t => !t.Default).FirstOrDefault(t => expressions.EvaluateCondition(t.Rule!, scope))
+        return automatic.Where(t => !t.Default && !string.IsNullOrWhiteSpace(t.Rule)).FirstOrDefault(t => expressions.EvaluateCondition(t.Rule!, scope))
             ?? automatic.FirstOrDefault(t => t.Default);
     }
 
@@ -1864,22 +1881,27 @@ public sealed partial class WorkflowEngine(
         new(type, run.Instance.Id, run.Definition.Key, run.Definition.Version, run.Instance.BusinessKey, from, run.Instance.State, transition,
             EventHandlers.Length > 0 ? (JsonObject)run.Data.DeepClone() : [], Now);
 
-    private ExpressionScope Scope(Run run, JsonObject? input, JsonObject? data = null) => new()
+    private ExpressionScope Scope(Run run, JsonObject? input, JsonObject? data = null)
     {
-        Data = data ?? run.Data,
-        Input = input,
-        Child = run.Child,
-        User = run.User,
-        Now = time.GetUtcNow(),
-        Instance = new JsonObject
+        var activeState = string.IsNullOrEmpty(run.Instance.State) ? run.Definition.Start.Target : run.Instance.State;
+        return new()
         {
-            ["id"] = run.Instance.Id,
-            ["key"] = run.Instance.BusinessKey,
-            ["state"] = run.Instance.State,
-            ["workflow"] = run.Definition.Key,
-            ["version"] = run.Definition.Version,
-        },
-    };
+            Data = data ?? run.Data,
+            Input = input,
+            Child = run.Child,
+            User = run.User,
+            Now = time.GetUtcNow(),
+            Instance = new JsonObject
+            {
+                ["id"] = run.Instance.Id,
+                ["key"] = run.Instance.BusinessKey,
+                ["state"] = run.Instance.State,
+                ["workflow"] = run.Definition.Key,
+                ["version"] = run.Definition.Version,
+                ["transitions"] = new JsonArray([.. AvailableIn(run.Definition, activeState).Select(t => (JsonNode?)JsonValue.Create(t.Key))]),
+            },
+        };
+    }
 
     private static TransitionDefinition TimeoutTransitionFor(WorkflowDefinition definition) => new()
     {

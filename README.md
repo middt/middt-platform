@@ -47,13 +47,12 @@ sdk/                              the framework (NuGet / npm packages)
     Middt.Framework.Blazor        Blazor Server frontend (Radzen)
     ui-core/                      @middt/ui-core – TypeScript contract, expressions, API clients
     angular/                      @middt/angular – Angular frontend (library workspace)
-identity/Middt.Identity           the OAuth 2.0 / OpenID Connect server: one ready to run service (not an SDK package)
+identity/Middt.Identity           the OAuth 2.0 / OpenID Connect server: one ready to run service (+ Journeys/, Seeds/identity.json)
 demo/                             the 100% backend-driven JSON demo
   Middt.Demo.Api                  API (+ Layouts/, Workflows/, Agents/, Seeds/ seeds)
   Middt.Demo.Blazor               Blazor Server demo
   Middt.Demo.Angular              Angular BFF host
   angular-app/                    Angular demo SPA using @middt/angular as a package
-  identity.json                   demo settings of Middt Identity
 spec/                             expressions.conformance.json · ui-layout.schema.json (shared by .NET and TypeScript)
 tests/  docs/
 ```
@@ -332,7 +331,7 @@ builder.Services.AddMiddtAgents(builder.Configuration, a =>
 ```
 
 - **Single & Multi-Agent Workflow Tasks (`task: "agent"` / `"aiAgent"`)**: Execute a single agent or a multi-agent orchestration (`mode: "sequential" | "concurrent" | "handoff"`) with structured `outputSchema` validation, session persistence (`session` / `sessionInto`), tool-call audit capture (`toolCallsInto`), and execution metadata (`metaInto`).
-- **AI-Driven Workflow Routing (`allowedTransitions` + `transitionInto`)**: Agents can decide the next workflow path by returning `nextTransition` (validated against `allowedTransitions`), which is stored in `data.<transitionInto>` and evaluated by automatic transition rules (see [ai-dispute-resolution.json](demo/Middt.Demo.Api/Workflows/ai-dispute-resolution.json)).
+- **AI-Driven Workflow Routing (`transitionInto`)**: `AiAgentTask` dynamically discovers the active workflow state's transitions from `WorkflowRegistry`, injects them into the agent's context (`allowedTransitions` and `stateTransitions`) and into `outputSchema.properties.nextTransition.enum`, validates the returned `nextTransition` against the state's available transitions, and writes it to `data.<transitionInto>` for automatic transition rules (see [ai-dispute-resolution.json](demo/Middt.Demo.Api/Workflows/ai-dispute-resolution.json) and [dispute-orchestrator.json](demo/Middt.Demo.Api/Agents/dispute-orchestrator.json)).
 - **Unified Declarative Tools & `IWorkflowTask` Bridge (`Agents/Tools/*.json`)**: Tools invoked by AI agents can run portable expressions (`kind: "expression"`), **any registered `IWorkflowTask`** from `WorkflowTaskRegistry` (`kind: "task"`, `"task": "set" | "cache" | "http" | "operation" | "publish" | "rabbitmq" | "loadWorkflow" | "startWorkflow"` with `into` and optional `writeToWorkflowData: true`), HTTP calls (`kind: "http"`, delegated to `HttpTask`), or MCP tools (`kind: "mcp"`). Active workflow context (`WorkflowTaskAmbientContext`) is automatically propagated so tools can read `data.*`, `args.*`, `input.*`, `instance.*`, and `user.*`.
 - **Model Context Protocol (`task: "mcp"` + `Agents/McpServers/*.json`)**: Call MCP tools (`callTool`), read resources (`readResource`), list tools/resources, or render prompt templates (`getPrompt`) against remote HTTP JSON-RPC 2.0 MCP servers or declarative in-process MCP servers (`banking-mcp.json`).
 - **Providers & Local Testing**: Supports `OpenAI`, `DeepSeek` (`AgentSettings:Provider = "DeepSeek"` / `DEEPSEEK_API_KEY`, or local git-ignored `appsettings.Local.json`), `Ollama`, custom `IChatClient`, and a zero-dependency deterministic `LocalAgentChatClient` fallback (`UseLocalFallback: true`).

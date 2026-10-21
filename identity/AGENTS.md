@@ -1,9 +1,7 @@
 # identity – Middt Identity, the OAuth 2.0 / OIDC server (read the root AGENTS.md first)
 
 `Middt.Identity` is ONE runnable service (not an SDK package): OpenIddict server + ASP.NET Core Identity + journeys on
-the workflow engine (root folders) and the Blazor UI (`Ui/`: account pages, journey views, `/admin`). Deployment
-specifics are configuration (`appsettings`, env, `Identity:ConfigFile`) – never put demo data or secrets in the
-project; the demo's settings live in `demo/identity.json`. Full reference: `docs/identity.md`.
+the workflow engine (root folders) and the Blazor UI (`Ui/`: account pages, journey views, `/admin`). Deployment specifics are configuration (`appsettings`, env, `Identity:ConfigFile`) – the initial seed configuration lives in `identity/Middt.Identity/Seeds/identity.json`. Full reference: `docs/identity.md`.
 
 - Journeys (`Journeys/auth-*.json`) are workflow definitions; passwords and codes are `input.sensitive` (never
   persisted). Every journey call is bound to the browser (`middt.idp.journey` cookie, hashed in the instance) and a

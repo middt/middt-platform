@@ -378,8 +378,29 @@ public sealed class MiddtAgentTests
         audited.Data["aiAudit"]!["score"]!.GetValue<double>().Should().Be(92);
         audited.Data["aiAudit"]!["summary"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
         audited.Data["aiAudit"]!["recommendation"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
-        audited.Data["aiAuditMeta"]!["agent"]!.GetValue<string>().Should().Be("invoice-risk-auditor");
+        audited.Data["aiAudit"]!["meta"]!["agent"]!.GetValue<string>().Should().Be("invoice-risk-auditor");
         audited.Data["lastAuditedWorkflow"]!.GetValue<string>().Should().Be("invoice-collection");
+        audited.Data["aiAudit"]!["session"].Should().NotBeNull();
+
+        // Simulate PostgreSQL jsonb key reordering (shorter keys like "text" / "name" sorted before "$type")
+        // in the persisted WorkflowInstanceData and verify a second multi-turn execution of ai-risk-audit succeeds cleanly.
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<Middt.Framework.Workflow.Persistence.WorkflowDbContext>();
+            var dataRow = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstAsync(
+                db.InstanceData,
+                d => d.InstanceId == invoice.Id,
+                ct);
+            var mutated = JsonNode.Parse(dataRow.Data)!.AsObject();
+            mutated["aiAudit"]!["session"] = SimulatePostgresJsonbKeyOrder(mutated["aiAudit"]!["session"]);
+            dataRow.Data = mutated.ToJsonString();
+            await db.SaveChangesAsync(ct);
+        }
+
+        var reAudited = await host.TransitionAsync(invoice.Id, "ai-risk-audit", new { }, user: Manager);
+        reAudited.State.Should().Be("awaiting-payment");
+        reAudited.Status.Should().Be(WorkflowInstanceStatus.Active);
+        reAudited.Data["aiAudit"]!["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
 
         var layout = UiJson.Parse(await File.ReadAllTextAsync(layoutPath, ct));
         var uiOptions = new MiddtUiOptions();
@@ -540,14 +561,17 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         autoResolved.State.Should().Be("auto-resolved");
-        autoResolved.Data["aiNextTransition"]!.GetValue<string>().Should().Be("route-auto-refund");
+        autoResolved.Data["aiDecision"]!["nextTransition"]!.GetValue<string>().Should().Be("route-auto-refund");
+        autoResolved.Data["aiDecision"]!["meta"]!["allowedTransitions"]!.AsArray()
+            .Select(x => x!.GetValue<string>())
+            .Should().BeEquivalentTo(["route-auto-refund", "route-fraud-investigation", "route-specialist-review"]);
         autoResolved.Data["aiDecision"]!["decision"]!.GetValue<string>().Should().Be("Otomatik İade Onayı");
         autoResolved.Data["aiDecision"]!["riskLevel"]!.GetValue<string>().Should().Be("Düşük");
         autoResolved.Data["aiDecision"]!["recommendedRefund"]!.GetValue<double>().Should().Be(2450);
         autoResolved.Data["aiDecision"]!["policyCode"]!.GetValue<string>().Should().Be("CB-FAST-2026");
         autoResolved.Data["mcpPolicy"]!["policyVersion"]!.GetValue<string>().Should().Be("CB-2026.4");
         autoResolved.Data["mcpReceipt"]!["settlementStatus"]!.GetValue<string>().Should().Be("Otomatik İadeye Uygun");
-        autoResolved.Data["aiToolCalls"]!.AsArray().Count.Should().BeGreaterThanOrEqualTo(3);
+        autoResolved.Data["aiDecision"]!["toolCalls"]!.AsArray().Count.Should().BeGreaterThanOrEqualTo(3);
         autoResolved.Data["resolution"]!["status"]!.GetValue<string>().Should().Be("AI Otomatik İade Onayı");
         autoResolved.Data["resolution"]!["refundedAmount"]!.GetValue<double>().Should().Be(2450);
 
@@ -567,7 +591,7 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         specialistCase.State.Should().Be("specialist-review");
-        specialistCase.Data["aiNextTransition"]!.GetValue<string>().Should().Be("route-specialist-review");
+        specialistCase.Data["aiDecision"]!["nextTransition"]!.GetValue<string>().Should().Be("route-specialist-review");
         specialistCase.Data["aiDecision"]!["decision"]!.GetValue<string>().Should().Be("Uzman İncelemesi");
         specialistCase.Data["aiDecision"]!["riskLevel"]!.GetValue<string>().Should().Be("Orta");
 
@@ -580,7 +604,7 @@ public sealed class MiddtAgentTests
         afterCopilot.State.Should().Be("specialist-review");
         afterCopilot.Data["copilotReview"]!["approvedRefundAmount"]!.GetValue<double>().Should().Be(14500);
         afterCopilot.Data["copilotReview"]!["totalCredit"]!.GetValue<double>().Should().Be(14650);
-        afterCopilot.Data["copilotToolCalls"]!.AsArray().Should().NotBeEmpty();
+        afterCopilot.Data["copilotReview"]!["toolCalls"]!.AsArray().Should().NotBeEmpty();
 
         var afterMcpAudit = await host.TransitionAsync(
             specialistCase.Id,
@@ -633,7 +657,7 @@ public sealed class MiddtAgentTests
             user: Manager);
 
         fraudCase.State.Should().Be("fraud-investigation");
-        fraudCase.Data["aiNextTransition"]!.GetValue<string>().Should().Be("route-fraud-investigation");
+        fraudCase.Data["aiDecision"]!["nextTransition"]!.GetValue<string>().Should().Be("route-fraud-investigation");
         fraudCase.Data["aiDecision"]!["decision"]!.GetValue<string>().Should().Be("Fraud Eskalasyonu");
         fraudCase.Data["aiDecision"]!["riskLevel"]!.GetValue<string>().Should().Be("Yüksek");
         fraudCase.Data["aiDecision"]!["riskScore"]!.GetValue<double>().Should().Be(89);
@@ -645,7 +669,7 @@ public sealed class MiddtAgentTests
             user: Manager);
         committeeEvaluated.State.Should().Be("fraud-investigation");
         committeeEvaluated.Data["committeeReview"].Should().NotBeNull();
-        committeeEvaluated.Data["committeeMeta"]!["mode"]!.GetValue<string>().Should().Be("sequential");
+        committeeEvaluated.Data["committeeReview"]!["meta"]!["mode"]!.GetValue<string>().Should().Be("sequential");
 
         var fraudResolved = await host.TransitionAsync(
             fraudCase.Id,
@@ -882,6 +906,37 @@ public sealed class MiddtAgentTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private static JsonNode? SimulatePostgresJsonbKeyOrder(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+            {
+                var reordered = new JsonObject();
+                foreach (var (key, value) in obj.OrderBy(kv => kv.Key.Length).ThenBy(kv => kv.Key, StringComparer.Ordinal))
+                {
+                    reordered[key] = SimulatePostgresJsonbKeyOrder(value);
+                }
+
+                return reordered;
+            }
+
+            case JsonArray arr:
+            {
+                var reordered = new JsonArray();
+                foreach (var item in arr)
+                {
+                    reordered.Add(SimulatePostgresJsonbKeyOrder(item));
+                }
+
+                return reordered;
+            }
+
+            default:
+                return node?.DeepClone();
         }
     }
 }

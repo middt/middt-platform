@@ -9,15 +9,9 @@
   "mcpServers": [
     "banking-mcp"
   ],
-  "allowedTransitions": [
-    "route-auto-refund",
-    "route-specialist-review",
-    "route-fraud-investigation"
-  ],
   "outputSchema": {
     "type": "object",
     "required": [
-      "nextTransition",
       "decision",
       "riskLevel",
       "riskScore",
@@ -27,15 +21,6 @@
       "recommendation"
     ],
     "properties": {
-      "nextTransition": {
-        "type": "string",
-        "enum": [
-          "route-auto-refund",
-          "route-specialist-review",
-          "route-fraud-investigation"
-        ],
-        "default": "route-specialist-review"
-      },
       "decision": {
         "type": "string",
         "default": "Uzman İncelemesi"

@@ -144,21 +144,27 @@ public sealed class McpTask : IWorkflowTask
             throw new WorkflowTaskException($"mcp '{server}' ({action}) failed: {ex.Message}", ex);
         }
 
+        var meta = new JsonObject
+        {
+            ["server"] = server,
+            ["action"] = action,
+            ["tool"] = context.RenderText("tool") ?? context.RenderText("name"),
+            ["uri"] = context.RenderText("uri") ?? context.RenderText("resource"),
+            ["executedAt"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+        };
+
         if (config["into"]?.GetValue<string>() is { Length: > 0 } into)
         {
+            if (output is JsonObject outputObj)
+            {
+                outputObj["meta"] ??= meta.DeepClone();
+            }
+
             JsonPath.Set(context.Data, into, output);
         }
 
         if (config["metaInto"]?.GetValue<string>() is { Length: > 0 } metaInto)
         {
-            var meta = new JsonObject
-            {
-                ["server"] = server,
-                ["action"] = action,
-                ["tool"] = context.RenderText("tool") ?? context.RenderText("name"),
-                ["uri"] = context.RenderText("uri") ?? context.RenderText("resource"),
-                ["executedAt"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
-            };
             JsonPath.Set(context.Data, metaInto, meta);
         }
     }

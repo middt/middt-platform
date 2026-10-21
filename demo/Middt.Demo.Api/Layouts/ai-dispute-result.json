@@ -3,7 +3,7 @@
   "key": "ai-dispute-result",
   "title": "AI İtiraz ve Fraud Sonuç Raporu",
   "kind": "view",
-  "version": 1,
+  "version": 2,
   "body": [
     {
       "widget": "alert",
@@ -55,7 +55,7 @@
           "widget": "fields",
           "items": [
             { "label": "AI İlk Kararı", "value": "{{ data.aiDecision.decision }}" },
-            { "label": "AI Akış Yönlendirmesi", "value": "{{ data.aiNextTransition }}" },
+            { "label": "AI Akış Yönlendirmesi", "value": "{{ data.aiDecision.nextTransition }}" },
             { "label": "Risk Seviyesi", "value": "{{ data.aiDecision.riskLevel }}" },
             { "label": "Risk Skoru", "value": "{{ data.aiDecision.riskScore }} / 100" },
             { "label": "Analiz Özeti", "value": "{{ data.aiDecision.summary }}" },
@@ -67,11 +67,11 @@
     {
       "widget": "section",
       "title": "Çağrılan AI Araçları (Function / MCP Tool Calls)",
-      "visibleWhen": "data.aiToolCalls != null && data.aiToolCalls.Count > 0",
+      "visibleWhen": "data.aiDecision != null && data.aiDecision.toolCalls != null && data.aiDecision.toolCalls.Count > 0",
       "children": [
         {
           "widget": "list",
-          "source": "data.aiToolCalls",
+          "source": "data.aiDecision.toolCalls",
           "children": [
             {
               "widget": "fields",

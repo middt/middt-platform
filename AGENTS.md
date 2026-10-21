@@ -36,13 +36,12 @@ sdk/                              the framework (NuGet + npm packages)
     Middt.Framework.Blazor        Blazor Server frontend (Radzen)
     ui-core/                      @middt/ui-core – TS twin of the contracts + API clients
     angular/                      @middt/angular (library workspace) – Angular frontend
-identity/Middt.Identity           OAuth2/OIDC server – ONE runnable service (not SDK), configured by appsettings (docs/identity.md)
+identity/Middt.Identity           OAuth2/OIDC server – ONE runnable service (+ Journeys/, Seeds/identity.json; docs/identity.md)
 demo/                             100% backend-driven JSON demo (KYC, credit, order orchestration, invoice collection, AI dispute resolution)
   Middt.Demo.Api                  API + Layouts/*.json + Workflows/*.json + Agents/**/*.json + Seeds/*.json seeds (zero hardcoded domain views/tables)
   Middt.Demo.Blazor               Blazor demo (:8080)
   Middt.Demo.Angular              Angular BFF host (:8081)
   angular-app/                    Angular demo SPA workspace
-  identity.json                   demo settings of Middt Identity (:8083) – both demos sign in there
 spec/                             expressions.conformance.json · json-patch.conformance.json · ui-layout.schema.json (generated)
 tests/Middt.Framework.Tests       all .NET tests (xunit.v3)
 docs/                             architecture.md, ai/ playbooks

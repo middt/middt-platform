@@ -23,6 +23,9 @@ namespace Middt.Framework.Agents;
 /// </summary>
 public sealed class AiAgentTask : IWorkflowTask
 {
+    /// <summary>Default JSON property name inspected on structured agent output when <c>transitionInto</c> is configured.</summary>
+    public const string DefaultTransitionProperty = "nextTransition";
+
     public IEnumerable<string> Validate(TaskDefinition task, WorkflowExpressionEngine expressions)
     {
         var config = task.Config;
@@ -81,8 +84,14 @@ public sealed class AiAgentTask : IWorkflowTask
         var modelOverride = context.RenderText("model") ?? context.RenderText("modelId");
         var toolsList = ExtractStringList(config["tools"]);
         var mcpServersList = ExtractStringList(config["mcpServers"]);
-        var allowedTransitions = ExtractStringList(config["allowedTransitions"]);
+        var explicitAllowedTransitions = ExtractStringList(config["allowedTransitions"]);
+        var allowedTransitions = new List<string>(explicitAllowedTransitions);
         var inlineOutputSchema = config["outputSchema"] as JsonObject;
+        var transitionProperty = config["transitionProperty"]?.GetValue<string>() is { Length: > 0 } tp
+            ? tp
+            : DefaultTransitionProperty;
+        var hasTransitionInto = config["transitionInto"]?.GetValue<string>() is { Length: > 0 };
+        var stateTransitions = ResolveStateTransitions(context);
 
         AIAgent agent;
         JsonObject? effectiveOutputSchema = inlineOutputSchema;
@@ -100,6 +109,9 @@ public sealed class AiAgentTask : IWorkflowTask
             {
                 allowedTransitions.AddRange(registeredDef.AllowedTransitions);
             }
+
+            PopulateDynamicTransitions(allowedTransitions, explicitAllowedTransitions.Count > 0, stateTransitions, effectiveOutputSchema, transitionProperty, hasTransitionInto);
+            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, transitionProperty, hasTransitionInto);
 
             var mergedTools = new List<string>(registeredDef.Tools);
             foreach (var t in toolsList.Where(t => !mergedTools.Contains(t, StringComparer.OrdinalIgnoreCase)))
@@ -129,6 +141,9 @@ public sealed class AiAgentTask : IWorkflowTask
         }
         else
         {
+            PopulateDynamicTransitions(allowedTransitions, explicitAllowedTransitions.Count > 0, stateTransitions, effectiveOutputSchema, transitionProperty, hasTransitionInto);
+            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, transitionProperty, hasTransitionInto);
+
             var adHocDef = new AgentDefinition
             {
                 Name = !string.IsNullOrWhiteSpace(agentName) ? agentName : $"{context.Workflow}-{context.State}-agent",
@@ -145,8 +160,14 @@ public sealed class AiAgentTask : IWorkflowTask
             agent = registry.CreateAgent(adHocDef);
         }
 
-        var messages = BuildMessages(context, allowedTransitions);
-        var session = await RestoreOrCreateSessionAsync(agent, context, cancellationToken);
+        if (mode is "sequential" or "concurrent" or "parallel" or "handoff")
+        {
+            PopulateDynamicTransitions(allowedTransitions, explicitAllowedTransitions.Count > 0, stateTransitions, effectiveOutputSchema, transitionProperty, hasTransitionInto);
+            effectiveOutputSchema = ApplyDynamicTransitionsToSchema(effectiveOutputSchema, allowedTransitions, transitionProperty, hasTransitionInto);
+        }
+
+        var messages = BuildMessages(context, allowedTransitions, stateTransitions);
+        var (session, hasRestoredSession) = await RestoreOrCreateSessionAsync(agent, context, cancellationToken);
 
         AgentRunOptions? runOptions = null;
         if (effectiveOutputSchema is not null && mode is "sequential" or "concurrent" or "parallel" or "handoff")
@@ -165,32 +186,64 @@ public sealed class AiAgentTask : IWorkflowTask
         {
             response = await agent.RunAsync(messages, session, runOptions, cancellationToken);
         }
+        catch (JsonException) when (hasRestoredSession)
+        {
+            // Fallback to a fresh session if the persisted session state cannot be deserialized.
+            session = await agent.CreateSessionAsync(cancellationToken);
+            try
+            {
+                response = await agent.RunAsync(messages, session, runOptions, cancellationToken);
+            }
+            catch (Exception retryEx) when (retryEx is not OperationCanceledException)
+            {
+                throw new WorkflowTaskException($"agent '{agent.Name}' execution failed: {retryEx.Message}", retryEx);
+            }
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new WorkflowTaskException($"agent '{agent.Name}' execution failed: {ex.Message}", ex);
         }
 
+        var serializedSessionElement = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken);
+        var normalizedSessionNode = serializedSessionElement.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)
+            ? NormalizePolymorphicJson(JsonNode.Parse(serializedSessionElement.GetRawText()))
+            : null;
+
         var sessionInto = config["sessionInto"]?.GetValue<string>() ?? config["threadInto"]?.GetValue<string>();
-        if (!string.IsNullOrWhiteSpace(sessionInto))
+        if (!string.IsNullOrWhiteSpace(sessionInto) && normalizedSessionNode is not null)
         {
-            var serializedSession = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken);
-            if (serializedSession.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
-            {
-                JsonPath.Set(context.Data, sessionInto, JsonNode.Parse(serializedSession.GetRawText()));
-            }
+            JsonPath.Set(context.Data, sessionInto, normalizedSessionNode.DeepClone());
         }
+
+        var toolCallsArray = ExtractToolCalls(response.Messages);
+        var meta = new JsonObject
+        {
+            ["agent"] = agent.Name,
+            ["mode"] = mode,
+            ["responseId"] = response.ResponseId,
+            ["finishReason"] = response.FinishReason?.Value,
+            ["inputTokens"] = response.Usage?.InputTokenCount,
+            ["outputTokens"] = response.Usage?.OutputTokenCount,
+            ["totalTokens"] = response.Usage?.TotalTokenCount,
+            ["toolCallCount"] = toolCallsArray.Count,
+            ["toolCalls"] = toolCallsArray.DeepClone(),
+            ["allowedTransitions"] = new JsonArray([.. allowedTransitions.Select(t => (JsonNode?)JsonValue.Create(t))]),
+            ["evaluatedAt"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+        };
+
+        var into = config["into"]?.GetValue<string>();
+        var transitionInto = config["transitionInto"]?.GetValue<string>();
+        var shouldRoute = !string.IsNullOrWhiteSpace(transitionInto) || allowedTransitions.Count > 0;
 
         JsonNode? outputNode = null;
-        if (config["into"]?.GetValue<string>() is { Length: > 0 } into)
+        if (!string.IsNullOrWhiteSpace(into) || shouldRoute)
         {
-            outputNode = ParseAndValidateOutput(response.Text, effectiveOutputSchema, config, agent.Name ?? "agent");
-            JsonPath.Set(context.Data, into, outputNode);
+            outputNode = ParseAndValidateOutput(response.Text, response.Messages, effectiveOutputSchema, config, agent.Name ?? "agent");
         }
 
-        if (config["transitionInto"]?.GetValue<string>() is { Length: > 0 } transitionInto)
+        if (shouldRoute)
         {
-            outputNode ??= ParseAndValidateOutput(response.Text, effectiveOutputSchema, config, agent.Name ?? "agent");
-            var selectedTransition = ExtractSelectedTransition(outputNode, response.Text);
+            var selectedTransition = ExtractSelectedTransition(outputNode, response.Text, transitionProperty);
             if (!string.IsNullOrWhiteSpace(selectedTransition))
             {
                 if (allowedTransitions.Count > 0 && !allowedTransitions.Contains(selectedTransition, StringComparer.OrdinalIgnoreCase))
@@ -199,11 +252,34 @@ public sealed class AiAgentTask : IWorkflowTask
                         $"agent '{agent.Name}' selected transition '{selectedTransition}', which is not in allowedTransitions [{string.Join(", ", allowedTransitions)}].");
                 }
 
-                JsonPath.Set(context.Data, transitionInto, JsonValue.Create(selectedTransition));
+                context.SelectTransition?.Invoke(selectedTransition);
+                if (outputNode is JsonObject routedObj && routedObj[transitionProperty] is null)
+                {
+                    routedObj[transitionProperty] = JsonValue.Create(selectedTransition);
+                }
+
+                if (!string.IsNullOrWhiteSpace(transitionInto))
+                {
+                    JsonPath.Set(context.Data, transitionInto, JsonValue.Create(selectedTransition));
+                }
             }
         }
 
-        var toolCallsArray = ExtractToolCalls(response.Messages);
+        if (!string.IsNullOrWhiteSpace(into))
+        {
+            if (outputNode is JsonObject outputObj)
+            {
+                outputObj["toolCalls"] ??= toolCallsArray.DeepClone();
+                outputObj["meta"] ??= meta.DeepClone();
+                if (normalizedSessionNode is not null)
+                {
+                    outputObj["session"] = normalizedSessionNode.DeepClone();
+                }
+            }
+
+            JsonPath.Set(context.Data, into, outputNode);
+        }
+
         if (config["toolCallsInto"]?.GetValue<string>() is { Length: > 0 } toolCallsInto)
         {
             JsonPath.Set(context.Data, toolCallsInto, toolCallsArray.DeepClone());
@@ -211,36 +287,18 @@ public sealed class AiAgentTask : IWorkflowTask
 
         if (config["metaInto"]?.GetValue<string>() is { Length: > 0 } metaInto)
         {
-            var meta = new JsonObject
-            {
-                ["agent"] = agent.Name,
-                ["mode"] = mode,
-                ["responseId"] = response.ResponseId,
-                ["finishReason"] = response.FinishReason?.Value,
-                ["inputTokens"] = response.Usage?.InputTokenCount,
-                ["outputTokens"] = response.Usage?.OutputTokenCount,
-                ["totalTokens"] = response.Usage?.TotalTokenCount,
-                ["toolCallCount"] = toolCallsArray.Count,
-                ["toolCalls"] = toolCallsArray,
-                ["evaluatedAt"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
-            };
-            JsonPath.Set(context.Data, metaInto, meta);
+            JsonPath.Set(context.Data, metaInto, meta.DeepClone());
         }
     }
 
-    private static string? ExtractSelectedTransition(JsonNode? outputNode, string? rawText)
+    private static string? ExtractSelectedTransition(JsonNode? outputNode, string? rawText, string transitionProperty)
     {
-        if (outputNode is JsonObject obj)
+        if (outputNode is JsonObject obj && MiddtMcpClient.TryGetCaseInsensitive(obj, transitionProperty, out var propNode) && propNode?.GetValue<string>() is { Length: > 0 } val)
         {
-            foreach (var key in (string[])["nextTransition", "transition", "route", "targetState", "selectedTransition"])
-            {
-                if (obj[key]?.GetValue<string>() is { Length: > 0 } val)
-                {
-                    return val;
-                }
-            }
+            return val;
         }
-        else if (outputNode is JsonValue jv && jv.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
+
+        if (outputNode is JsonValue jv && jv.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
         {
             return s.Trim();
         }
@@ -276,18 +334,7 @@ public sealed class AiAgentTask : IWorkflowTask
                 JsonNode? resultNode = null;
                 if (!string.IsNullOrEmpty(call.CallId) && resultsByCallId.TryGetValue(call.CallId, out var resContent))
                 {
-                    var rawResult = resContent.Result?.ToString();
-                    if (!string.IsNullOrWhiteSpace(rawResult))
-                    {
-                        try
-                        {
-                            resultNode = JsonNode.Parse(rawResult);
-                        }
-                        catch (JsonException)
-                        {
-                            resultNode = JsonValue.Create(rawResult);
-                        }
-                    }
+                    resultNode = MiddtMcpClient.TryParseJsonOrValue(resContent.Result?.ToString());
                 }
 
                 calls.Add(new JsonObject
@@ -362,7 +409,186 @@ public sealed class AiAgentTask : IWorkflowTask
         return list;
     }
 
-    private static List<ChatMessage> BuildMessages(WorkflowTaskContext context, List<string> allowedTransitions)
+    private static List<TransitionDefinition> ResolveStateTransitions(WorkflowTaskContext context)
+    {
+        var workflowRegistry = context.Services.GetService<WorkflowRegistry>();
+        if (workflowRegistry is null || string.IsNullOrWhiteSpace(context.Workflow))
+        {
+            return [];
+        }
+
+        WorkflowDefinition? workflowDef;
+        try
+        {
+            var version = context.Scope.Instance["version"]?.GetValue<int>();
+            workflowDef = version is > 0
+                ? workflowRegistry.Get(context.Workflow, version.Value)
+                : workflowRegistry.GetLatest(context.Workflow);
+        }
+        catch (WorkflowNotFoundException)
+        {
+            return [];
+        }
+
+        var stateKey = !string.IsNullOrWhiteSpace(context.State) ? context.State : workflowDef.Start.Target;
+        var stateDef = workflowDef.FindState(stateKey);
+        if (stateDef is null || stateDef.IsFinal)
+        {
+            return [];
+        }
+
+        var allTransitions = stateDef.Transitions
+            .Concat(workflowDef.SharedTransitions.Where(t => t.AvailableIn.Contains("*") || t.AvailableIn.Contains(stateKey)))
+            .Where(t => !string.IsNullOrWhiteSpace(t.Key))
+            .ToList();
+
+        var nonScheduled = allTransitions.Where(t => t.Trigger != TriggerType.Scheduled).ToList();
+        return nonScheduled.Count > 0 ? nonScheduled : allTransitions;
+    }
+
+    private static void PopulateDynamicTransitions(
+        List<string> allowedTransitions,
+        bool hasExplicitTaskOverride,
+        List<TransitionDefinition> stateTransitions,
+        JsonObject? outputSchema,
+        string transitionProperty,
+        bool hasTransitionInto)
+    {
+        if (hasExplicitTaskOverride || stateTransitions.Count == 0)
+        {
+            return;
+        }
+
+        var hasTransitionSchemaProperty = outputSchema?["properties"] is JsonObject props
+                                          && MiddtMcpClient.TryGetCaseInsensitive(props, transitionProperty, out _);
+
+        var automaticRoutingTransitions = stateTransitions
+            .Where(t => t.Trigger == TriggerType.Automatic
+                        && (string.IsNullOrWhiteSpace(t.Rule)
+                            || t.Rule.Contains(transitionProperty, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        if (!hasTransitionInto
+            && !hasTransitionSchemaProperty
+            && allowedTransitions.Count == 0
+            && automaticRoutingTransitions.Count == 0)
+        {
+            return;
+        }
+
+        var sourceTransitions = automaticRoutingTransitions.Count > 0 && !hasTransitionInto
+            ? automaticRoutingTransitions
+            : stateTransitions;
+
+        foreach (var tr in sourceTransitions)
+        {
+            if (!allowedTransitions.Contains(tr.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                allowedTransitions.Add(tr.Key);
+            }
+        }
+    }
+
+    private static JsonObject? ApplyDynamicTransitionsToSchema(
+        JsonObject? schema,
+        List<string> allowedTransitions,
+        string transitionProperty,
+        bool hasTransitionInto)
+    {
+        if (schema is null || allowedTransitions.Count == 0)
+        {
+            return schema;
+        }
+
+        var shouldInject = hasTransitionInto || allowedTransitions.Count > 0;
+        var cloned = (JsonObject)schema.DeepClone();
+        if (cloned["properties"] is not JsonObject props)
+        {
+            if (!shouldInject)
+            {
+                return cloned;
+            }
+
+            props = [];
+            cloned["properties"] = props;
+        }
+
+        var targetPropKey = transitionProperty;
+        JsonObject? propSchema = null;
+        foreach (var (k, v) in props)
+        {
+            if (string.Equals(k, transitionProperty, StringComparison.OrdinalIgnoreCase) && v is JsonObject existingObj)
+            {
+                targetPropKey = k;
+                propSchema = existingObj;
+                break;
+            }
+        }
+
+        if (propSchema is null)
+        {
+            if (!shouldInject)
+            {
+                return cloned;
+            }
+
+            propSchema = new JsonObject { ["type"] = "string" };
+            props[targetPropKey] = propSchema;
+        }
+
+        propSchema["type"] ??= "string";
+
+        var enumArray = new JsonArray();
+        if (propSchema["enum"] is JsonArray existingEnum)
+        {
+            foreach (var item in existingEnum)
+            {
+                if (item?.GetValue<string>() is { Length: > 0 } existingKey
+                    && allowedTransitions.Contains(existingKey, StringComparer.OrdinalIgnoreCase))
+                {
+                    enumArray.Add(JsonValue.Create(existingKey));
+                }
+            }
+        }
+
+        foreach (var trKey in allowedTransitions)
+        {
+            if (!enumArray.Any(e => string.Equals(e?.GetValue<string>(), trKey, StringComparison.OrdinalIgnoreCase)))
+            {
+                enumArray.Add(JsonValue.Create(trKey));
+            }
+        }
+
+        propSchema["enum"] = enumArray;
+
+        var currentDefault = propSchema["default"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(currentDefault)
+            || !allowedTransitions.Contains(currentDefault, StringComparer.OrdinalIgnoreCase))
+        {
+            propSchema["default"] = JsonValue.Create(allowedTransitions[^1]);
+        }
+
+        if (shouldInject)
+        {
+            if (cloned["required"] is not JsonArray reqArray)
+            {
+                reqArray = [];
+                cloned["required"] = reqArray;
+            }
+
+            if (!reqArray.Any(r => string.Equals(r?.GetValue<string>(), targetPropKey, StringComparison.OrdinalIgnoreCase)))
+            {
+                reqArray.Add(JsonValue.Create(targetPropKey));
+            }
+        }
+
+        return cloned;
+    }
+
+    private static List<ChatMessage> BuildMessages(
+        WorkflowTaskContext context,
+        List<string> allowedTransitions,
+        List<TransitionDefinition> stateTransitions)
     {
         var messages = new List<ChatMessage>();
 
@@ -399,6 +625,23 @@ public sealed class AiAgentTask : IWorkflowTask
         {
             var contextObj = contextNode as JsonObject ?? [];
             contextObj["allowedTransitions"] = new JsonArray([.. allowedTransitions.Select(t => (JsonNode?)JsonValue.Create(t))]);
+
+            var allowedSet = new HashSet<string>(allowedTransitions, StringComparer.OrdinalIgnoreCase);
+            var transitionDetails = stateTransitions
+                .Where(t => allowedSet.Contains(t.Key))
+                .Select(t => (JsonNode?)new JsonObject
+                {
+                    ["key"] = t.Key,
+                    ["title"] = t.Title,
+                    ["target"] = t.Target,
+                    ["trigger"] = t.Trigger.ToString(),
+                })
+                .ToArray();
+            if (transitionDetails.Length > 0)
+            {
+                contextObj["stateTransitions"] = new JsonArray(transitionDetails);
+            }
+
             contextNode = contextObj;
         }
 
@@ -428,27 +671,92 @@ public sealed class AiAgentTask : IWorkflowTask
         return messages;
     }
 
-    private static async Task<AgentSession> RestoreOrCreateSessionAsync(
+    private static async Task<(AgentSession Session, bool Restored)> RestoreOrCreateSessionAsync(
         AIAgent agent,
         WorkflowTaskContext context,
         CancellationToken cancellationToken)
     {
         var sessionPath = context.Config["session"]?.GetValue<string>() ?? context.Config["thread"]?.GetValue<string>();
+        JsonNode? existingNode = null;
         if (!string.IsNullOrWhiteSpace(sessionPath))
         {
-            var existingNode = JsonPath.Get(context.Data, sessionPath) ?? context.Render("session") ?? context.Render("thread");
-            if (existingNode is JsonObject or JsonArray)
+            existingNode = JsonPath.Get(context.Data, sessionPath) ?? context.Render("session") ?? context.Render("thread");
+        }
+        else if (context.Config["into"]?.GetValue<string>() is { Length: > 0 } intoPath
+                 && JsonPath.Get(context.Data, intoPath) is JsonObject prevIntoObj)
+        {
+            existingNode = prevIntoObj["session"];
+        }
+
+        if (existingNode is JsonObject or JsonArray)
+        {
+            try
             {
-                using var doc = JsonDocument.Parse(existingNode.ToJsonString());
-                return await agent.DeserializeSessionAsync(doc.RootElement.Clone(), cancellationToken: cancellationToken);
+                var normalizedNode = NormalizePolymorphicJson(existingNode)!;
+                using var doc = JsonDocument.Parse(normalizedNode.ToJsonString());
+                var restored = await agent.DeserializeSessionAsync(doc.RootElement.Clone(), cancellationToken: cancellationToken);
+                return (restored, true);
+            }
+            catch (JsonException)
+            {
+                // Fall back to a fresh session if the stored session JSON cannot be deserialized.
             }
         }
 
-        return await agent.CreateSessionAsync(cancellationToken);
+        return (await agent.CreateSessionAsync(cancellationToken), false);
+    }
+
+    /// <summary>
+    /// Recursively ensures that any <c>$type</c> (and other <c>$</c>-prefixed metadata properties) appear first in every
+    /// <see cref="JsonObject"/>. PostgreSQL <c>jsonb</c> sorts object keys by length first (e.g. 4-char <c>"text"</c> or
+    /// <c>"name"</c> before 5-char <c>"$type"</c>), which causes <see cref="JsonSerializer"/> polymorphic deserialization
+    /// to fail unless <c>$type</c> is restored to the first position.
+    /// </summary>
+    internal static JsonNode? NormalizePolymorphicJson(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+            {
+                var normalized = new JsonObject();
+                foreach (var (key, value) in obj)
+                {
+                    if (key.StartsWith('$'))
+                    {
+                        normalized[key] = NormalizePolymorphicJson(value);
+                    }
+                }
+
+                foreach (var (key, value) in obj)
+                {
+                    if (!key.StartsWith('$'))
+                    {
+                        normalized[key] = NormalizePolymorphicJson(value);
+                    }
+                }
+
+                return normalized;
+            }
+
+            case JsonArray arr:
+            {
+                var normalized = new JsonArray();
+                foreach (var item in arr)
+                {
+                    normalized.Add(NormalizePolymorphicJson(item));
+                }
+
+                return normalized;
+            }
+
+            default:
+                return node?.DeepClone();
+        }
     }
 
     private static JsonNode? ParseAndValidateOutput(
         string? rawText,
+        IList<ChatMessage>? messages,
         JsonObject? outputSchema,
         JsonObject config,
         string agentName)
@@ -489,11 +797,62 @@ public sealed class AiAgentTask : IWorkflowTask
             }
             catch (JsonException)
             {
-                // Fall back to plain string value when response is not valid JSON.
+                if (TryMergeMultiAgentJsonMessages(messages, out var merged))
+                {
+                    return merged;
+                }
             }
         }
 
         return JsonValue.Create(text);
+    }
+
+    private static bool TryMergeMultiAgentJsonMessages(IList<ChatMessage>? messages, out JsonObject merged)
+    {
+        merged = [];
+        if (messages is null || messages.Count == 0)
+        {
+            return false;
+        }
+
+        var steps = new JsonArray();
+        foreach (var msg in messages)
+        {
+            if (msg.Role != ChatRole.Assistant || string.IsNullOrWhiteSpace(msg.Text))
+            {
+                continue;
+            }
+
+            var candidate = UnwrapMarkdownCodeFence(msg.Text.Trim());
+            if (!candidate.StartsWith('{') || !candidate.EndsWith('}'))
+            {
+                continue;
+            }
+
+            try
+            {
+                if (JsonNode.Parse(candidate) is JsonObject stepObj)
+                {
+                    steps.Add(stepObj.DeepClone());
+                    foreach (var (k, v) in stepObj)
+                    {
+                        merged[k] = v?.DeepClone();
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore non-JSON assistant messages in multi-agent transcripts.
+            }
+        }
+
+        if (steps.Count == 0)
+        {
+            return false;
+        }
+
+        merged["steps"] = steps;
+        return true;
     }
 
     private static string UnwrapMarkdownCodeFence(string text)

@@ -339,9 +339,12 @@ internal static class WorkflowDefinitionValidator
                 }
             }
 
+            var hasAgentRouting = state.OnEntry.Any(IsAgentTask)
+                                  || (string.Equals(wf.Start.Target, state.Key, StringComparison.Ordinal) && wf.Start.OnExecute.Any(IsAgentTask));
+
             foreach (var transition in state.Transitions)
             {
-                foreach (var error in ValidateTransition(transition, $"{where} transition '{transition.Key}'", stateKeys, allTransitionKeys, expressions, tasks, services))
+                foreach (var error in ValidateTransition(transition, $"{where} transition '{transition.Key}'", stateKeys, allTransitionKeys, expressions, tasks, services, hasAgentRouting))
                 {
                     yield return error;
                 }
@@ -407,6 +410,9 @@ internal static class WorkflowDefinitionValidator
         }
     }
 
+    private static bool IsAgentTask(TaskDefinition task) =>
+        task.Task is "agent" or "ai-agent" or "aiAgent" or "ai" or "llm";
+
     private static IEnumerable<string> ValidateTransition(
         TransitionDefinition t,
         string where,
@@ -414,7 +420,8 @@ internal static class WorkflowDefinitionValidator
         HashSet<string> transitionKeys,
         WorkflowExpressionEngine expressions,
         WorkflowTaskRegistry tasks,
-        IServiceProvider services)
+        IServiceProvider services,
+        bool hasAgentRouting = false)
     {
         if (string.IsNullOrWhiteSpace(t.Key))
         {
@@ -465,7 +472,7 @@ internal static class WorkflowDefinitionValidator
 
         switch (t.Trigger)
         {
-            case TriggerType.Automatic when !t.Default && string.IsNullOrWhiteSpace(t.Rule):
+            case TriggerType.Automatic when !t.Default && string.IsNullOrWhiteSpace(t.Rule) && !hasAgentRouting:
                 yield return $"{where}: automatic transitions need a 'rule' (or \"default\": true).";
                 break;
             case TriggerType.Scheduled:

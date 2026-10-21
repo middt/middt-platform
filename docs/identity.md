@@ -13,6 +13,7 @@ over OIDC. Everything deployment specific is **configuration**, not code.
 | `Program.cs` | Host: reads the configuration below, maps protocol endpoints, UI, health (`/health`). |
 | `Endpoints/`, `Data/`, `Seeding/`, `Messaging/` | Protocol (OpenIddict 7 server: authorization code + PKCE, PAR, device authorization, token exchange, password, refresh token, client credentials, end session, revocation, introspection, userinfo), users/roles/OAuth2 entities (ASP.NET Core Identity + OpenIddict custom stores over `WorkflowDbContext.Instances` in schema `wf_idp`), seeding, development mailbox. |
 | `Journeys/` | `IAuthJourneyService`, workflow tasks, default authentication journeys (`auth-*.json`), and entity workflow definitions (`idp-user.json`, `idp-role.json`, `oauth-application.json`, `oauth-scope.json`, `oauth-authorization.json`, `oauth-token.json`). |
+| `Seeds/` | `identity.json` – seed configuration (`Identity:ConfigFile`: roles, scopes, clients, demo users). |
 | `Ui/` | Blazor: account pages (static server rendering – they set cookies, including `/account/device` for RFC 8628 verification), journey views, admin pages (interactive server, Radzen: users, roles, clients, scopes, sessions, journeys). |
 | `wwwroot/` | `middt-identity.css`. |
 | `Dockerfile` | `docker build -f identity/Middt.Identity/Dockerfile .` (from the repository root). |
@@ -23,7 +24,7 @@ Nothing in `sdk/` or the frontends references it (they talk OIDC over HTTP).
 
 Sources: `appsettings.json`, environment variables (`Identity__Issuer` …) and optionally **one extra JSON file** named
 by `Identity:ConfigFile` (relative to the content root or absolute; environment variables still override it – keep
-secrets there). The demo uses `demo/identity.json`.
+secrets there). The default seed config lives in `identity/Middt.Identity/Seeds/identity.json`.
 
 | Key | |
 |---|---|
@@ -248,15 +249,15 @@ Demo clients: `middt-blazor` (confidential, `http://localhost:8080/signin-oidc`)
 
 ## Demo (:8083)
 
-The demo runs the service with `demo/identity.json`: issuer `http://localhost:8083/`, database
+The demo runs the service with `identity/Middt.Identity/Seeds/identity.json`: issuer `http://localhost:8083/`, database
 `middt_identity` (created at startup), relaxed password policy (demo password `test`), roles, scope `api` →
 `middt-api`, clients `middt-blazor` / `middt-angular` and the demo users. Both demos sign in here; the API validates
 its access tokens.
 
 | Run | Client secrets | Notes |
 |---|---|---|
-| `docker compose up -d --build` | `.env`: `IDP_BLAZOR_CLIENT_SECRET`, `IDP_ANGULAR_CLIENT_SECRET` (required) | service `middt-identity`, `demo/identity.json` mounted as `Identity:ConfigFile`; BFFs/API reach it as `middt-identity:8080` (`BackchannelAuthority`); development signing keys persist in the `identity-keys` volume |
-| `dotnet run --project identity/Middt.Identity` | `development-only-*` in `demo/identity.json` and in both BFFs' `appsettings.Development.json` | fixed launch ports: IdP 8083, Blazor `https://localhost:7020`, Angular 8081 |
+| `docker compose up -d --build` | `.env`: `IDP_BLAZOR_CLIENT_SECRET`, `IDP_ANGULAR_CLIENT_SECRET` (required) | service `middt-identity`, `Seeds/identity.json` loaded via `Identity:ConfigFile`; BFFs/API reach it as `middt-identity:8080` (`BackchannelAuthority`); development signing keys persist in the `identity-keys` volume |
+| `dotnet run --project identity/Middt.Identity` | `development-only-*` in `identity/Middt.Identity/Seeds/identity.json` and in both BFFs' `appsettings.Development.json` | fixed launch ports: IdP 8083, Blazor `https://localhost:7020`, Angular 8081 |
 
 - The `middt-angular` client uses explicit consent (the consent page appears once per user), `middt-blazor` implicit.
 - A client secret is stored on the first start; changing it in `.env` later also requires changing it in

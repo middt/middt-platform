@@ -3,7 +3,7 @@
   "key": "ai-dispute-detail",
   "title": "AI İtiraz ve Fraud İnceleme Detayı",
   "kind": "view",
-  "version": 1,
+  "version": 2,
   "body": [
     {
       "widget": "alert",
@@ -44,7 +44,7 @@
           "widget": "fields",
           "items": [
             { "label": "AI Kararı", "value": "{{ data.aiDecision.decision }}" },
-            { "label": "Seçilen Akış Geçişi", "value": "{{ data.aiNextTransition }}" },
+            { "label": "Seçilen Akış Geçişi", "value": "{{ data.aiDecision.nextTransition }}" },
             { "label": "Risk Seviyesi", "value": "{{ data.aiDecision.riskLevel }}" },
             { "label": "Risk Skoru", "value": "{{ data.aiDecision.riskScore }} / 100" },
             { "label": "Önerilen İade Tutarı", "value": "{{ data.aiDecision.recommendedRefund }}", "format": "N2" },
@@ -53,8 +53,8 @@
             { "label": "Hız (Velocity) Skoru", "value": "{{ data.aiDecision.velocityScore }}", "visibleWhen": "data.aiDecision.velocityScore != null" },
             { "label": "Analiz Özeti", "value": "{{ data.aiDecision.summary }}" },
             { "label": "Önerilen Aksiyon", "value": "{{ data.aiDecision.recommendation }}" },
-            { "label": "Orkestratör Ajan", "value": "{{ data.aiMeta.agent }}", "visibleWhen": "data.aiMeta != null && data.aiMeta.agent != null" },
-            { "label": "Analiz Zamanı", "value": "{{ data.aiMeta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiMeta != null && data.aiMeta.evaluatedAt != null" }
+            { "label": "Orkestratör Ajan", "value": "{{ data.aiDecision.meta.agent }}", "visibleWhen": "data.aiDecision.meta != null && data.aiDecision.meta.agent != null" },
+            { "label": "Analiz Zamanı", "value": "{{ data.aiDecision.meta.evaluatedAt }}", "format": "g", "visibleWhen": "data.aiDecision.meta != null && data.aiDecision.meta.evaluatedAt != null" }
           ]
         }
       ]
@@ -81,11 +81,11 @@
     {
       "widget": "section",
       "title": "Çağrılan AI Araçları (Function / MCP Tool Calls)",
-      "visibleWhen": "data.aiToolCalls != null && data.aiToolCalls.Count > 0",
+      "visibleWhen": "data.aiDecision != null && data.aiDecision.toolCalls != null && data.aiDecision.toolCalls.Count > 0",
       "children": [
         {
           "widget": "list",
-          "source": "data.aiToolCalls",
+          "source": "data.aiDecision.toolCalls",
           "children": [
             {
               "widget": "fields",
@@ -127,9 +127,11 @@
         {
           "widget": "fields",
           "items": [
-            { "label": "Komite Modu", "value": "{{ data.committeeMeta.mode }}", "visibleWhen": "data.committeeMeta != null" },
-            { "label": "Komite Özeti", "value": "{{ data.committeeReview }}" },
-            { "label": "Değerlendirme Zamanı", "value": "{{ data.committeeMeta.evaluatedAt }}", "format": "g", "visibleWhen": "data.committeeMeta != null && data.committeeMeta.evaluatedAt != null" }
+            { "label": "Orkestratör Kararı", "value": "{{ data.committeeReview.decision }}" },
+            { "label": "Risk Seviyesi", "value": "{{ data.committeeReview.riskLevel }}" },
+            { "label": "Copilot Görüşü", "value": "{{ data.committeeReview.copilotVerdict }}", "visibleWhen": "data.committeeReview.copilotVerdict != null" },
+            { "label": "Komite Gerekçesi", "value": "{{ data.committeeReview.rationale }}", "visibleWhen": "data.committeeReview.rationale != null" },
+            { "label": "Çalışma Modu", "value": "{{ data.committeeReview.meta.mode }}", "visibleWhen": "data.committeeReview.meta != null" }
           ]
         }
       ]
