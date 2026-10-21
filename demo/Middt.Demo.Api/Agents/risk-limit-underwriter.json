@@ -1,0 +1,126 @@
+{
+  "name": "risk-limit-underwriter",
+  "description": "Müşterinin KKB risk skorunu, geçmiş ödeme performansını, sektörel limit kullanımını ve MASAK/teminat durumunu araçlarla (Tool) analiz ederek kredi/risk limit kararını ve akış yönlendirmesini belirleyen AI Tahsis Ajanı.",
+  "instructions": "Sen otonom bir Kurumsal Kredi Risk ve Limit Tahsis (Underwriting) ajanısın (Microsoft Agent Framework). Verilen müşteri ve talep tutarı için query_customer_risk_score, lookup_customer_payment_history ve evaluate_collateral_and_sector_exposure araçlarını çağırarak KKB skorunu, geçmiş ödeme alışkanlığını, borç/gelir oranını, sektörel riski ve teminat yeterliliğini analiz et; uygun iş akışı geçişini (nextTransition) ve yapılandırılmış tahsis raporunu üret.",
+  "tools": [
+    "query_customer_risk_score",
+    "lookup_customer_payment_history",
+    "evaluate_collateral_and_sector_exposure"
+  ],
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "decision",
+      "riskLevel",
+      "riskScore",
+      "creditGrade",
+      "recommendedLimit",
+      "debtToIncomeRatio",
+      "onTimePaymentRate",
+      "latePaymentCount",
+      "paymentBehavior",
+      "sectorRiskIndex",
+      "limitUtilizationRate",
+      "collateralCoverageStatus",
+      "sanctionCheckStatus",
+      "summary",
+      "recommendation"
+    ],
+    "properties": {
+      "decision": {
+        "type": "string",
+        "default": "Otomatik Limit Onayı"
+      },
+      "riskLevel": {
+        "type": "string",
+        "enum": [
+          "Düşük",
+          "Orta",
+          "Yüksek"
+        ],
+        "default": "Düşük"
+      },
+      "riskScore": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1900,
+        "default": 810
+      },
+      "creditGrade": {
+        "type": "string",
+        "default": "A+ (Prime)"
+      },
+      "recommendedLimit": {
+        "type": "number",
+        "minimum": 0,
+        "default": 250000
+      },
+      "debtToIncomeRatio": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 26
+      },
+      "bureauProvider": {
+        "type": "string",
+        "default": "KKB / Findeks Kurumsal Risk Merkezi"
+      },
+      "onTimePaymentRate": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 98
+      },
+      "latePaymentCount": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0
+      },
+      "avgPaymentDelayDays": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0
+      },
+      "bouncedCheckCount": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0
+      },
+      "totalClosedLoans": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 4
+      },
+      "paymentBehavior": {
+        "type": "string",
+        "default": "Tam Zamanında / Kusursuz Ödeme Performansı"
+      },
+      "sectorRiskIndex": {
+        "type": "string",
+        "default": "Düşük (Üretim & Lojistik)"
+      },
+      "limitUtilizationRate": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 34
+      },
+      "collateralCoverageStatus": {
+        "type": "string",
+        "default": "Tam Teminatlı / Uygun"
+      },
+      "sanctionCheckStatus": {
+        "type": "string",
+        "default": "Temiz (MASAK / OFAC Kaydı Yok)"
+      },
+      "summary": {
+        "type": "string",
+        "default": "KKB risk skoru, ödeme geçmişi ve teminat yeterliliği AI Tahsis Ajanı tarafından değerlendirildi."
+      },
+      "recommendation": {
+        "type": "string",
+        "default": "Önerilen limit müşteriye tanımlanabilir."
+      }
+    }
+  }
+}

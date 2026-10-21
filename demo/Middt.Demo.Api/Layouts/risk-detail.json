@@ -3,7 +3,7 @@
   "key": "risk-detail",
   "title": "Risk & Limit Değerlendirme Özeti",
   "kind": "view",
-  "version": 3,
+  "version": 4,
   "body": [
     {
       "widget": "alert",
@@ -24,6 +24,62 @@
       "visibleWhen": "instance.state == \"rejected\""
     },
     { "widget": "layout", "key": "risk-eval-card" },
+    {
+      "widget": "section",
+      "title": "AI Kredi Risk Skoru, Ödeme Geçmişi ve Sektörel Tahsis Analizi",
+      "visibleWhen": "instance.agents != null && instance.agents.riskLimitUnderwriter != null",
+      "children": [
+        {
+          "widget": "fields",
+          "items": [
+            { "label": "AI Tahsis Kararı", "value": "{{ instance.agents.riskLimitUnderwriter.decision }}" },
+            { "label": "Seçilen Akış Geçişi", "value": "{{ instance.agents.riskLimitUnderwriter.selectedTransition }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.selectedTransition != null" },
+            { "label": "Risk Seviyesi", "value": "{{ instance.agents.riskLimitUnderwriter.riskLevel }}" },
+            { "label": "KKB / Findeks Skoru", "value": "{{ instance.agents.riskLimitUnderwriter.riskScore }}" },
+            { "label": "Kredi Notu Sınıfı", "value": "{{ instance.agents.riskLimitUnderwriter.creditGrade }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.creditGrade != null" },
+            { "label": "Borç / Gelir Oranı (DTI %)", "value": "%{{ instance.agents.riskLimitUnderwriter.debtToIncomeRatio }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.debtToIncomeRatio != null" },
+            { "label": "Zamanında Ödeme Oranı", "value": "%{{ instance.agents.riskLimitUnderwriter.onTimePaymentRate }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.onTimePaymentRate != null" },
+            { "label": "Gecikmeli Ödeme Sayısı (12 Ay)", "value": "{{ instance.agents.riskLimitUnderwriter.latePaymentCount }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.latePaymentCount != null" },
+            { "label": "Ortalama Gecikme Süresi (Gün)", "value": "{{ instance.agents.riskLimitUnderwriter.avgPaymentDelayDays }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.avgPaymentDelayDays != null" },
+            { "label": "Kapanmış Kredi Sayısı", "value": "{{ instance.agents.riskLimitUnderwriter.totalClosedLoans }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.totalClosedLoans != null" },
+            { "label": "Ödeme Alışkanlığı", "value": "{{ instance.agents.riskLimitUnderwriter.paymentBehavior }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.paymentBehavior != null" },
+            { "label": "Sektörel Risk Endeksi", "value": "{{ instance.agents.riskLimitUnderwriter.sectorRiskIndex }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.sectorRiskIndex != null" },
+            { "label": "Mevcut Limit Kullanım Oranı", "value": "%{{ instance.agents.riskLimitUnderwriter.limitUtilizationRate }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.limitUtilizationRate != null" },
+            { "label": "Teminat Karşılama Durumu", "value": "{{ instance.agents.riskLimitUnderwriter.collateralCoverageStatus }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.collateralCoverageStatus != null" },
+            { "label": "MASAK / Yaptırım Taraması", "value": "{{ instance.agents.riskLimitUnderwriter.sanctionCheckStatus }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.sanctionCheckStatus != null" },
+            { "label": "AI Analiz Özeti", "value": "{{ instance.agents.riskLimitUnderwriter.summary }}" },
+            { "label": "AI Aksiyon Önerisi", "value": "{{ instance.agents.riskLimitUnderwriter.recommendation }}" },
+            { "label": "Tahsis Ajanı", "value": "{{ instance.agents.riskLimitUnderwriter.agent }}" },
+            { "label": "Analiz Zamanı", "value": "{{ instance.agents.riskLimitUnderwriter.evaluatedAt }}", "format": "g" }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "section",
+      "title": "Çağrılan AI Risk ve Ödeme Araçları (Tool Calls)",
+      "visibleWhen": "instance.toolCalls != null && instance.toolCalls.Count > 0",
+      "children": [
+        {
+          "widget": "list",
+          "source": "instance.toolCalls",
+          "children": [
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "Ajan", "value": "{{ row.agent }}", "visibleWhen": "row.agent != null" },
+                { "label": "Araç Adı", "value": "{{ row.name }}" },
+                { "label": "Çağrı No", "value": "{{ row.callId }}" },
+                { "label": "KKB Skoru", "value": "{{ row.result.riskScore }} ({{ row.result.creditGrade }})", "visibleWhen": "row.result != null && row.result.creditGrade != null" },
+                { "label": "Ödeme Performansı", "value": "%{{ row.result.onTimePaymentRate }} — {{ row.result.paymentBehavior }}", "visibleWhen": "row.result != null && row.result.paymentBehavior != null" },
+                { "label": "Sektör & Teminat", "value": "{{ row.result.sectorRiskIndex }} — {{ row.result.collateralCoverageStatus }}", "visibleWhen": "row.result != null && row.result.sectorRiskIndex != null" },
+                { "label": "Yönlendirme Kararı", "value": "{{ row.result.nextTransition }}", "visibleWhen": "row.result != null && row.result.nextTransition != null" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
     { "widget": "layout", "key": "workflow-footer" }
   ]
 }

@@ -1,0 +1,25 @@
+{
+  "name": "evaluate_collateral_and_sector_exposure",
+  "kind": "expression",
+  "description": "Sektörel risk endeksini, mevcut limit kullanım oranını (%), teminat yeterliliğini, MASAK/AML uyum taramasını ve akış yönlendirme kararını (nextTransition) hesaplar.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "customerKey": { "type": "string", "description": "Müşteri anahtarı" },
+      "amount": { "type": "number", "description": "Talep edilen limit/tutar" },
+      "checkType": { "type": "string", "description": "Kontrol tipi" },
+      "requireUnderwriting": { "type": "boolean", "description": "Yüksek tutarda uzman incelemesi zorunlu mu" }
+    }
+  },
+  "output": {
+    "nextTransition": "{{ args.amount > 5000000 ? \"to-rejected\" : ((args.requireUnderwriting == true && args.amount > 500000) ? \"to-underwriting\" : \"to-approved\") }}",
+    "decision": "{{ args.amount > 5000000 ? \"Otomatik Red (Limit Aşımı)\" : ((args.requireUnderwriting == true && args.amount > 500000) ? \"Tahsis Uzmanı İncelemesi\" : \"Otomatik Limit Onayı\") }}",
+    "riskLevel": "{{ args.amount > 5000000 ? \"Yüksek\" : (args.amount > 500000 ? \"Orta\" : \"Düşük\") }}",
+    "sectorRiskIndex": "{{ args.checkType == \"Fraud Kontrolü\" ? \"Orta-Yüksek (E-Ticaret & Dijital)\" : \"Düşük (Üretim & Lojistik)\" }}",
+    "limitUtilizationRate": "{{ args.amount > 5000000 ? 96 : (args.amount > 500000 ? 68 : 34) }}",
+    "collateralCoverageStatus": "{{ args.amount > 5000000 ? \"Yetersiz Teminat / Kurum Üst Limiti Aşıldı\" : (args.amount > 500000 ? \"Ek Teminat / Tahsis Uzmanı Onayı Önerilir\" : \"Tam Teminatlı / Uygun\") }}",
+    "sanctionCheckStatus": "\"Temiz (MASAK / OFAC Kaydı Yok)\"",
+    "summary": "{{ args.amount > 5000000 ? \"Talep edilen tutar (5.000.000 ₺ üst limit) ve borç/gelir rasyosu kurum risk iştahını aştığından AI tarafından reddedildi.\" : ((args.requireUnderwriting == true && args.amount > 500000) ? \"500.000 ₺ üzeri kredi/limit talebi için KKB skoru ve ödeme geçmişi incelendi; dosya tahsis uzmanı onayına yönlendirildi.\" : \"KKB risk skoru (810 - A+), %98 zamanında ödeme performansı ve temiz MASAK/sektör taraması sonucunda limit otomatik onaylandı.\") }}",
+    "recommendation": "{{ args.amount > 5000000 ? \"Talep tutarı düşürülerek veya grup kefaleti/ipotek eklenerek yeniden başvurulmalı.\" : ((args.requireUnderwriting == true && args.amount > 500000) ? \"Tahsis uzmanı tarafından nakit akışı ve teminat marjı teyit edilerek onaylanabilir.\" : \"Önerilen limit (Talep x 1.25) müşteriye hemen tanımlanabilir.\") }}"
+  }
+}

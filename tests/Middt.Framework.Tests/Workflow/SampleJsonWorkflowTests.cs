@@ -659,7 +659,20 @@ public sealed class SampleJsonWorkflowTests
         approved.Data["riskScore"]!.GetValue<int>().Should().Be(810);
         approved.Data["recommendedLimit"]!.GetValue<decimal>().Should().Be(250000m);
 
-        // 2. High amount (> 500,000) with requireUnderwriting=true pauses in manual-underwriting and supports rejection
+        var aiUnderwriter = approved.Agents["riskLimitUnderwriter"]!;
+        aiUnderwriter["selectedTransition"]!.GetValue<string>().Should().Be("to-approved");
+        aiUnderwriter["riskScore"]!.GetValue<int>().Should().Be(810);
+        aiUnderwriter["creditGrade"]!.GetValue<string>().Should().Be("A+ (Prime)");
+        aiUnderwriter["onTimePaymentRate"]!.GetValue<double>().Should().Be(98);
+        aiUnderwriter["paymentBehavior"]!.GetValue<string>().Should().Contain("Kusursuz");
+        aiUnderwriter["sanctionCheckStatus"]!.GetValue<string>().Should().Contain("MASAK");
+        approved.ToolCalls.Select(t => t.Name).Should().Contain([
+            "query_customer_risk_score",
+            "lookup_customer_payment_history",
+            "evaluate_collateral_and_sector_exposure",
+        ]);
+
+        // 2. High amount (> 500,000) with requireUnderwriting=true pauses in manual-underwriting, supports AI recheck, and supports rejection
         var underwriting = await host.StartInstanceAsync(
             "risk-limit-eval",
             new
@@ -672,11 +685,18 @@ public sealed class SampleJsonWorkflowTests
             user: Alice);
 
         underwriting.State.Should().Be("manual-underwriting");
+        underwriting.Agents["riskLimitUnderwriter"]!["selectedTransition"]!.GetValue<string>().Should().Be("to-underwriting");
+        underwriting.Agents["riskLimitUnderwriter"]!["creditGrade"]!.GetValue<string>().Should().Contain("B+");
+
+        underwriting = await host.TransitionAsync(underwriting.Id, "ai-underwriting-recheck", new { }, user: Alice);
+        underwriting.State.Should().Be("manual-underwriting");
+        underwriting.AgentRuns.Count(r => r.AgentName == "risk-limit-underwriter").Should().Be(2);
+
         underwriting = await host.TransitionAsync(underwriting.Id, "reject-underwriting", new { reason = "Finansal rasyolar yetersiz" }, user: Alice);
         underwriting.State.Should().Be("rejected");
         underwriting.StateSubType.Should().Be("Error");
 
-        // 3. Over-limit amount (> 5,000,000) auto-rejects immediately
+        // 3. Over-limit amount (> 5,000,000) auto-rejects immediately via AI agent routing
         var rejected = await host.StartInstanceAsync(
             "risk-limit-eval",
             new
@@ -690,6 +710,8 @@ public sealed class SampleJsonWorkflowTests
 
         rejected.State.Should().Be("rejected");
         rejected.StateSubType.Should().Be("Error");
+        rejected.Agents["riskLimitUnderwriter"]!["selectedTransition"]!.GetValue<string>().Should().Be("to-rejected");
+        rejected.Data["reason"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]

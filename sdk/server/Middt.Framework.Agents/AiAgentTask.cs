@@ -617,9 +617,11 @@ public sealed class AiAgentTask : IWorkflowTask
         var hasTransitionSchemaProperty = outputSchema?["properties"] is JsonObject props
                                           && MiddtMcpClient.TryGetCaseInsensitive(props, transitionProperty, out _);
 
+        var allTransitionsAreAutomatic = stateTransitions.All(st => st.Trigger == TriggerType.Automatic);
         var automaticRoutingTransitions = stateTransitions
             .Where(t => t.Trigger == TriggerType.Automatic
-                        && (string.IsNullOrWhiteSpace(t.Rule)
+                        && (allTransitionsAreAutomatic
+                            || string.IsNullOrWhiteSpace(t.Rule)
                             || t.Rule.Contains(transitionProperty, StringComparison.OrdinalIgnoreCase)))
             .ToList();
 

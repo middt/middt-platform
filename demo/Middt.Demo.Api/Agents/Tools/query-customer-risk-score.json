@@ -1,0 +1,20 @@
+{
+  "name": "query_customer_risk_score",
+  "kind": "expression",
+  "description": "Müşterinin KKB / Findeks kredi risk skorunu, kredi notu sınıfını (A+, B+, D), borç/gelir oranını (DTI %) ve önerilen kredi limitini sorgular.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "customerKey": { "type": "string", "description": "Müşteri anahtarı" },
+      "amount": { "type": "number", "description": "Talep edilen limit/tutar" },
+      "checkType": { "type": "string", "description": "Kontrol tipi" }
+    }
+  },
+  "output": {
+    "riskScore": "{{ args.amount > 500000 ? 640 : 810 }}",
+    "creditGrade": "{{ args.amount > 5000000 ? \"D (Limit Aşımı)\" : (args.amount > 500000 ? \"B+ (Yakın İzleme)\" : \"A+ (Prime)\") }}",
+    "debtToIncomeRatio": "{{ args.amount > 5000000 ? 78 : (args.amount > 500000 ? 44 : 26) }}",
+    "recommendedLimit": "{{ args.amount * 1.25 }}",
+    "bureauProvider": "\"KKB / Findeks Kurumsal Risk Merkezi\""
+  }
+}

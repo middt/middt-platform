@@ -51,8 +51,10 @@
           "task": "set",
           "config": {
             "values": {
+              "customerKey": "data.customerKey != null ? data.customerKey : \"CUST-GENEL\"",
               "amount": "data.amount != null ? data.amount : 100000",
               "checkType": "data.checkType != null ? data.checkType : \"Genel Risk Kontrolü\"",
+              "requireUnderwriting": "data.requireUnderwriting ?? false",
               "recommendedLimit": "data.amount * 1.25",
               "evaluatedAt": "now"
             }
@@ -75,6 +77,20 @@
           }
         },
         {
+          "key": "ai-risk-limit-underwriter",
+          "task": "agent",
+          "config": {
+            "agent": "risk-limit-underwriter",
+            "prompt": "Müşteri {{ data.customerKey }} için {{ data.amount }} ₺ tutarındaki '{{ data.checkType }}' talebini KKB risk skoru, önceki ödeme performansı, sektörel limit kullanımı ve teminat araçlarını çağırarak analiz et ve akış yönlendirmesini belirle.",
+            "context": {
+              "customerKey": "{{ data.customerKey }}",
+              "amount": "{{ data.amount }}",
+              "checkType": "{{ data.checkType }}",
+              "requireUnderwriting": "{{ data.requireUnderwriting }}"
+            }
+          }
+        },
+        {
           "task": "log",
           "config": {
             "level": "Information",
@@ -85,18 +101,34 @@
       "transitions": [
         {
           "key": "to-underwriting",
+          "title": "AI Tahsis Uzmanı Yönlendirmesi",
+          "description": "500.000 ₺ üzerindeki ve uzman incelemesi (requireUnderwriting) talep edilen başvuruları tahsis uzmanı onayına yönlendirir.",
           "target": "manual-underwriting",
           "trigger": "Automatic",
           "rule": "data.requireUnderwriting == true && data.amount > 500000"
         },
         {
           "key": "to-rejected",
+          "title": "AI Otomatik Limit Reddi",
+          "description": "5.000.000 ₺ üst limiti aşan veya yüksek temerrüt/sektör riski taşıyan başvuruları otomatik olarak reddeder.",
           "target": "rejected",
           "trigger": "Automatic",
-          "rule": "data.amount > 5000000"
+          "rule": "data.amount > 5000000",
+          "onExecute": [
+            {
+              "task": "set",
+              "config": {
+                "values": {
+                  "reason": "instance.agents.riskLimitUnderwriter.summary ?? \"Kurum üst limit ve risk kriterleri aşıldı.\""
+                }
+              }
+            }
+          ]
         },
         {
           "key": "to-approved",
+          "title": "AI Otomatik Limit Onayı",
+          "description": "Risk skoru, önceki ödeme performansı ve teminat rasyoları uygun olan standart başvuruları otomatik onaylar.",
           "target": "approved",
           "trigger": "Automatic",
           "default": true
@@ -110,6 +142,30 @@
       "subType": "Human",
       "view": { "layout": "risk-detail" },
       "transitions": [
+        {
+          "key": "ai-underwriting-recheck",
+          "title": "AI Derinlemesine Risk & Ödeme Analizi",
+          "description": "Müşterinin KKB skorunu, geçmiş ödeme performansını ve sektörel limit kullanımını AI ajanıyla yeniden sorgular.",
+          "target": "$self",
+          "style": "primary",
+          "icon": "smart_toy",
+          "onExecute": [
+            {
+              "key": "ai-risk-limit-underwriter",
+              "task": "agent",
+              "config": {
+                "agent": "risk-limit-underwriter",
+                "prompt": "Tahsis uzmanı incelemesindeki {{ data.customerKey }} müşterisinin {{ data.amount }} ₺ tutarındaki '{{ data.checkType }}' talebi için güncel KKB risk skorunu, önceki ödeme performansını ve sektörel teminat marjını yeniden değerlendir.",
+                "context": {
+                  "customerKey": "{{ data.customerKey }}",
+                  "amount": "{{ data.amount }}",
+                  "checkType": "{{ data.checkType }}",
+                  "requireUnderwriting": "{{ data.requireUnderwriting }}"
+                }
+              }
+            }
+          ]
+        },
         {
           "key": "approve-underwriting",
           "title": "Alt Akış Limitini Onayla",
