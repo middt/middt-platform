@@ -24,8 +24,11 @@ public sealed class ExpressionScope
     /// <summary><c>instance.id</c>, <c>instance.key</c>, <c>instance.state</c>, <c>instance.workflow</c>.</summary>
     public JsonObject Instance { get; init; } = [];
 
-    /// <summary>Current element in a <c>fanOut</c> iteration (<c>item.prop</c>, or <c>item.value</c> for primitives).</summary>
+    /// <summary>Current element in a <c>fanOut</c> or <c>queryWorkflow</c> iteration (<c>item.prop</c>, or <c>item.value</c> for primitives).</summary>
     public JsonObject? Item { get; init; }
+
+    /// <summary>Target workflow instance data and metadata when evaluating cross-workflow tasks (<c>loadWorkflow</c>, <c>queryWorkflow</c>, <c>updateWorkflow</c>).</summary>
+    public JsonObject? Target { get; init; }
 
     /// <summary>Zero-based index in a <c>fanOut</c> iteration.</summary>
     public int? Index { get; init; }

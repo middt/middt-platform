@@ -58,6 +58,9 @@ public static class WorkflowServiceCollectionExtensions
         services.TryAddTransient<StartWorkflowTask>();
         services.TryAddTransient<SetKeyTask>();
         services.TryAddTransient<LoadWorkflowTask>();
+        services.TryAddTransient<QueryWorkflowTask>();
+        services.TryAddTransient<UpdateWorkflowTask>();
+        services.TryAddTransient<TriggerWorkflowTask>();
         services.TryAddTransient<FanOutTask>();
         services.TryAddTransient<CacheTask>();
         foreach (var taskType in options.TaskTypes.Values)

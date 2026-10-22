@@ -475,4 +475,331 @@ public sealed class WorkflowBuiltInTaskTests
 
         (await act.Should().ThrowAsync<Middt.Framework.Workflow.Runtime.WorkflowDefinitionException>()).Which.Errors.Should().Contain(e => e.Contains("setKey: ", StringComparison.Ordinal));
     }
+
+    // ───────────────────────────── cross-workflow data tasks ─────────────────────────────
+
+    private const string CustomerOnboardingWorkflow = """
+        {
+          "key": "customer-onboarding",
+          "dataSchema": {
+            "type": "object",
+            "properties": {
+              "customerNumber": { "type": "string", "x-index": true },
+              "companyName": { "type": "string" },
+              "creditScore": { "type": "integer", "x-index": true },
+              "approvedLimit": { "type": "number", "x-index": true },
+              "usedLimit": { "type": "number" },
+              "segment": { "type": "string", "enum": ["SME", "Corporate"] }
+            }
+          },
+          "start": {
+            "key": "start",
+            "target": "active",
+            "input": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "customerNumber": { "type": "string" },
+                  "companyName": { "type": "string" },
+                  "creditScore": { "type": "integer" },
+                  "approvedLimit": { "type": "number" },
+                  "usedLimit": { "type": "number" },
+                  "segment": { "type": "string" }
+                }
+              }
+            },
+            "onExecute": [
+              { "task": "setKey", "config": { "key": "cust-{{ data.customerNumber }}" } }
+            ]
+          },
+          "states": [
+            {
+              "key": "active",
+              "transitions": [
+                {
+                  "key": "reserve-limit",
+                  "target": "$self",
+                  "input": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "amount": { "type": "number" },
+                        "loanKey": { "type": "string" }
+                      }
+                    },
+                    "set": {
+                      "usedLimit": "(data.usedLimit ?? 0) + input.amount",
+                      "lastLoanKey": "input.loanKey"
+                    }
+                  }
+                },
+                {
+                  "key": "on-loan-disbursed",
+                  "trigger": "Event",
+                  "event": "LoanDisbursed",
+                  "target": "disbursed",
+                  "input": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "disbursedAmount": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "key": "disbursed",
+              "type": "Finish",
+              "subType": "Success"
+            }
+          ]
+        }
+        """;
+
+    [Fact]
+    public async Task LoadWorkflow_loads_by_key_projects_select_and_includes_history()
+    {
+        const string consumerWf = """
+            {
+              "key": "loan-check",
+              "start": {
+                "key": "start",
+                "target": "checked",
+                "input": { "schema": { "type": "object", "properties": { "customerNumber": { "type": "string" } } } }
+              },
+              "states": [
+                {
+                  "key": "checked",
+                  "type": "Finish",
+                  "subType": "Success",
+                  "onEntry": [
+                    {
+                      "task": "loadWorkflow",
+                      "config": {
+                        "workflow": "customer-onboarding",
+                        "key": "cust-{{ data.customerNumber }}",
+                        "includeHistory": true,
+                        "select": {
+                          "firm": "companyName",
+                          "score": "creditScore",
+                          "availableLimit": "target.approvedLimit - (target.usedLimit ?? 0)",
+                          "historyCount": "target.history.Count"
+                        },
+                        "into": "customer"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync([CustomerOnboardingWorkflow, consumerWf]);
+
+        await host.StartInstanceAsync("customer-onboarding", new
+        {
+            customerNumber = "1001",
+            companyName = "Middt Teknoloji A.Ş.",
+            creditScore = 820,
+            approvedLimit = 500000,
+            usedLimit = 120000,
+            segment = "Corporate",
+        });
+
+        var loan = await host.StartInstanceAsync("loan-check", new { customerNumber = "1001" });
+
+        loan.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        var cust = loan.Data["customer"]!.AsObject();
+        cust["found"]!.GetValue<bool>().Should().BeTrue();
+        cust["state"]!.GetValue<string>().Should().Be("active");
+        cust["firm"]!.GetValue<string>().Should().Be("Middt Teknoloji A.Ş.");
+        cust["score"]!.GetValue<long>().Should().Be(820);
+        cust["availableLimit"]!.GetValue<decimal>().Should().Be(380000m);
+        cust["historyCount"]!.GetValue<int>().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task QueryWorkflow_filters_sorts_projects_and_computes_aggregates()
+    {
+        const string portfolioWf = """
+            {
+              "key": "portfolio-summary",
+              "start": {
+                "key": "start",
+                "target": "done",
+                "input": { "schema": { "type": "object", "properties": { "segment": { "type": "string" } } } }
+              },
+              "states": [
+                {
+                  "key": "done",
+                  "type": "Finish",
+                  "subType": "Success",
+                  "onEntry": [
+                    {
+                      "task": "queryWorkflow",
+                      "config": {
+                        "workflow": "customer-onboarding",
+                        "state": "active",
+                        "where": "target.segment == data.segment && target.creditScore >= 700 && target.approvedLimit >= 200000",
+                        "orderBy": "approvedLimit",
+                        "descending": true,
+                        "select": ["customerNumber", "companyName", "approvedLimit", "creditScore"],
+                        "aggregate": {
+                          "totalApprovedLimit": { "op": "sum", "field": "approvedLimit" },
+                          "maxCreditScore": { "op": "max", "field": "creditScore" },
+                          "avgApprovedLimit": "avg:approvedLimit",
+                          "customerCount": "count"
+                        },
+                        "into": "portfolio"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync([CustomerOnboardingWorkflow, portfolioWf]);
+
+        await host.StartInstanceAsync("customer-onboarding", new
+        {
+            customerNumber = "2001",
+            companyName = "Alpha Corp",
+            creditScore = 750,
+            approvedLimit = 300000,
+            usedLimit = 0,
+            segment = "Corporate",
+        });
+        await host.StartInstanceAsync("customer-onboarding", new
+        {
+            customerNumber = "2002",
+            companyName = "Beta Corp",
+            creditScore = 880,
+            approvedLimit = 700000,
+            usedLimit = 100000,
+            segment = "Corporate",
+        });
+        await host.StartInstanceAsync("customer-onboarding", new
+        {
+            customerNumber = "2003",
+            companyName = "Low Score Corp",
+            creditScore = 620,
+            approvedLimit = 400000,
+            usedLimit = 0,
+            segment = "Corporate",
+        });
+        await host.StartInstanceAsync("customer-onboarding", new
+        {
+            customerNumber = "2004",
+            companyName = "SME Shop",
+            creditScore = 810,
+            approvedLimit = 500000,
+            usedLimit = 0,
+            segment = "SME",
+        });
+
+        var report = await host.StartInstanceAsync("portfolio-summary", new { segment = "Corporate" });
+
+        report.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        var portfolio = report.Data["portfolio"]!.AsObject();
+        portfolio["count"]!.GetValue<int>().Should().Be(2);
+        portfolio["exists"]!.GetValue<bool>().Should().BeTrue();
+        portfolio["totalApprovedLimit"]!.GetValue<decimal>().Should().Be(1000000m);
+        portfolio["maxCreditScore"]!.GetValue<decimal>().Should().Be(880m);
+        portfolio["avgApprovedLimit"]!.GetValue<decimal>().Should().Be(500000m);
+        portfolio["customerCount"]!.GetValue<int>().Should().Be(2);
+
+        var items = portfolio["items"]!.AsArray();
+        items.Count.Should().Be(2);
+        items[0]!["companyName"]!.GetValue<string>().Should().Be("Beta Corp");
+        items[1]!["companyName"]!.GetValue<string>().Should().Be("Alpha Corp");
+    }
+
+    [Fact]
+    public async Task UpdateWorkflow_and_TriggerWorkflow_filter_by_instance_data_and_mutate_other_workflows()
+    {
+        const string loanDisbursementWf = """
+            {
+              "key": "loan-disbursement",
+              "start": {
+                "key": "start",
+                "target": "completed",
+                "input": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "customerNumber": { "type": "string" },
+                      "amount": { "type": "number" }
+                    }
+                  }
+                }
+              },
+              "states": [
+                {
+                  "key": "completed",
+                  "type": "Finish",
+                  "subType": "Success",
+                  "onEntry": [
+                    {
+                      "task": "updateWorkflow",
+                      "config": {
+                        "workflow": "customer-onboarding",
+                        "where": "target.customerNumber == data.customerNumber && target.segment == \"Corporate\"",
+                        "values": {
+                          "usedLimit": "(target.usedLimit ?? 0) + data.amount",
+                          "lastUpdatedByWorkflow": "instance.workflow"
+                        },
+                        "into": "afterUpdate"
+                      }
+                    },
+                    {
+                      "task": "triggerWorkflow",
+                      "config": {
+                        "workflow": "customer-onboarding",
+                        "where": "target.customerNumber == data.customerNumber",
+                        "event": "LoanDisbursed",
+                        "input": {
+                          "disbursedAmount": "{{ data.amount }}"
+                        },
+                        "into": "afterEvent"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync([CustomerOnboardingWorkflow, loanDisbursementWf]);
+
+        var customer = await host.StartInstanceAsync("customer-onboarding", new
+        {
+            customerNumber = "3001",
+            companyName = "Gamma Holding",
+            creditScore = 790,
+            approvedLimit = 600000,
+            usedLimit = 50000,
+            segment = "Corporate",
+        });
+
+        var disbursement = await host.StartInstanceAsync("loan-disbursement", new
+        {
+            customerNumber = "3001",
+            amount = 150000,
+        });
+
+        disbursement.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        disbursement.Data["afterUpdate"]!["usedLimit"]!.GetValue<decimal>().Should().Be(200000m);
+        disbursement.Data["afterUpdate"]!["lastUpdatedByWorkflow"]!.GetValue<string>().Should().Be("loan-disbursement");
+        disbursement.Data["afterEvent"]!["state"]!.GetValue<string>().Should().Be("disbursed");
+        disbursement.Data["afterEvent"]!["status"]!.GetValue<string>().Should().Be("Completed");
+
+        var reloadedCustomer = await host.GetAsync(customer.Id);
+        reloadedCustomer.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        reloadedCustomer.State.Should().Be("disbursed");
+        reloadedCustomer.Data["usedLimit"]!.GetValue<decimal>().Should().Be(200000m);
+        reloadedCustomer.Data["disbursedAmount"]!.GetValue<decimal>().Should().Be(150000m);
+    }
 }

@@ -14,7 +14,20 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
    - [3.3. Başlangıç Formu ve Giriş Kuralları (`start`)](#33-başlangıç-formu-ve-giriş-kuralları-start)
    - [3.4. Durumlar (`states`), Sihirbaz Adımları ve Ekran Bağlama](#34-durumlar-states-sihirbaz-adımları-ve-ekran-bağlama)
    - [3.5. Geçişler (`transitions`) ve Tetikleyiciler (`trigger`)](#35-geçişler-transitions-ve-tetikleyiciler-trigger)
-   - [3.6. Yerleşik Görevler (Built-in Tasks) Referansı](#36-yerleşik-görevler-built-in-tasks-referansı)
+   - [3.6. Yerleşik Görevler (Built-in Tasks) ve Ayarları Referansı](#36-yerleşik-görevler-built-in-tasks-ve-ayarları-referansı)
+     - [0. Tüm Görevlerde Ortak Ayarlar (`key`, `when`, `background`, `onError`)](#0-tüm-görevlerde-ortak-ayarlar-key-when-background-onerror)
+     - [1. `set` — Veri Hesaplama ve Atama](#1-set--veri-hesaplama-ve-atama)
+     - [2. `setKey` — İş Anahtarı (Business Key) Üretme](#2-setkey--iş-anahtarı-business-key-üretme)
+     - [3. Akışlar Arası Veri Paylaşımı Görevleri (`loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`)](#3-akışlar-arası-veri-paylaşımı-görevleri-loadworkflow-queryworkflow-updateworkflow-triggerworkflow)
+     - [4. `http` — Dış Servis Çağrısı](#4-http--dış-servis-çağrısı)
+     - [5. `startWorkflow` — Yeni Bir Alt İş Akışı (Sub-Process) Başlatma](#5-startworkflow--yeni-bir-alt-iş-akışı-sub-process-başlatma)
+     - [6. `fanOut` — Dizi Üzerinde Paralel Görev Çalıştırma](#6-fanout--dizi-üzerinde-paralel-görev-çalıştırma)
+     - [7. `cache` — Önbellekleme (Cache-Aside)](#7-cache--önbellekleme-cache-aside)
+     - [8. `publish` & `rabbitmq` — Mesaj Kuyruğuna Olay Yayınlama](#8-publish--rabbitmq--mesaj-kuyruğuna-olay-yayınlama)
+     - [9. `operation` — Kayıtlı İş Operasyonu (`IWorkflowOperation`) Çalıştırma](#9-operation--kayıtlı-iş-operasyonu-iworkflowoperation-çalıştırma)
+     - [10. `agent` / `aiAgent` — Yapay Zeka Ajanı Çalıştırma](#10-agent--aiagent--yapay-zeka-ajanı-çalıştırma)
+     - [11. `mcp` — Model Context Protocol Sunucusu Çağrısı](#11-mcp--model-context-protocol-sunucusu-çağrısı)
+     - [12. `log` — Yapılandırılmış Log Yazma](#12-log--yapılandırılmış-log-yazma)
 4. [Bölüm 2: Yapay Zeka Ajanları (AI Agents), Araçlar (Tools) ve MCP](#4-bölüm-2-yapay-zeka-ajanları-ai-agents-araçlar-tools-ve-mcp)
    - [4.1. AI Ajanı Tanımlama (`Agents/*.json`)](#41-ai-ajanı-tanımlama-agentsjson)
    - [4.2. Kodsuz AI Araçları (`Agents/Tools/*.json`) — Expression, Task (`http`, `set`, `cache`) ve MCP](#42-kodsuz-ai-araçları-agentstoolsjson--expression-task-http-set-cache-ve-mcp)
@@ -295,9 +308,72 @@ Durumu değiştirmeden not eklemek, SLA uzatmak veya AI ajanını yeniden çalı
 
 ---
 
-### 3.6. Yerleşik Görevler (Built-in Tasks) Referansı
+### 3.6. Yerleşik Görevler (Built-in Tasks) ve Ayarları Referansı
 
-Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.onExecute` dizilerinde tanımlanır:
+Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.onExecute` dizilerinde tanımlanır. Her görev bloğu; tüm görevlerde geçerli **ortak üst düzey ayarlar** (`key`, `when`, `background`, `onError`) ve göreve özel **`config`** ayarlarından oluşur.
+
+#### 0. Tüm Görevlerde Ortak Ayarlar (`key`, `when`, `background`, `onError`)
+
+| Ayar | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `task` | `string` | Çalıştırılacak görevin adı (`set`, `setKey`, `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `http`, `startWorkflow`, `fanOut`, `cache`, `publish`, `rabbitmq`, `operation`, `agent`, `mcp`, `log`). |
+| `key` | `string` | Görevin benzersiz adım anahtarı. Tarihçede (`History`), hata kayıtlarında (`Incidents`) ve AI ajan çıktılarında (`instance.agents.<key>`) bu anahtar görünür. Belirtilmezse `task` adı kullanılır. |
+| `when` | `string` | C# mantıksal koşul ifadesi (`"data.amount >= 100000"`). Koşul `false` dönerse görev **atlanır (skip)**. |
+| `background` | `boolean` | `false` (varsayılan) \| `true`. Yalnızca durumların `onEntry` dizisinde kullanılır (`Finish` veya `SubFlow` durumlarında ve `setKey` görevinde kullanılamaz). `true` olduğunda durum geçişi hemen kaydedilir, görev arka planda (`WorkflowJobProcessor`) asenkron çalıştırılır. |
+| `onError.action` | `string` | Görev tüm tekrar denemelerden (`maxAttempts`) sonra yine hata verirse ne yapılacağını belirler:<br>• **`"Fault"`** *(varsayılan)*: Akışı `Faulted` durumuna alır ve `WorkflowIncidents` tablosuna hata kaydı açar (UI/API üzerinden `retry` edilebilir).<br>• **`"Transition"`**: Akışı hata durumunda `onError.transition` alanında belirtilen geçişe yönlendirir (alternatif/telafi yoluna sokar).<br>• **`"Continue"`**: Hatayı incident olarak kaydeder fakat akışı durdurmadan sıradaki göreve devam eder. |
+| `onError.transition` | `string` | `onError.action: "Transition"` seçildiğinde tetiklenecek geçişin `key` adı (ör. `"gateway-fallback"`). |
+| `onError.maxAttempts` | `number` | Toplam deneme sayısı (`1` = tekrar deneme yapma, `3` = ilk deneme + 2 tekrar). |
+| `onError.delay` | `string` | İlk tekrar deneme öncesi bekleme süresi (`"00:00:01"` veya ISO 8601 `"PT2S"`). |
+| `onError.backoffMultiplier` | `number` | Her başarısız denemede bekleme süresinin çarpılacağı üstel katsayı (varsayılan `2.0`; ör. 1s -> 2s -> 4s). |
+| `onError.maxDelay` | `string` | Üstel bekleme süresinin çıkabileceği üst sınır (`"00:00:30"`). |
+| `onError.useJitter` | `boolean` | `false` (varsayılan) \| `true`. Aynı anda hata alan yüzlerce akışın dış servisi aynı saniyede tekrar vurmasını (thundering herd) önlemek için bekleme süresine `±%20` rastgele sapma ekler. |
+| `onError.retryOnStatusCodes` | `string[]` | Yalnızca belirtilen HTTP durum kodlarında tekrar deneme yapar. Tam kod (`"408"`, `"429"`), grup (`"5xx"`) veya hariç tutma (`"!400"`) destekler. |
+
+**Ortak Ayarlar (`when`, `background`, `onError`) JSON Örnekleri:**
+
+```json
+// Örnek A: Koşullu (when), arka planda (background) ve hata durumunda alternatif geçişe (Transition) yönlendiren görev
+{
+  "key": "send-erp-order",
+  "task": "http",
+  "when": "data.amount >= 50000 && data.requiresErpSync == true",
+  "background": true,
+  "onError": {
+    "maxAttempts": 3,
+    "delay": "00:00:02",
+    "backoffMultiplier": 2.0,
+    "maxDelay": "00:00:30",
+    "useJitter": true,
+    "retryOnStatusCodes": ["408", "429", "5xx"],
+    "action": "Transition",
+    "transition": "erp-manual-fallback"
+  },
+  "config": {
+    "method": "POST",
+    "url": "http://mockoon:3000/api/v1/erp/orders",
+    "body": { "orderCode": "{{ data.orderCode }}" }
+  }
+}
+```
+```json
+// Örnek B: Hata olsa bile akışı durdurmadan devam eden (Continue) görev
+{
+  "key": "optional-crm-notify",
+  "task": "http",
+  "onError": {
+    "maxAttempts": 2,
+    "delay": "00:00:01",
+    "action": "Continue"
+  },
+  "config": {
+    "method": "POST",
+    "url": "http://mockoon:3000/api/v1/crm/notify",
+    "body": { "customerKey": "{{ data.customerKey }}" }
+  }
+}
+```
+
+---
 
 #### 1. `set` — Veri Hesaplama ve Atama
 ```json
@@ -312,6 +388,11 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
   }
 }
 ```
+| `config` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `values` | `object` | `{ "hedefAlanYolu": "C# İfadesi" }` çiftlerinden oluşur. Noktalı yol (`"risk.score"`) verilirse iç içe JSON nesnesi oluşturur. |
+
+---
 
 #### 2. `setKey` — İş Anahtarı (Business Key) Üretme
 ```json
@@ -323,22 +404,215 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
   }
 }
 ```
+| `config` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `key` | `string` | Kayda atanacak iş anahtarı şablonu (maksimum 256 karakter). Aynı anahtarla akış tekrar başlatılmak istenirse yeni kayıt açılmaz, mevcut kayıt döner (idempotent). |
+| `ensureUnique` | `boolean` | `false` (varsayılan) \| `true`:<br>• **`false`**: Aynı iş anahtarı başka bir kayıtta varsa görev hata fırlatır.<br>• **`true`**: Aynı iş anahtarı başka bir kayıtta zaten varsa çakışmayı önlemek için anahtarın sonuna otomatik olarak `-<6HaneliInstanceId>` (ör. `CUST-12345678901-4A9F1C`) ekler; kaydın zaten bir anahtarı varsa dokunmaz. |
 
-#### 3. `loadWorkflow` — Başka Bir Akışın Verisini Okuma
+---
+
+#### 3. Akışlar Arası Veri Paylaşımı Görevleri (`loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`)
+
+Middt Platform'da farklı iş akışları birbirinin verisini okuyabilir, filtreleyip özet (toplam/ortalama/adet) çıkarabilir, başka bir akışın verisini güncelleyebilir veya diğer akışta geçiş/olay (`event`) tetikleyebilir.
+Tüm akışlar arası görevlerde hedef kayıt(lar) şu seçicilerle belirlenir:
+
+| Ortak Hedef Seçici | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `workflow` | `string` | *(Zorunlu)* Hedef iş akışının anahtarı (ör. `"customer-onboarding"`, `"credit-allocation"`). |
+| `id` | `string` | Hedef kaydın benzersiz `Guid` kimliği (`"{{ data.customerInstanceId }}"`). |
+| `key` | `string` | Hedef kaydın `BusinessKey` değeri (`"{{ data.customerKey }}"`). |
+| `where` | `string` | Hedef akışın **Instance Data (`WorkflowInstanceData`)** alanları üzerinde tek bir birleşik C# koşul ifadesi (`"target.taxNumber == data.taxNumber && target.segment == \"Corporate\""`). Motor, `where` içindeki eşitlik ve büyüktür/küçüktür koşullarını otomatik olarak PostgreSQL bölüm (partition) indekslerine indirger ve kalan ifadeyi JSON verisi üzerinde çalıştırır. |
+| `state` | `string` | Yalnızca belirli bir durumda olan kayıtları filtreler (ör. `"approved"`, `"waiting-payment"`). |
+| `status` | `string` | Yalnızca belirli yaşam döngüsü statüsündeki kayıtları filtreler:<br>• **`"Active"`**: Devam eden akışlar<br>• **`"Completed"`**: Tamamlanmış (`Finish`) akışlar<br>• **`"Cancelled"`**: İptal edilmiş akışlar<br>• **`"Faulted"`**: Hataya düşmüş akışlar |
+
+##### 3a. `loadWorkflow` (veya `getWorkflow`) — Tekil Akış Kaydı ve AI Çıktılarını Okuma
+Başka bir iş akışı kaydını `key`, `id` veya `where` (instance data filtresi) ile bulur; seçilen alanları (`select`), varsa AI ajanı çıktılarını (`includeAgents: true`) ve geçiş tarihçesini (`includeHistory: true`) mevcut akışın içerisine yükler:
+
 ```json
 {
   "task": "loadWorkflow",
   "config": {
     "workflow": "customer-onboarding",
-    "key": "{{ data.customerKey }}",
+    "where": "target.identityNumber == data.identityNumber",
+    "includeAgents": true,
+    "includeHistory": true,
+    "failIfNotFound": false,
+    "select": {
+      "companyName": "companyName",
+      "creditScore": "creditScore",
+      "availableLimit": "(target.approvedLimit ?? 0) - (target.usedLimit ?? 0)",
+      "kycAiSummary": "agents.kycRiskAgent.summary"
+    },
     "into": "customer"
   }
 }
 ```
+| `loadWorkflow` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `select` | `string[]` veya `object` | • **Belirtilmezse**: Hedef kaydın tüm `data` alanlarını ve üst verilerini (`id`, `key`, `state`, `status`, `found`) kopyalar.<br>• **Dizi (`["companyName", "creditScore"]`)**: Yalnızca listedeki alanları ve üst verileri kopyalar.<br>• **Nesne (`{ "hedefAlan": "ifade" }`)**: Hedef akışın verisi (`target.*`) ve mevcut akışın verisi (`data.*`) üzerinden C# ifadesi hesaplayarak alanı dönüştürür. |
+| `includeAgents` | `boolean` | `false` (varsayılan) \| `true`. `true` ise hedef akışta çalışmış AI ajanlarının çıktılarını `target.agents.<ajanKey>` ve `target.agentRuns` altında getirir. |
+| `includeHistory` | `boolean` | `false` (varsayılan) \| `true`. `true` ise hedef akışın durum geçiş tarihçesini `target.history` dizisi olarak getirir. |
+| `failIfNotFound` | `boolean` | `false` (varsayılan) \| `true`:<br>• **`false`**: Kayıt bulunamazsa akışı durdurmaz; `into` içerisine `{ "found": false, "state": null, "status": null }` yazar.<br>• **`true`**: Kayıt bulunamazsa `WorkflowTaskException` fırlatır (`onError` politikasını tetikler). |
+| `into` | `string` | Sonucun `data` içinde yazılacağı alan yolu (ör. `"customer"`). `select` nesne olarak verilmiş ve `into` boş bırakılmışsa alanlar doğrudan `data` kök nesnesine yazılır. |
 
-#### 4. `http` — Dış Servis Çağrısı ve Akıllı Yeniden Deneme (`onError`)
+##### 3b. `queryWorkflow` (veya `searchWorkflow` / `findWorkflow`) — Çoklu Akış Sorgulama, Filtreleme ve Toplama (`aggregate`)
+Başka bir akışın (veya aynı akışın geçmiş kayıtlarının) birden fazla kaydını tek bir **`where`** koşuluyla (PostgreSQL partition indekslerini otomatik kullanarak) sorgular, sıralar ve `sum`, `avg`, `min`, `max`, `count` toplamalarını hesaplar:
+
+```json
+{
+  "task": "queryWorkflow",
+  "config": {
+    "workflow": "credit-allocation",
+    "state": "approved",
+    "excludeSelf": true,
+    "where": "target.customerKey == data.customerKey && target.amount >= 50000 && target.termMonths >= 12",
+    "orderBy": "amount",
+    "descending": true,
+    "take": 20,
+    "select": ["id", "key", "amount", "termMonths", "state", "createdAt"],
+    "aggregate": {
+      "totalExposure": { "op": "sum", "field": "amount" },
+      "maxLoanAmount": { "op": "max", "field": "amount" },
+      "avgLoanAmount": "avg:amount",
+      "activeLoanCount": "count"
+    },
+    "into": "customerLoanSummary"
+  }
+}
+```
+| `queryWorkflow` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `excludeSelf` *(veya `excludeCurrent`)* | `boolean` | `false` (varsayılan) \| `true`. Aynı akış (`workflow == instance.workflow`) sorgulanırken, şu an çalışmakta olan kaydın kendisini sonuçlardan ve toplamalardan (`sum`/`count`) hariç tutar. |
+| `orderBy` | `string` | Sıralama alanı: `"createdAt"` (varsayılan), `"updatedAt"`, `"key"`, `"state"`, `"status"` veya hedef kaydın `data` içindeki herhangi bir alanı (ör. `"amount"`). |
+| `descending` | `boolean` | `true` (varsayılan: azalan / en yeniden eskiye) \| `false` (artan). |
+| `take` *(veya `limit`)* | `number` | Getirilecek maksimum kayıt sayısı (`1` ile `500` arası, varsayılan `50`). |
+| `first` | `boolean` | `false` (varsayılan) \| `true`. `true` verilirse `into` alanına liste özeti yerine doğrudan **eşleşen ilk kaydın nesnesi** (bulunamazsa `{ "found": false }`) yazılır. |
+| `select` | `string[]` veya `object` | Her bir kayıt için hangi alanların seçileceğini veya dönüştürüleceğini belirler. |
+| `aggregate` | `object` | Eşleşen kayıtlar üzerinde toplama hesaplar. İki yazım biçimini destekler:<br>1. Nesne: `{ "op": "sum", "field": "amount" }`<br>2. Kısa metin: `"sum:amount"`, `"avg:amount"`, `"min:amount"`, `"max:amount"`, `"count"`<br>**Desteklenen `op` değerleri**:<br>• **`"count"`**: Kayıt adedi (veya `field` verilirse o alanı dolu olanların adedi)<br>• **`"sum"`**: Sayısal alanın toplamı<br>• **`"avg"`**: Sayısal alanın ortalaması<br>• **`"min"`**: En küçük değer<br>• **`"max"`**: En büyük değer |
+| `into` | `string` | *(Zorunlu)* Sonucun yazılacağı alan. İçerisine `{ count, exists, items, first, aggregates, <toplamaAlanlari> }` nesnesi yazılır. |
+
+##### 3c. `updateWorkflow` (veya `patchWorkflow` / `setWorkflowData`) — Başka Bir Akışın Verisini Güncelleme
+Mevcut akış içerisinden başka bir akış kaydını (veya `"all": true` ile eşleşen tüm kayıtları) `key`, `id` ya da **`where`** (instance data koşulu) ile bulup `values` ifadeleriyle, `merge` şablonuyla veya RFC 6902 `patch` dizisiyle güvenli biçimde günceller ve versiyonunu (`DataVersion`) artırır:
+
+```json
+// Örnek 1: Tekil kaydı (all: false) Instance Data (where) ile bulup C# ifadeleriyle (values) güncelleme
+{
+  "task": "updateWorkflow",
+  "config": {
+    "workflow": "customer-onboarding",
+    "where": "target.customerNumber == data.customerNumber && target.segment == \"Corporate\"",
+    "all": false,
+    "values": {
+      "usedLimit": "(target.usedLimit ?? 0) + data.amount",
+      "lastAllocationKey": "instance.key",
+      "lastAllocationAt": "now"
+    },
+    "into": "updatedCustomer"
+  }
+}
+```
+```json
+// Örnek 2: Eşleşen TÜM kayıtları (all: true) topluca güncelleme
+{
+  "task": "updateWorkflow",
+  "config": {
+    "workflow": "invoice-collection",
+    "state": "waiting-payment",
+    "where": "target.customerKey == data.customerKey && target.remainingAmount <= 5000",
+    "all": true,
+    "values": {
+      "discountApplied": "true",
+      "remainingAmount": "Math.Round(target.remainingAmount * 0.90m, 2)"
+    },
+    "into": "bulkDiscountResult"
+  }
+}
+```
+```json
+// Örnek 3: JSON şablonu birleştirme (merge) veya RFC 6902 JSON Patch (patch) ile güncelleme
+{
+  "task": "updateWorkflow",
+  "config": {
+    "workflow": "customer-onboarding",
+    "key": "{{ data.customerKey }}",
+    "merge": {
+      "contact": {
+        "email": "{{ data.newEmail }}",
+        "phone": "{{ data.newPhone }}"
+      }
+    },
+    "patch": [
+      { "op": "replace", "path": "/riskSegment", "value": "{{ data.calculatedSegment }}" }
+    ],
+    "validateSchema": true,
+    "into": "patchedCustomer"
+  }
+}
+```
+| `updateWorkflow` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `all` | `boolean` | `false` (varsayılan) \| `true`:<br>• **`false`**: `where` koşuluyla eşleşen **en güncel tek kaydı** günceller.<br>• **`true`**: `where` koşulunu sağlayan **tüm aktif/eşleşen kayıtları** tek seferde günceller ve `into` içerisine `{ "updatedCount": N, "items": [...] }` yazar. |
+| `values` | `object` | `{ "hedefAlan": "C# İfadesi" }`. İfade içinde **`target`** (güncellenen karşı akışın mevcut verisi) ve **`data`** (içinde bulunduğumuz akışın verisi) birlikte kullanılabilir. |
+| `merge` *(veya `data`)* | `object` | `{{ }}` şablonları içeren JSON nesnesi; hedef akışın verisiyle derinlemesine birleştirilir (deep-merge). |
+| `patch` | `array` | RFC 6902 JSON Patch operasyon dizisi (`[{ "op": "replace", "path": "/limit", "value": "{{ data.newLimit }}" }]`). |
+| `targetInto` | `string` | `merge` ile gönderilen nesnenin hedef kaydın kök verisi yerine belirli bir alt alanına (ör. `"paymentSummary"`) yazılmasını sağlar. |
+| `validateSchema` | `boolean` | `false` (varsayılan) \| `true`. `true` ise güncelleme sonrası hedef akışın `dataSchema` kurallarını yeniden doğrular. |
+| `failIfNotFound` | `boolean` | `true` (varsayılan) \| `false`. Hedef kayıt bulunamazsa hata fırlatılıp fırlatılmayacağını belirler. |
+| `into` | `string` | Güncelleme sonucunun (`{ updated, id, key, state, status, dataVersion, data }`) yazılacağı alan. |
+
+##### 3d. `triggerWorkflow` (veya `transitionWorkflow` / `sendWorkflowEvent`) — Başka Bir Akışta Geçiş veya Olay Tetikleme
+Başka bir akış kaydını `key`, `id` veya **`where`** (instance data koşulu) ile bulup doğrudan bir geçişi (`transition`) çalıştırır veya o akışa bir olay mesajı (`event`) gönderir:
+
+```json
+// Örnek 1: Hedef akışa olay mesajı (event) gönderme ve hazır değilse 5 dakika kuyrukta bekletme (bufferFor)
+{
+  "task": "triggerWorkflow",
+  "config": {
+    "workflow": "order-payment-orchestration",
+    "where": "target.orderCode == data.orderCode",
+    "event": "PaymentCaptured",
+    "bufferFor": "00:05:00",
+    "all": false,
+    "input": {
+      "paymentReference": "{{ data.paymentId }}",
+      "paidAmount": "{{ data.amount }}"
+    },
+    "into": "orderStateAfterPayment"
+  }
+}
+```
+```json
+// Örnek 2: Hedef akışta doğrudan geçiş (transition) tetikleme (senkron veya runAsync: true ile asenkron)
+{
+  "task": "triggerWorkflow",
+  "config": {
+    "workflow": "credit-allocation",
+    "key": "{{ data.allocationKey }}",
+    "transition": "approve-stage1",
+    "runAsync": false,
+    "input": {
+      "approvalNote": "Üst akış tarafından otomatik onaylandı."
+    },
+    "into": "allocationTransitionResult"
+  }
+}
+```
+| `triggerWorkflow` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `transition` | `string` | Hedef akışta doğrudan tetiklenecek geçişin anahtarı (ör. `"approve"`, `"cancel"`). `event` ile birlikte kullanılmaz. |
+| `event` | `string` | Hedef akışta `"trigger": "Event"` olan geçişe gönderilecek olay adı (ör. `"PaymentCaptured"`). |
+| `bufferFor` | `string` | Yalnızca `event` modunda geçerlidir (`"00:05:00"` veya `"PT5M"`). Hedef akış o anda başka bir işlemle meşgulse veya **henüz o olayı bekleyen duruma (`state`) gelmemişse**, mesajı çöpe atmak yerine belirtilen süre boyunca `WorkflowMessageBuffers` tablosunda bekletir; hedef akış ilgili duruma girdiği anda mesaj otomatik işlenir. |
+| `runAsync` | `boolean` | `false` (varsayılan) \| `true`. Yalnızca `transition` modunda geçerlidir:<br>• **`false`**: Geçişi anında senkron çalıştırır ve yeni durumu `into` alanına yazar.<br>• **`true`**: Geçişi arka plan işi (`WorkflowJobs`) olarak kuyruğa alır ve mevcut akışı bekletmeden devam eder (`into` içinde `"queued": true` döner). |
+| `all` | `boolean` | `false` (varsayılan) \| `true`. `where` kullanıldığında eşleşen **tüm** kayıtlarda geçişi/olayı tetikler. |
+| `input` *(veya `data`)* | `object` | Hedef geçişe veya olaya gönderilecek girdi verisi (`input`). |
+| `failIfNotFound` | `boolean` | `true` (varsayılan) \| `false`. Hedef kayıt bulunamazsa hata fırlatılıp fırlatılmayacağını belirler. |
+| `into` | `string` | Tetikleme sonucunun (`{ triggered, id, key, state, status, data }`) yazılacağı alan. |
+
+---
+
+#### 4. `http` — Dış Servis Çağrısı
 > [!IMPORTANT]
-> `http` görevlerinde her zaman `http://` veya `https://` ile başlayan **tam (absolute) URL** kullanılmalıdır.
+> `http` görevlerinde her zaman `http://` veya `https://` ile başlayan **tam (absolute) URL** kullanılmalıdır. Güvenlik (SSRF koruması) gereği URL'nin `host` (alan adı) kısmında `{{ }}` şablonu kullanılamaz; şablonlar yalnızca yol (path) ve `queryParams` içinde kullanılabilir.
 
 ```json
 {
@@ -355,6 +629,9 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
   "config": {
     "method": "POST",
     "url": "http://mockoon:3000/api/v1/OrderPaymentOrchestration/ping",
+    "queryParams": {
+      "channel": "web"
+    },
     "headers": {
       "X-Channel": "Middt-Workflow"
     },
@@ -362,14 +639,60 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
       "orderCode": "{{ data.orderCode }}",
       "amount": "{{ data.amount }}"
     },
+    "acceptedStatusCodes": [200, 201],
+    "failOnError": true,
+    "timeoutSeconds": 30,
     "into": "gatewayResponse"
   }
 }
 ```
+| `http` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `url` | `string` | *(Zorunlu)* `http://` veya `https://` ile başlayan tam URL. |
+| `method` | `string` | `"GET"` (varsayılan), `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`. |
+| `queryParams` *(veya `query`)* | `object` | URL sonuna güvenli (`Uri.EscapeDataString`) olarak eklenecek sorgu parametreleri. |
+| `headers` | `object` | İsteğe eklenecek HTTP başlıkları (`{{ }}` şablonu destekler). |
+| `body` | `any` | Gönderilecek JSON gövdesi veya metin (`{{ }}` şablonu destekler). |
+| `contentType` | `string` | Gövde içerik tipi (varsayılan `"application/json"`). |
+| `acceptedStatusCodes` | `number[]` veya `string[]` | Başarılı kabul edilecek HTTP durum kodları (ör. `[200, 201, 404]` veya `["2xx", "404"]`). Belirtilmezse tüm `2xx` kodları başarılı sayılır. |
+| `failOnError` | `boolean` | `true` (varsayılan) \| `false`:<br>• **`true`**: Kabul edilmeyen durum kodlarında veya ağ hatalarında `WorkflowTaskException` fırlatır (`onError` devreye girer).<br>• **`false`**: Hata fırlatmaz; akışı kesmeden `into` içerisine `{ "statusCode": 503, "isSuccess": false, "error": "...", "body": ... }` yazar. |
+| `timeoutSeconds` | `number` | İstek zaman aşımı süresi (saniye, varsayılan `30`, üst sınır `300`). |
+| `into` | `string` | Yanıtın (`{ statusCode, isSuccess, headers, body }` ve üst düzeyde gövde alanlarının) yazılacağı alan yolu. |
 
-#### 5. `fanOut` & `startWorkflow` — Paralel Çoklu Akış Başlatma
+---
+
+#### 5. `startWorkflow` — Yeni Bir Alt İş Akışı (Sub-Process) Başlatma
+Başka bir iş akışını yeni bir kayıt olarak başlatır ve oluşan kaydın `id` değerini `into` alanına yazar:
 ```json
 {
+  "key": "start-shipping-flow",
+  "task": "startWorkflow",
+  "config": {
+    "workflow": "order-payment-orchestration",
+    "key": "ORD-{{ data.orderCode }}",
+    "data": {
+      "orderCode": "{{ data.orderCode }}",
+      "customerKey": "{{ data.customerKey }}",
+      "amount": "{{ data.amount }}"
+    },
+    "into": "spawnedOrderInstanceId"
+  }
+}
+```
+| `startWorkflow` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `workflow` | `string` | *(Zorunlu)* Başlatılacak akışın anahtarı. |
+| `key` | `string` | Yeni kayda verilecek `BusinessKey` şablonu (aynı anahtarla kayıt zaten varsa mevcut kaydın `id` değerini döndürür). |
+| `data` | `object` | Yeni akışa başlangıç verisi (`input`) olarak gönderilecek JSON şablonu. |
+| `into` | `string` | Başlatılan akış kaydının `Guid` (`id`) değerinin yazılacağı alan. |
+
+---
+
+#### 6. `fanOut` — Dizi Üzerinde Paralel Görev Çalıştırma
+Bir dizi (`items`) içindeki her eleman için `subTask` görevini izole bir kopya üzerinde paralel çalıştırır ve tüm sonuçları `into` dizisinde toplar:
+```json
+{
+  "key": "parallel-risk-checks",
   "task": "fanOut",
   "config": {
     "items": "new string[] { \"Fraud Kontrolü\", \"Stok Kontrolü\", \"Limit Kontrolü\" }",
@@ -377,10 +700,12 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
     "into": "parallelChecks",
     "subTask": {
       "task": "startWorkflow",
+      "when": "item.value != null",
       "config": {
         "workflow": "risk-limit-eval",
         "data": {
           "checkType": "{{ item.value }}",
+          "checkIndex": "{{ index }}",
           "amount": "{{ data.amount }}"
         },
         "into": "checkResult"
@@ -389,10 +714,20 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
   }
 }
 ```
+| `fanOut` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `items` | `string` | *(Zorunlu)* Üzerinde dönülecek diziyi üreten C# ifadesi (`"data.orderLines"` veya `"new string[] { \"A\", \"B\" }"`). Alt görev (`subTask`) içinde dizinin o anki elemanına **`item`** (ilkel metin/sayı dizilerinde `item.value`), 0 tabanlı sırasına **`index`** değişkeni ile erişilir. |
+| `maxConcurrency` | `number` | Aynı anda paralel çalışacak maksimum alt görev sayısı (varsayılan `5`, üst sınır `64`). |
+| `subTask` *(veya `task` / `innerTask`)* | `TaskDefinition` | *(Zorunlu)* Her eleman için çalıştırılacak görev tanımı. `subTask.when` kullanılarak belirli dizi elemanları filtrelenebilir. |
+| `into` | `string` | Tüm paralel alt görevlerin ürettiği çıktıların sırasıyla `JsonArray` olarak yazılacağı alan. |
 
-#### 6. `cache` — Önbellekleme (Cache-Aside)
+---
+
+#### 7. `cache` — Önbellekleme (Cache-Aside)
+Önce `key` ile dağıtık önbelleği (`IDistributedCache` / `IMemoryCache`) kontrol eder; veri önbellekte varsa `subTask` görevini **hiç çalıştırmadan** doğrudan `into` alanına yazar, yoksa `subTask` görevini çalıştırıp ürettiği sonucu `ttl` süresi boyunca önbelleğe kaydeder:
 ```json
 {
+  "key": "cache-payment-receipt",
   "task": "cache",
   "config": {
     "key": "payment:{{ data.orderCode }}",
@@ -409,10 +744,19 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
   }
 }
 ```
+| `cache` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `key` | `string` | *(Zorunlu)* Önbellek anahtarı şablonu (ör. `"fx:{{ data.currency }}"`). Sistemde `middt:wf:cache:<key>` önekiyle saklanır. |
+| `ttl` | `string` | Önbellekte tutulma süresi (`"00:15:00"` veya ISO 8601 `"PT15M"`, varsayılan `"PT5M"` / 5 dakika). |
+| `into` | `string` | *(Zorunlu)* Önbellekten okunan veya `subTask` tarafından `into` yoluna üretilen verinin yazılacağı alan yolu. |
+| `subTask` *(veya `task` / `innerTask`)* | `TaskDefinition` | *(Zorunlu)* Önbellekte veri bulunamadığında (cache miss) çalıştırılacak görev (`http`, `loadWorkflow`, `queryWorkflow`, `set` vb.). |
 
-#### 7. `publish` & `rabbitmq` — Olay Yayınlama
+---
+
+#### 8. `publish` & `rabbitmq` — Mesaj Kuyruğuna Olay Yayınlama
 ```json
 {
+  "key": "publish-domain-event",
   "task": "publish",
   "config": {
     "type": "OrderPaymentCaptured",
@@ -423,6 +767,190 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
   }
 }
 ```
+```json
+{
+  "key": "publish-rabbitmq-topic",
+  "task": "rabbitmq",
+  "config": {
+    "exchange": "banking.events",
+    "routingKey": "credit.approved.{{ data.segment }}",
+    "headers": {
+      "X-Workflow-Instance": "{{ instance.id }}"
+    },
+    "payload": {
+      "customerKey": "{{ data.customerKey }}",
+      "amount": "{{ data.amount }}"
+    },
+    "into": "rabbitPublishResult"
+  }
+}
+```
+| Görev & Ayar | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `publish.type` | `string` | *(Zorunlu)* `IWorkflowMessagePublisher` (Rebus) üzerinden yayınlanacak olay tipi. Diğer akışlardaki `"trigger": "Event"` geçişlerini tetiklemek için kullanılır. |
+| `publish.payload` | `object` | Olay gövdesi (`workflow` ve `instanceId` alanları otomatik eklenir). |
+| `rabbitmq.routingKey` *(veya `queue` / `topic`)* | `string` | *(Zorunlu)* Mesajın yönlendirileceği RabbitMQ kuyruk veya routing anahtarı (`{{ }}` şablonu destekler). |
+| `rabbitmq.exchange` | `string` | RabbitMQ exchange adı (varsayılan `"middt.workflow.events"`). |
+| `rabbitmq.headers` | `object` | Mesaj üst bilgileri (`x-workflow`, `x-instance-id`, `x-routing-key` otomatik eklenir). |
+| `rabbitmq.payload` *(veya `body` / `message`)* | `any` | Gönderilecek JSON mesaj gövdesi. |
+| `rabbitmq.into` | `string` | Yayınlama onay bilgisinin (`{ published: true, exchange, routingKey, publishedAt }`) yazılacağı alan. |
+
+---
+
+#### 9. `operation` — Kayıtlı İş Operasyonu (`IWorkflowOperation`) Çalıştırma
+```json
+{
+  "key": "run-ledger-operation",
+  "task": "operation",
+  "config": {
+    "operation": "calculate-amortization",
+    "input": {
+      "principal": "{{ data.amount }}",
+      "termMonths": "{{ data.termMonths }}"
+    },
+    "into": "amortizationSchedule"
+  }
+}
+```
+| `operation` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `operation` *(veya `name`)* | `string` | *(Zorunlu)* DI konteynerine kaydedilmiş `IWorkflowOperation` sınıfının adı. |
+| `input` *(veya `params`)* | `object` | Operasyona geçirilecek girdi parametreleri (`{{ }}` şablonu destekler). |
+| `into` | `string` | Operasyonun döndürdüğü JSON çıktısının `data` içinde yazılacağı alan. |
+
+---
+
+#### 10. `agent` / `aiAgent` — Yapay Zeka Ajanı Çalıştırma
+```json
+// Örnek 1: Tekil ajan (mode: "single") ve otomatik geçiş yönlendirme
+{
+  "key": "aiUnderwriter",
+  "task": "agent",
+  "config": {
+    "agent": "risk-limit-underwriter",
+    "mode": "single",
+    "allowedTransitions": ["auto-approve", "send-to-committee", "auto-reject"],
+    "transitionProperty": "nextTransition",
+    "transitionInto": "aiSelectedRoute",
+    "prompt": "Müşteri: {{ data.customerKey }}, Tutar: {{ data.amount }} TL, Mevcut Açık Risk: {{ data.customerLoanSummary.totalExposure }} TL. Başvuruyu değerlendir."
+  }
+}
+```
+```json
+// Örnek 2: Çoklu ajan orkestrasyonu (mode: "sequential" | "concurrent" | "handoff")
+{
+  "key": "committeeMultiAgentReview",
+  "task": "agent",
+  "config": {
+    "mode": "sequential",
+    "agents": [
+      "kyc-compliance-agent",
+      "risk-limit-underwriter",
+      "dispute-resolution-specialist"
+    ],
+    "prompt": "Kurumsal kredi başvurusunu uyum, kredi riski ve hukuki açıdan sırayla değerlendirip nihai komite kararını oluşturun."
+  }
+}
+```
+| `agent` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `mode` | `string` | Ajan orkestrasyon çalışma modu:<br>• **`"single"`** *(varsayılan)*: Tek bir AI ajanını (`agent` / `name`) çalıştırır.<br>• **`"sequential"`**: `agents` dizisindeki ajanları sırayla (boru hattı / pipeline olarak, birinin çıktısını diğerine aktararak) çalıştırır.<br>• **`"concurrent"`** *(veya `"parallel"`)*: `agents` dizisindeki ajanları aynı anda paralel çalıştırır ve tüm görüşleri birleştirir.<br>• **`"handoff"`**: `agents` dizisindeki ajanlar arasında dinamik görev devri (triage -> uzman ajan devri) yapar. |
+| `agent` *(veya `name`)* | `string` | `mode: "single"` iken çalıştırılacak kayıtlı ajan adı (`Agents/*.json`) veya satır içi ajan adı. |
+| `agents` | `array` | `mode: "sequential" \| "concurrent" \| "handoff"` iken çalıştırılacak ajan adları dizisi (`["fraud-agent", "credit-agent"]`) veya ajan nesneleri dizisi. |
+| `prompt` *(veya `input` / `message`)* | `string` | Ajana gönderilecek kullanıcı istemi (`{{ }}` şablonu destekler). Çok turlu mesaj dizisi için `messages` kullanılabilir. |
+| `instructions` *(veya `system`)* | `string` | Kayıtlı ajanın sistem talimatlarını (`instructions`) bu görev özelinde ezmek veya satır içi ajan tanımlamak için kullanılır. |
+| `tools` | `string[]` | Ajana tanımlı araçlara ek olarak bu adımda açılacak araç (`Tools/*.json`) listesi. |
+| `mcpServers` | `string[]` | Ajana bu adımda bağlanacak MCP sunucu adları listesi. |
+| **Otomatik Geçiş Yönlendirme (Auto-Routing)** | | Ajanın bulunduğu durumdaki (`state`) `Automatic` geçişler motor tarafından **otomatik olarak keşfedilir** ve ajanın JSON çıktı şemasına (`outputSchema`) enum olarak enjekte edilir. Ajanın seçtiği geçiş `instance.agents.<key>.nextTransition` üzerinden akışı yönlendirir: |
+| `allowedTransitions` | `string[]` | Ajanın seçmesine izin verilen geçiş anahtarlarının açık listesi (ör. `["auto-approve", "auto-reject"]`). Belirtilmezse durumdaki uygun tüm geçişler otomatik verilir. |
+| `transitionProperty` | `string` | Ajanın JSON yanıtındaki hangi alanın geçiş kararı olarak okunacağını belirler (varsayılan **`"nextTransition"`**). |
+| `transitionInto` | `string` | Ajanın seçtiği geçiş anahtarının ayrıca `instance.data` içinde yazılacağı alan yolu (ör. `"aiSelectedRoute"`). |
+| `sessionKey` | `string` | Çok turlu (multi-turn) konuşma geçmişi anahtarı (varsayılan: görev `key` değeri). Aynı `sessionKey` kullanılan adımlar önceki konuşma geçmişini hatırlar. |
+| `model` *(veya `modelId`)* | `string` | Varsayılan LLM modelini bu görev için değiştirir. |
+| `temperature` | `number` | Yaratıcılık/deterministiklik katsayısı (ör. `0.1`). |
+| `maxOutputTokens` | `number` | Maksimum yanıt token sınırı. |
+| `outputSchema` | `object` | Ajanın yanıtını zorunlu kılacak JSON Schema tanımı. |
+| `into` | `string` | Ajan çıktıları varsayılan olarak `instance.agents.<key>` tablosuna kaydedilir; ayrıca `instance.data` içine de kopyalanması isteniyorsa hedef alan yolu verilir. |
+
+---
+
+#### 11. `mcp` — Model Context Protocol Sunucusu Çağrısı
+Dış veya yerel bir MCP sunucusuna bağlanarak araç çağırır (`callTool`), kaynak okur (`readResource`), hazır istem şablonu alır (`getPrompt`) veya sunucu yeteneklerini listeler (`listTools`, `listResources`):
+```json
+// Örnek 1: MCP Aracı Çağırma (action: "callTool")
+{
+  "key": "call-banking-mcp",
+  "task": "mcp",
+  "config": {
+    "server": "core-banking-mcp",
+    "action": "callTool",
+    "tool": "get_customer_exposure",
+    "arguments": {
+      "customerKey": "{{ data.customerKey }}"
+    },
+    "into": "mcpExposureResult",
+    "metaInto": "mcpCallMeta"
+  }
+}
+```
+```json
+// Örnek 2: MCP Kaynağı Okuma (action: "readResource")
+{
+  "key": "read-policy-resource",
+  "task": "mcp",
+  "config": {
+    "server": "core-banking-mcp",
+    "action": "readResource",
+    "uri": "banking://policies/credit-limits/{{ data.segment }}",
+    "into": "segmentPolicyDoc"
+  }
+}
+```
+```json
+// Örnek 3: MCP İstem Şablonu Alma (action: "getPrompt")
+{
+  "key": "get-underwriting-prompt",
+  "task": "mcp",
+  "config": {
+    "server": "core-banking-mcp",
+    "action": "getPrompt",
+    "prompt": "corporate_credit_review",
+    "arguments": {
+      "companyName": "{{ data.companyName }}",
+      "requestedAmount": "{{ data.amount }}"
+    },
+    "into": "preparedPrompt"
+  }
+}
+```
+| `mcp` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `server` | `string` | *(Zorunlu)* `appsettings.json` (`AgentSettings.McpServers`) içinde tanımlı MCP sunucu anahtarı. |
+| `action` *(veya `op`)* | `string` | MCP sunucusunda gerçekleştirilecek işlem türü:<br>• **`"callTool"`** *(veya `"call"`, `"tool"` — varsayılan)*: MCP sunucusundaki bir aracı (`tool`) `arguments` parametreleriyle çalıştırır.<br>• **`"listTools"`**: MCP sunucusunun sunduğu tüm araçların listesini ve JSON şemalarını döndürür.<br>• **`"readResource"`** *(veya `"resource"`)*: MCP sunucusundaki bir veri kaynağını (`uri`) okur.<br>• **`"listResources"`**: MCP sunucusundaki tüm okunabilir kaynakların listesini döndürür.<br>• **`"getPrompt"`** *(veya `"prompt"`)*: MCP sunucusundaki hazır bir istem şablonunu (`prompt`) `arguments` parametreleriyle alır. |
+| `tool` *(veya `name`)* | `string` | `action: "callTool"` seçildiğinde çağrılacak MCP aracının adı. |
+| `uri` *(veya `resource`)* | `string` | `action: "readResource"` seçildiğinde okunacak kaynağın URI adresi (`{{ }}` şablonu destekler). |
+| `prompt` *(veya `name`)* | `string` | `action: "getPrompt"` seçildiğinde alınacak istem şablonunun adı. |
+| `arguments` *(veya `args` / `input`)* | `object` | `callTool` veya `getPrompt` işlemine gönderilecek parametreler (`{{ }}` şablonu destekler). |
+| `into` | `string` | MCP yanıtının `data` içinde yazılacağı alan yolu (varsayılan `"mcpResult"`). |
+| `metaInto` | `string` | Çağrı üst verisinin (`{ server, action, executedAt }`) yazılacağı alan yolu. |
+
+---
+
+#### 12. `log` — Yapılandırılmış Log Yazma
+```json
+{
+  "key": "log-decision",
+  "task": "log",
+  "config": {
+    "level": "Information",
+    "message": "Kredi başvurusu ({{ instance.key }}) {{ data.customer.companyName }} için değerlendirildi."
+  }
+}
+```
+| `log` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `message` | `string` | *(Zorunlu)* Loglanacak metin şablonu (`{{ }}` destekler). |
+| `level` | `string` | `"Trace"`, `"Debug"`, `"Information"` *(varsayılan)*, `"Warning"`, `"Error"`, `"Critical"`. |
 
 ---
 
