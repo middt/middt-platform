@@ -1,0 +1,11 @@
+@page "/workflow-admin"
+@attribute [Authorize(Roles = "ui-admin")]
+@using Middt.Framework.Blazor.Workflow
+@using Middt.Demo.Blazor.Service
+
+<WorkflowDesigner OnChanged="MenuService.RefreshAsync" />
+
+@code {
+    [Inject]
+    private MenuService MenuService { get; set; } = default!;
+}

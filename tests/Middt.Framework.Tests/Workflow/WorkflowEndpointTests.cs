@@ -479,4 +479,102 @@ public sealed class WorkflowEndpointTests
         var model = (await EnvelopeAsync<WorkflowInstanceModel>(response)).Data!;
         model.Data["resolvedBranch"]!.GetValue<long>().Should().Be(999);
     }
+
+    [Fact]
+    public async Task Task_catalog_endpoint_returns_all_built_in_tasks_and_parameters()
+    {
+        await using var host = await Host();
+
+        using var response = await SendAsync(host, HttpMethod.Get, $"{Base}/tasks");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var envelope = await EnvelopeAsync<List<WorkflowTaskSpecModel>>(response);
+        envelope.Result.Should().Be(ResultEnum.Success);
+        envelope.Data.Should().NotBeNull();
+        envelope.Data!.Select(t => t.Name).Should().Contain([
+            "set", "setKey", "loadWorkflow", "queryWorkflow", "updateWorkflow",
+            "triggerWorkflow", "startWorkflow", "http", "publish", "rabbitmq",
+            "operation", "fanOut", "cache", "agent", "mcp", "log"
+        ]);
+        envelope.Data.Should().AllSatisfy(t =>
+        {
+            t.Title.Should().NotBeNullOrWhiteSpace();
+            t.Category.Should().NotBeNullOrWhiteSpace();
+            t.Description.Should().NotBeNullOrWhiteSpace();
+            t.Params.Should().NotBeEmpty();
+        });
+    }
+
+    [Fact]
+    public async Task Validate_and_save_workflow_definition_endpoints_work_at_runtime()
+    {
+        await using var host = await Host();
+
+        using var getRaw = await SendAsync(host, HttpMethod.Get, $"{Base}/pipeline/definition");
+        getRaw.StatusCode.Should().Be(HttpStatusCode.OK);
+        var rawEnvelope = await EnvelopeAsync<System.Text.Json.Nodes.JsonObject>(getRaw);
+        rawEnvelope.Data!["key"]!.GetValue<string>().Should().Be("pipeline");
+
+        var invalidDef = new
+        {
+            key = "custom-flow",
+            version = 1,
+            start = new { key = "start", target = "missing-state" },
+            states = new[] { new { key = "created", type = "Finish", subType = "Success" } }
+        };
+
+        using var validateInvalid = await SendAsync(host, HttpMethod.Post, $"{Base}/validate", invalidDef);
+        validateInvalid.StatusCode.Should().Be(HttpStatusCode.OK);
+        var invalidResult = (await EnvelopeAsync<WorkflowValidationResultModel>(validateInvalid)).Data!;
+        invalidResult.IsValid.Should().BeFalse();
+        invalidResult.Errors.Should().NotBeEmpty();
+
+        var validDef = new
+        {
+            key = "custom-flow",
+            version = 1,
+            title = "Custom Runtime Flow",
+            start = new { key = "start", target = "active" },
+            states = new object[]
+            {
+                new
+                {
+                    key = "active",
+                    title = "Active",
+                    type = "Intermediate",
+                    subType = "Human",
+                    onEntry = new object[]
+                    {
+                        new { key = "init-flag", task = "set", config = new { values = new { ready = "true" } } }
+                    },
+                    transitions = new object[]
+                    {
+                        new { key = "complete", title = "Complete", target = "done", trigger = "Manual" }
+                    }
+                },
+                new { key = "done", title = "Done", type = "Finish", subType = "Success" }
+            }
+        };
+
+        using var validateValid = await SendAsync(host, HttpMethod.Post, $"{Base}/validate", validDef);
+        validateValid.StatusCode.Should().Be(HttpStatusCode.OK);
+        var validResult = (await EnvelopeAsync<WorkflowValidationResultModel>(validateValid)).Data!;
+        validResult.IsValid.Should().BeTrue();
+        validResult.Errors.Should().BeEmpty();
+
+        // Saving requires ui-admin role when authorization is enabled
+        using var saveForbidden = await SendAsync(host, HttpMethod.Put, $"{Base}/custom-flow/definition", validDef);
+        saveForbidden.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        using var saveAllowed = await SendAsync(host, HttpMethod.Put, $"{Base}/custom-flow/definition", validDef, roles: "ui-admin");
+        saveAllowed.StatusCode.Should().Be(HttpStatusCode.OK);
+        var savedModel = (await EnvelopeAsync<WorkflowDefinitionModel>(saveAllowed)).Data!;
+        savedModel.Key.Should().Be("custom-flow");
+        savedModel.Title.Should().Be("Custom Runtime Flow");
+
+        // Immediately start an instance of the newly saved workflow
+        var instance = await StartAsync(host, "custom-flow", new { });
+        instance.State.Should().Be("active");
+        instance.Data["ready"]!.GetValue<bool>().Should().BeTrue();
+    }
 }

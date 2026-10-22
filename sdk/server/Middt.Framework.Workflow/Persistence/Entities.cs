@@ -303,3 +303,17 @@ public sealed class WorkflowAgentToolCall
     public int Order { get; set; }
     public DateTime CreatedAt { get; set; }
 }
+
+/// <summary>
+/// Workflow definition JSON persisted at runtime from the visual designer (<c>wf.WorkflowDefinitions</c>),
+/// so newly created or updated workflows survive application restarts alongside seed files.
+/// </summary>
+public sealed class WorkflowDefinitionRecord
+{
+    public string Key { get; set; } = string.Empty;
+    public int Version { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Content { get; set; } = "{}";
+    public string? UpdatedBy { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}

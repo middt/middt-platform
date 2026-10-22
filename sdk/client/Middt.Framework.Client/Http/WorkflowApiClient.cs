@@ -33,6 +33,32 @@ public class WorkflowApiClient(
     public virtual Task<BaseResponseDataModel<List<WorkflowSummaryModel>>> ListWorkflowsAsync(CancellationToken cancellationToken = default) =>
         SendAsync<BaseResponseDataModel<List<WorkflowSummaryModel>>>(HttpMethod.Get, RoutePrefix, null, cancellationToken);
 
+    /// <summary>Gets the catalog of built-in workflow tasks and their parameter specifications for the visual designer.</summary>
+    public virtual Task<BaseResponseDataModel<List<WorkflowTaskSpecModel>>> ListTaskSpecsAsync(CancellationToken cancellationToken = default) =>
+        SendAsync<BaseResponseDataModel<List<WorkflowTaskSpecModel>>>(HttpMethod.Get, $"{RoutePrefix.TrimEnd('/')}/tasks", null, cancellationToken);
+
+    /// <summary>Gets the full raw JSON definition of <paramref name="workflow"/> for the visual workflow designer.</summary>
+    public virtual Task<BaseResponseDataModel<JsonObject>> GetDefinitionJsonAsync(string workflow, int? version = null, CancellationToken cancellationToken = default)
+    {
+        var query = new StringBuilder();
+        AppendQuery(query, "version", version?.ToString(CultureInfo.InvariantCulture));
+        return SendAsync<BaseResponseDataModel<JsonObject>>(HttpMethod.Get, $"{WorkflowRoute(workflow)}/definition{query}", null, cancellationToken);
+    }
+
+    /// <summary>Validates a draft workflow JSON document without saving it.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowValidationResultModel>> ValidateDefinitionAsync(JsonObject definition, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        return SendAsync<BaseResponseDataModel<WorkflowValidationResultModel>>(HttpMethod.Post, $"{RoutePrefix.TrimEnd('/')}/validate", definition, cancellationToken);
+    }
+
+    /// <summary>Validates and saves a workflow JSON definition at runtime (requires <c>ui-admin</c> role).</summary>
+    public virtual Task<BaseResponseDataModel<JsonObject>> SaveDefinitionAsync(string workflow, JsonObject definition, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        return SendAsync<BaseResponseDataModel<JsonObject>>(HttpMethod.Put, $"{WorkflowRoute(workflow)}/definition", definition, cancellationToken);
+    }
+
     /// <summary>Gets the definition of <paramref name="workflow"/>: the latest version, or <paramref name="version"/> when given
     /// (instances keep running on the version they were started with, see <see cref="WorkflowInstanceModel.WorkflowVersion"/>).</summary>
     public virtual Task<BaseResponseDataModel<WorkflowDefinitionModel>> GetDefinitionAsync(string workflow, int? version = null, CancellationToken cancellationToken = default)

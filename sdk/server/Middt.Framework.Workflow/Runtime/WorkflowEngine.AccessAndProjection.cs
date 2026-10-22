@@ -332,8 +332,12 @@ public sealed partial class WorkflowEngine
             StateTitle = state?.Title,
             StateType = state?.Type.ToString() ?? string.Empty,
             StateSubType = state?.SubType.ToString() ?? string.Empty,
-            View = string.IsNullOrWhiteSpace(state?.View?.Component) ? null : state.View.Component,
-            Layout = string.IsNullOrWhiteSpace(state?.View?.Layout) ? null : state.View.Layout,
+            View = state?.Type == StateType.SubFlow
+                ? activeSubFlow?.View
+                : (string.IsNullOrWhiteSpace(state?.View?.Component) ? null : state.View.Component),
+            Layout = state?.Type == StateType.SubFlow
+                ? activeSubFlow?.Layout
+                : (string.IsNullOrWhiteSpace(state?.View?.Layout) ? null : state.View.Layout),
             Status = instance.Status,
             Data = projectedData,
             DataVersion = instance.DataVersion,

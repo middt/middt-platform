@@ -23,6 +23,8 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
 
     public DbSet<WorkflowAgentToolCall> AgentToolCalls => Set<WorkflowAgentToolCall>();
 
+    public DbSet<WorkflowDefinitionRecord> Definitions => Set<WorkflowDefinitionRecord>();
+
     /// <summary>
     /// New time-ordered UUIDv7 key for workflow instances and jobs.
     /// </summary>
@@ -204,6 +206,20 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             e.HasIndex(x => new { x.WorkflowKey, x.InstanceId, x.Order });
             e.HasIndex(x => new { x.WorkflowKey, x.RunId, x.Order });
             e.HasIndex(x => x.InstanceId);
+        });
+
+        modelBuilder.Entity<WorkflowDefinitionRecord>(e =>
+        {
+            e.ToTable("WorkflowDefinitions", schema);
+            e.HasKey(x => new { x.Key, x.Version });
+            e.Property(x => x.Key).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Content).IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(256);
+            if (isPostgres)
+            {
+                e.Property(x => x.Content).HasColumnType("jsonb");
+            }
         });
 
         if (isPostgres)

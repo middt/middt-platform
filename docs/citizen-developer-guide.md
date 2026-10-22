@@ -33,9 +33,10 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
    - [4.2. Kodsuz AI Araçları (`Agents/Tools/*.json`) — Expression, Task (`http`, `set`, `cache`) ve MCP](#42-kodsuz-ai-araçları-agentstoolsjson--expression-task-http-set-cache-ve-mcp)
    - [4.3. Akış İçinde Ajan Çağırma ve Otomatik Geçiş Kararı (`selectedTransition`)](#43-akış-içinde-ajan-çağırma-ve-otomatik-geçiş-kararı-selectedtransition)
 5. [Bölüm 3: İfade Dili (Expression Language) Rehberi](#5-bölüm-3-ifade-dili-expression-language-rehberi)
-6. [Bölüm 4: Sunucu Güdümlü Ekran Tasarımı (`Layouts/*.json`)](#6-bölüm-4-sunucu-güdümlü-ekran-tasarımı-layoutsjson)
+6. [Bölüm 4: Sunucu Güdümlü Ekran Tasarımı (`Layouts/*.json`) ve Canlı Tasarımcılar](#6-bölüm-4-sunucu-güdümlü-ekran-tasarımı-layoutsjson)
    - [6.1. Ekran Bileşenleri (Widgets) Kataloğu](#61-ekran-bileşenleri-widgets-kataloğu)
-   - [6.2. Canlı Ekran Tasarımı Editörü (`/ui/layouts`)](#62-canlı-ekran-tasarımı-editörü-uilayouts)
+   - [6.2. Canlı Ekran Tasarımı Editörü (`/ui-admin`)](#62-canlı-ekran-tasarımı-editörü-ui-admin)
+   - [6.3. Görsel İş Akışı ve Görev Tasarımcısı (`/workflow-admin`)](#63-görsel-iş-akışı-ve-görev-tasarımcısı-workflow-admin)
 7. [Bölüm 5: Dış Servis Simülasyonu (Mockoon) ve Başlangıç Verileri (Seeds)](#7-bölüm-5-dış-servis-simülasyonu-mockoon-ve-başlangıç-verileri-seeds)
 8. [Bölüm 6: Uçtan Uca Örnek Proje — "Tedarikçi Satınalma Talebi" Modülü](#8-bölüm-6-uçtan-uca-örnek-proje--tedarikçi-satınalma-talebi-modülü)
 9. [Kontrol Listesi ve Doğrulama Komutları](#9-kontrol-listesi-ve-doğrulama-komutları)
@@ -1206,11 +1207,39 @@ Tüm ekranlar `demo/Middt.Demo.Api/Layouts/*.json` altında tanımlanır ve `spe
 }
 ```
 
-### 6.2. Canlı Ekran Tasarımı Editörü (`/ui/layouts`)
+### 6.2. Canlı Ekran Tasarımı Editörü (`/ui-admin`)
 
-Sol menüdeki **Ekran Tasarımı** (`/ui/layouts`) sayfasından:
+Sol menüdeki **Ekran Tasarımı** (`/ui-admin`) sayfasından:
 - Sistemdeki tüm `Layouts/*.json` ekranlarını görüntüleyebilir,
-- JSON ağacını veya bileşen özelliklerini tarayıcıda düzenleyip **"Kaydet"** diyerek hem Blazor hem Angular'da **konteyner yeniden başlatmadan** anında devreye alabilirsiniz.
+- JSON ağacını veya bileşen özelliklerini tarayıcıda düzenleyip **"Kaydet"** diyerek hem Blazor (`:8080/ui-admin`) hem Angular (`:8081/ui-admin`) üzerinde **konteyner yeniden başlatmadan** anında devreye alabilirsiniz.
+
+### 6.3. Görsel İş Akışı ve Görev Tasarımcısı (`/workflow-admin`)
+
+Sol menüdeki **Akış Tasarımı** (`/workflow-admin`) sayfası, Citizen Developer'ların JSON ezberlemeden iş akışlarını ve 16 yerleşik görevi (`set`, `setKey`, `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `startWorkflow`, `http`, `publish`, `rabbitmq`, `operation`, `fanOut`, `cache`, `agent`, `mcp`, `log`) **sürükle-bırak (drag-and-drop)** yöntemiyle 2B tuval üzerinde çizip yapılandırmasını sağlayan 3 sütunlu bir stüdyodur:
+
+1. **Sol Sürükle-Bırak Bileşen Paleti (`middt-wf-palette`)**:
+   - **Durum Şablonları (Tuvale Sürükle)**: `👤 İnsan Görevi Durumu`, `⚙️ Otomatik Sistem Durumu`, `🔀 Alt İş Akışı Durumu`, `✅ Başarılı Bitiş Durumu`, `❌ Red / Hata Bitişi`, `🚫 İptal Bitiş Durumu` kartlarını sürükleyip 2B tuvalin istediğiniz `(x, y)` noktasına bırakarak yeni durum düğümü oluşturabilirsiniz.
+   - **16 Görev Bloğu (Durum veya Geçiş Üzerine Sürükle)**: Kategorilere ayrılmış ve aranabilir 16 yerleşik görevi paletten sürükleyerek:
+     - Herhangi bir durumun **`onEntry`** veya **`onExit`** bırakma alanına (dropzone),
+     - **`Başlangıç (start)`** düğümünün **`onExecute`** alanına,
+     - Tuval üzerindeki herhangi bir **SVG geçiş (transition) etiketinin** üzerine,
+     - Veya doğrudan **boş tuval alanına** (otomatik olarak o görevi içeren yeni bir sistem durumu oluşturur) bırakabilirsiniz.
+     - Mevcut görev haplarını da durumlar ve kancalar (`onEntry`, `onExit`, `onExecute`) arasında sürükleyip taşıyabilirsiniz.
+2. **Orta 2B Sürükle-Bırak Tuvali, Canlı Ok Çizimi ve Grup Seçimi (`middt-wf-board`)**:
+   - **Canlı Fare İle Ok Çizimi (`pointerdown` → `pointermove` → `pointerup`)**: Bir durumun sağındaki **çıkış noktasından (`●`)** fareyle basılı tutup sürüklediğinizde imlecinizi takip eden **canlı önizleme oku (SVG Bezier)** çizilir; hedef durumun üzerine bıraktığınızda ilişki (`transition`) anında kurulur.
+   - **Okları Seçme ve Tek Tıkla Silme**: Doğrudan SVG ok eğrisinin kendisine veya üzerindeki etikete tıklayarak oku seçebilirsiniz (`Shift/Ctrl/Cmd + Tık` ile birden fazla oku seçebilirsiniz). Her ok etiketinin sağındaki **`✕`** butonuyla veya klavyeden **`Delete` / `Backspace`** tuşuyla seçili okları silebilirsiniz.
+   - **Kutu Seçimi (Rubber-Band / Marquee Lasso) ve Gruplama**: Tuvalin boş bir alanına tıklayıp fareyi sürükleyerek **seçim dikdörtgeni (`middt-wf-lasso`)** çizebilir, kutunun içine giren tüm durumları ve geçiş oklarını tek seferde gruplayarak seçebilirsiniz (veya üst araç çubuğundaki **"Tümünü Seç"** butonunu kullanabilirsiniz).
+   - **Grup Taşıma, Hizalama, Çoğaltma ve Toplu Silme (`middt-wf-selection-bar`)**:
+     - Birden fazla durum seçiliyken herhangi birinin başlığından tutup sürüklediğinizde **tüm grup birlikte gerçek zamanlı olarak taşınır** ve bağlı tüm oklar canlı güncellenir.
+     - Çoklu seçim yapıldığında tuvalin üst kısmında yüzen **Grup İşlem Çubuğu** belirir: **`📐 Yatay Hizala`**, **`📐 Dikey Hizala`**, **`📑 Çoğalt`** (seçili durumları kopyalar) ve **`🗑️ Seçilenleri Sil`** (seçili tüm durumları, okları ve yetim kalan bağlantıları tek tıkla veya `Delete` tuşuyla siler).
+   - **Otomatik Hizalama & Yakınlaştırma**: **"Otomatik Hizala"** (`Auto-Layout`) butonu tüm düğümleri topolojik katmanlarına göre otomatik dizer; `Zoom (+/-)` ile tuvali yakınlaştırıp uzaklaştırabilirsiniz.
+3. **Sağ Bağlama Duyarlı Özellikler Denetçisi (`middt-wf-inspector`)**:
+   - Tuvalde bir **Göreve** tıkladığınızda: Görevin ortak ayarları (`key`, `when`, `background`, `onError.action`, `maxRetries`, `delay`, `transition`), sıra değiştirme (`↑`/`↓`) ve `GET /api/workflows/tasks` kataloğundan gelen tipe özel parametre kontrolleri açılır.
+   - Bir **Geçişe (Transition)** tıkladığınızda: `key`, `title`, `target`, `trigger` (`Manual`, `Automatic`, `Scheduled`, `Event`), `rule`, `description`, buton stili/rolleri, `default`, `after`, `event` ve `onExecute` görev listesi açılır.
+   - Bir **Duruma (State)** tıkladığınızda: `key` (değiştirildiğinde tüm geçiş referanslarını otomatik günceller), `title`, `type`, `subType`, `step`, `view.layout` ve çıkan geçişler açılır.
+4. **Veri Şeması (`dataSchema`) ve Çift Yönlü JSON Editörü**:
+   - **`🗂️ Veri Şeması (dataSchema)`** sekmesinden akış alanlarını (`string`, `number`, `integer`, `boolean`, `array`, `object`), maskeleme kuralını (`x-mask`), zorunluluğu (`required`), liste kolonunu (`x-list`) ve otomatik PostgreSQL indeks + arama filtresini (`x-search`) yönetebilirsiniz.
+   - **`{ } JSON Kodu`** sekmesi 2B tuvalle çift yönlü senkronizedir. **"Doğrula"** (`POST /api/workflows/validate`) tüm ifadeleri kontrol eder; **"Kaydet"** (`PUT /api/workflows/{workflow}/definition`) akışı bellekteki `WorkflowRegistry`'ye canlı yükler ve PostgreSQL bölüm/indekslerini otomatik oluşturur.
 
 ---
 

@@ -248,3 +248,34 @@ public sealed class WorkflowIncidentModel
     public DateTime CreatedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }
 }
+
+/// <summary>Parameter specification for a built-in or registered workflow task in the visual designer.</summary>
+public sealed class WorkflowTaskParamSpecModel
+{
+    public string Name { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Type { get; set; } = "string";
+    public bool Required { get; set; }
+    public string? DefaultValue { get; set; }
+    public List<string> Options { get; set; } = [];
+    public string Description { get; set; } = string.Empty;
+}
+
+/// <summary>Catalog specification of a workflow task exposed to the visual workflow designer (<c>GET /api/workflows/tasks</c>).</summary>
+public sealed class WorkflowTaskSpecModel
+{
+    public string Name { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Icon { get; set; } = "bolt";
+    public string Description { get; set; } = string.Empty;
+    public JsonObject Template { get; set; } = [];
+    public List<WorkflowTaskParamSpecModel> Params { get; set; } = [];
+}
+
+/// <summary>Result of validating a draft workflow definition (<c>POST /api/workflows/validate</c>).</summary>
+public sealed class WorkflowValidationResultModel
+{
+    public bool IsValid => Errors.Count == 0;
+    public List<string> Errors { get; set; } = [];
+}

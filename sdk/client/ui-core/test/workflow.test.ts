@@ -671,4 +671,39 @@ test('workflowBuildGraph computes layered nodes, current state, visited states, 
   assert.equal(graph.edges.find(e => e.id === 'active->kyc-scoring')?.isBackEdge, true);
 });
 
+test('workflow designer API methods: listTaskSpecs, getDefinitionJson, validateDefinition, saveDefinition', async () => {
+  const rawDef = { key: 'order-approval', version: 2, start: { key: 'start', target: 'customer' }, states: [{ key: 'customer', type: 'Finish' }] };
+  const { fetch, calls } = fakeFetch(
+    ok([{ name: 'set', title: 'Veri Ata (set)', category: 'Veri & Durum', icon: 'calculate', description: 'Set values', params: [], template: {} }]),
+    ok(rawDef),
+    ok(rawDef),
+    ok({ isValid: true, errors: [] }),
+    ok(definition),
+  );
+  const client = new WorkflowApiClient({ baseUrl: 'https://api.example.com', fetch });
+
+  const specs = await client.listTaskSpecs();
+  assert.equal(specs.data?.[0]?.name, 'set');
+
+  const raw1 = await client.getDefinitionJson('order-approval');
+  assert.equal(raw1.data?.['key'], 'order-approval');
+
+  await client.getDefinitionJson('order-approval', 1);
+
+  const validation = await client.validateDefinition(rawDef);
+  assert.equal(validation.data?.isValid, true);
+
+  const saved = await client.saveDefinition('order-approval', rawDef);
+  assert.equal(saved.data?.key, 'order-approval');
+
+  assert.deepEqual(calls.map(c => `${c.init.method} ${c.url}`), [
+    'GET https://api.example.com/api/workflows/tasks',
+    'GET https://api.example.com/api/workflows/order-approval/definition',
+    'GET https://api.example.com/api/workflows/order-approval/definition?version=1',
+    'POST https://api.example.com/api/workflows/validate',
+    'PUT https://api.example.com/api/workflows/order-approval/definition',
+  ]);
+});
+
+
 

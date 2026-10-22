@@ -34,7 +34,12 @@ export class MenuService {
 
   /** Recomputed only when the user (roles) changes, not on every change detection pass. */
   readonly fixedItems = computed<MenuItem[]>(() => [
-    ...(this.#auth.hasRole('ui-admin') ? [{ name: 'Ekran Tasarımı', path: '/ui-admin', icon: 'dashboard_customize' }] : []),
+    ...(this.#auth.hasRole('ui-admin')
+      ? [
+          { name: 'Ekran Tasarımı', path: '/ui-admin', icon: 'dashboard_customize' },
+          { name: 'Akış Tasarımı', path: '/workflow-admin', icon: 'schema' },
+        ]
+      : []),
   ]);
 
   async refresh(): Promise<void> {

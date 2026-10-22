@@ -424,9 +424,17 @@ export function workflowStepPrefill(data: WorkflowData | null | undefined, input
   return Object.keys(result).length > 0 ? result : null;
 }
 
-/** The inline (wizard step) transition of an active instance that does not wait for a subflow. */
+/** The inline (wizard step) transition of an active instance (or its active child subflow). */
 export function workflowStepTransition(instance: WorkflowInstanceModel | null | undefined): AvailableTransitionModel | null {
-  if (!instance || instance.status !== 'Active' || (instance.waitingForInstanceId ?? null) !== null) {
+  if (!instance || instance.status !== 'Active') {
+    return null;
+  }
+
+  if (instance.activeSubFlow) {
+    return instance.activeSubFlow.availableTransitions.find(t => t.inline === true) ?? null;
+  }
+
+  if ((instance.waitingForInstanceId ?? null) !== null) {
     return null;
   }
 
@@ -438,21 +446,27 @@ export function workflowIsPending(instance: WorkflowInstanceModel | null | undef
   return !!instance && (instance.status === 'Busy' || (instance.status === 'Active' && (instance.waitingForInstanceId ?? null) !== null));
 }
 
-/** Variables of a state's JSON layout: `data` (instance data) and `instance` (id, key, state, workflow, status, …). */
+/** Variables of a state's JSON layout: `data` (instance data, overlaid with activeSubFlow data when waiting on a subflow) and `instance` (id, key, state, workflow, status, …). */
 export function workflowLayoutVariables(instance: WorkflowInstanceModel): Record<string, unknown> {
+  const baseData = cloneJson(instance.data ?? {});
+  const mergedData =
+    instance.activeSubFlow?.data && isObject(baseData) && isObject(instance.activeSubFlow.data)
+      ? { ...baseData, ...cloneJson(instance.activeSubFlow.data) }
+      : baseData;
+
   return {
-    data: cloneJson(instance.data ?? {}),
+    data: mergedData,
     instance: {
       id: instance.id,
       key: instance.key ?? null,
-      state: instance.state,
-      stateTitle: instance.stateTitle ?? null,
-      workflow: instance.workflow,
+      state: instance.activeSubFlow?.state ?? instance.state,
+      stateTitle: instance.activeSubFlow?.stateTitle ?? instance.stateTitle ?? null,
+      workflow: instance.activeSubFlow?.workflow ?? instance.workflow,
       status: instance.status,
       startedBy: instance.startedBy ?? null,
-      agents: cloneJson(instance.agents ?? {}),
-      agentRuns: cloneJson(instance.agentRuns ?? []),
-      toolCalls: cloneJson(instance.toolCalls ?? []),
+      agents: cloneJson(instance.activeSubFlow?.agents ?? instance.agents ?? {}),
+      agentRuns: cloneJson(instance.activeSubFlow?.agentRuns ?? instance.agentRuns ?? []),
+      toolCalls: cloneJson(instance.activeSubFlow?.toolCalls ?? instance.toolCalls ?? []),
     },
   };
 }

@@ -184,6 +184,17 @@ public static class WorkflowPartitionManager
                 CONSTRAINT "PK_WorkflowAgentToolCalls" PRIMARY KEY ("Id", "WorkflowKey")
             ) PARTITION BY LIST ("WorkflowKey");
             """,
+            $"""
+            CREATE TABLE IF NOT EXISTS {validatedSchema}."WorkflowDefinitions" (
+                "Key" varchar(128) NOT NULL,
+                "Version" int NOT NULL,
+                "Title" varchar(256) NOT NULL,
+                "Content" jsonb NOT NULL,
+                "UpdatedBy" varchar(256),
+                "UpdatedAt" timestamptz NOT NULL,
+                CONSTRAINT "PK_WorkflowDefinitions" PRIMARY KEY ("Key", "Version")
+            );
+            """,
         };
 
         foreach (var sql in statements)

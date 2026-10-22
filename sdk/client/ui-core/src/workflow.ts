@@ -237,6 +237,31 @@ export interface WorkflowIncidentModel {
   resolvedAt?: string | null;
 }
 
+export interface WorkflowTaskParamSpecModel {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  defaultValue?: string | null;
+  options: string[];
+  description: string;
+}
+
+export interface WorkflowTaskSpecModel {
+  name: string;
+  title: string;
+  category: string;
+  icon: string;
+  description: string;
+  template: WorkflowData;
+  params: WorkflowTaskParamSpecModel[];
+}
+
+export interface WorkflowValidationResultModel {
+  isValid: boolean;
+  errors: string[];
+}
+
 /** Filter and paging of `listInstances` (defaults: page 1, 20 per page). */
 export interface WorkflowInstanceQuery {
   state?: string | null;
@@ -278,6 +303,27 @@ export class WorkflowApiClient extends ApiClientBase {
   /** Workflows the user may access (latest versions). */
   listWorkflows(signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowSummaryModel[]>> {
     return this.send('GET', this.routePrefix, undefined, signal);
+  }
+
+  /** Catalog of built-in workflow tasks and their parameter specifications for the visual designer. */
+  listTaskSpecs(signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowTaskSpecModel[]>> {
+    return this.send('GET', `${this.routePrefix}/tasks`, undefined, signal);
+  }
+
+  /** Full raw JSON definition of `workflow` for the visual workflow designer. */
+  getDefinitionJson(workflow: string, version?: number | null, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowData>> {
+    const suffix = version === undefined || version === null ? '' : query({ version: Math.trunc(version) });
+    return this.send('GET', `${this.workflowRoute(workflow)}/definition${suffix}`, undefined, signal);
+  }
+
+  /** Validates a draft workflow JSON document without saving it. */
+  validateDefinition(definition: WorkflowData, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowValidationResultModel>> {
+    return this.send('POST', `${this.routePrefix}/validate`, definition, signal);
+  }
+
+  /** Validates and saves a workflow JSON definition at runtime (requires `ui-admin` role). */
+  saveDefinition(workflow: string, definition: WorkflowData, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowData>> {
+    return this.send('PUT', `${this.workflowRoute(workflow)}/definition`, definition, signal);
   }
 
   /**

@@ -177,7 +177,11 @@
 
         @if (instance.waitingForInstanceId) {
           <div class="middt-wf-alert middt-wf-alert-info" role="status">
-            Alt akışın tamamlanması bekleniyor (<span class="middt-wf-mono">{{ instance.waitingForInstanceId }}</span>).
+            @if (instance.activeSubFlow; as sub) {
+              <span>🔗 Alt akış çalışıyor: <strong>{{ sub.workflow }}</strong> · Adım: <strong>{{ sub.stateTitle ?? sub.state }}</strong> (<span class="middt-wf-mono">{{ instance.waitingForInstanceId }}</span>)</span>
+            } @else {
+              <span>Alt akışın tamamlanması bekleniyor (<span class="middt-wf-mono">{{ instance.waitingForInstanceId }}</span>).</span>
+            }
           </div>
         }
 

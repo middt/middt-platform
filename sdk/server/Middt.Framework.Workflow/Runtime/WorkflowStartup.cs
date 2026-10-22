@@ -67,8 +67,29 @@ internal sealed class WorkflowStartup(
             await EnsureColumnsAsync(db, cancellationToken);
         }
 
+        await RestorePersistedDefinitionsAsync(db, registry, cancellationToken);
         await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, options.Value.Schema, logger, cancellationToken);
         await EnsureIndexesAsync(db, cancellationToken);
+    }
+
+    private static async Task RestorePersistedDefinitionsAsync(WorkflowDbContext db, WorkflowRegistry registry, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var rows = await db.Definitions
+                .AsNoTracking()
+                .OrderBy(d => d.Version)
+                .ToListAsync(cancellationToken);
+
+            foreach (var row in rows)
+            {
+                registry.RestorePersistedDefinition(row.Content);
+            }
+        }
+        catch
+        {
+            // Table may not exist on legacy non-migrated SQLite databases.
+        }
     }
 
     private static async Task EnsureWorkflowKeyMigrationAsync(WorkflowDbContext db, string? schemaName, CancellationToken cancellationToken)

@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Middt.Framework.Expressions;
+using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow.Expressions;
 using Middt.Framework.Workflow.Runtime;
 using Middt.Framework.Workflow.Schema;
@@ -18,6 +19,8 @@ public sealed class WorkflowRegistry
     private readonly WorkflowExpressionEngine expressions;
     private readonly WorkflowTaskRegistry tasks;
     private readonly Lock sync = new();
+    private readonly Dictionary<(string Key, int Version), (WorkflowDefinition Definition, JsonObject RawJson)> runtimeDefinitions = [];
+    private volatile Dictionary<(string Key, int Version), JsonObject>? rawJsonByVersion;
     private volatile IReadOnlyDictionary<string, SortedList<int, WorkflowDefinition>>? currentDefinitions;
 
     public WorkflowRegistry(IServiceProvider services, IOptions<MiddtWorkflowOptions> options, WorkflowExpressionEngine expressions, WorkflowTaskRegistry tasks)
@@ -39,7 +42,14 @@ public sealed class WorkflowRegistry
 
             lock (sync)
             {
-                return currentDefinitions ??= Load(services, options.Value, expressions, tasks);
+                if (currentDefinitions is null)
+                {
+                    var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
+                    rawJsonByVersion = rawMap;
+                    currentDefinitions = loaded;
+                }
+
+                return currentDefinitions;
             }
         }
     }
@@ -52,7 +62,9 @@ public sealed class WorkflowRegistry
     {
         lock (sync)
         {
-            currentDefinitions = Load(services, options.Value, expressions, tasks);
+            var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
+            rawJsonByVersion = rawMap;
+            currentDefinitions = loaded;
         }
     }
 
@@ -74,21 +86,185 @@ public sealed class WorkflowRegistry
             ? definition
             : throw new WorkflowNotFoundException($"Workflow '{key}' version {version} does not exist.");
 
-    private static Dictionary<string, SortedList<int, WorkflowDefinition>> Load(
+    /// <summary>Returns a deep-cloned <see cref="JsonObject"/> of the full workflow definition for the visual designer.</summary>
+    public JsonObject GetJson(string key, int? version = null)
+    {
+        var def = version is { } v ? Get(key, v) : GetLatest(key);
+        if (rawJsonByVersion is { } rawMap && rawMap.TryGetValue((def.Key, def.Version), out var raw))
+        {
+            return (JsonObject)raw.DeepClone();
+        }
+
+        return JsonSerializer.SerializeToNode(def, WorkflowJson.Options) as JsonObject ?? [];
+    }
+
+    /// <summary>Validates a draft workflow JSON document without registering it.</summary>
+    public WorkflowValidationResultModel ValidateJson(JsonNode? node)
+    {
+        if (node is not JsonObject obj)
+        {
+            return new WorkflowValidationResultModel { Errors = ["Workflow definition must be a JSON object."] };
+        }
+
+        WorkflowDefinition? definition;
+        try
+        {
+            definition = obj.Deserialize<WorkflowDefinition>(WorkflowJson.Options);
+        }
+        catch (JsonException ex)
+        {
+            return new WorkflowValidationResultModel { Errors = [$"Invalid JSON: {ex.Message}"] };
+        }
+
+        if (definition is null || string.IsNullOrWhiteSpace(definition.Key))
+        {
+            return new WorkflowValidationResultModel { Errors = ["'key' is required."] };
+        }
+
+        if (definition.Version < 1)
+        {
+            definition.Version = 1;
+        }
+
+        var existingKeys = Definitions;
+        using var scope = services.CreateScope();
+        var errors = WorkflowDefinitionValidator.Validate(
+            definition,
+            expressions,
+            tasks,
+            scope.ServiceProvider,
+            k => string.Equals(k, definition.Key, StringComparison.Ordinal) || existingKeys.ContainsKey(k)).ToList();
+
+        return new WorkflowValidationResultModel { Errors = errors };
+    }
+
+    /// <summary>Validates and registers/updates a workflow definition at runtime without restarting the application.</summary>
+    public (WorkflowDefinition Definition, JsonObject RawJson) Save(JsonObject rawJson)
+    {
+        ArgumentNullException.ThrowIfNull(rawJson);
+
+        var clone = (JsonObject)rawJson.DeepClone();
+        var key = clone["key"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            throw new WorkflowValidationException(["'key' is required."]);
+        }
+
+        var existingLatestVersion = Definitions.TryGetValue(key, out var existingVersions) && existingVersions.Count > 0
+            ? existingVersions.Keys[^1]
+            : 0;
+        var requestedVersion = clone["version"]?.GetValue<int>() ?? 0;
+        var targetVersion = requestedVersion > 0 ? requestedVersion : existingLatestVersion + 1;
+        clone["version"] = targetVersion;
+
+        var validation = ValidateJson(clone);
+        if (!validation.IsValid)
+        {
+            throw new WorkflowValidationException(validation.Errors);
+        }
+
+        var definition = clone.Deserialize<WorkflowDefinition>(WorkflowJson.Options)!;
+        lock (sync)
+        {
+            runtimeDefinitions[(definition.Key, definition.Version)] = (definition, clone);
+            TryWriteDefinitionFile(definition.Key, clone);
+            var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
+            rawJsonByVersion = rawMap;
+            currentDefinitions = loaded;
+        }
+
+        return (definition, (JsonObject)clone.DeepClone());
+    }
+
+    /// <summary>Restores a persisted workflow definition loaded from <c>wf.WorkflowDefinitions</c> on startup.</summary>
+    internal void RestorePersistedDefinition(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonObject rawObj)
+            {
+                return;
+            }
+
+            var definition = rawObj.Deserialize<WorkflowDefinition>(WorkflowJson.Options);
+            if (definition is null || string.IsNullOrWhiteSpace(definition.Key))
+            {
+                return;
+            }
+
+            if (definition.Version < 1)
+            {
+                definition.Version = 1;
+            }
+
+            lock (sync)
+            {
+                runtimeDefinitions[(definition.Key, definition.Version)] = (definition, rawObj);
+                var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
+                rawJsonByVersion = rawMap;
+                currentDefinitions = loaded;
+            }
+        }
+        catch
+        {
+            // Invalid persisted rows are ignored so startup never crashes on a legacy draft.
+        }
+    }
+
+    private void TryWriteDefinitionFile(string key, JsonObject rawJson)
+    {
+        var dir = options.Value.DefinitionsDirectory;
+        if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+        {
+            return;
+        }
+
+        var safeFileName = Path.GetFileName(key);
+        if (string.IsNullOrWhiteSpace(safeFileName) || safeFileName != key)
+        {
+            return;
+        }
+
+        try
+        {
+            var filePath = Path.Combine(dir, $"{safeFileName}.json");
+            var formatted = rawJson.ToJsonString(new JsonSerializerOptions(WorkflowJson.Options) { WriteIndented = true });
+            File.WriteAllText(filePath, formatted);
+        }
+        catch
+        {
+            // Container filesystems may be read-only; PostgreSQL (wf.WorkflowDefinitions) is the primary store.
+        }
+    }
+
+    private static (Dictionary<string, SortedList<int, WorkflowDefinition>> Definitions, Dictionary<(string Key, int Version), JsonObject> RawMap) Load(
         IServiceProvider services,
         MiddtWorkflowOptions options,
         WorkflowExpressionEngine expressions,
-        WorkflowTaskRegistry tasks)
+        WorkflowTaskRegistry tasks,
+        Dictionary<(string Key, int Version), (WorkflowDefinition Definition, JsonObject RawJson)> runtimeOverrides)
     {
         var errors = new List<string>();
         var result = new Dictionary<string, SortedList<int, WorkflowDefinition>>(StringComparer.Ordinal);
+        var rawMap = new Dictionary<(string Key, int Version), JsonObject>();
 
         foreach (var (source, json) in options.DefinitionSources.SelectMany(s => s(services)))
         {
             WorkflowDefinition? definition;
+            JsonObject? rawObj = null;
             try
             {
                 definition = JsonSerializer.Deserialize<WorkflowDefinition>(json, WorkflowJson.Options);
+                rawObj = JsonNode.Parse(json, documentOptions: new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true,
+                }) as JsonObject;
             }
             catch (JsonException ex)
             {
@@ -111,7 +287,25 @@ public sealed class WorkflowRegistry
             if (!versions.TryAdd(definition.Version, definition))
             {
                 errors.Add($"{source}: workflow '{definition.Key}' version {definition.Version} is defined twice.");
+                continue;
             }
+
+            if (rawObj is not null)
+            {
+                rawMap[(definition.Key, definition.Version)] = rawObj;
+            }
+        }
+
+        foreach (var ((key, version), (definition, rawObj)) in runtimeOverrides)
+        {
+            if (!result.TryGetValue(key, out var versions))
+            {
+                versions = [];
+                result[key] = versions;
+            }
+
+            versions[version] = definition;
+            rawMap[(key, version)] = (JsonObject)rawObj.DeepClone();
         }
 
         // Tasks are resolved for their Validate method: use a scope, application tasks usually depend on scoped services.
@@ -122,7 +316,7 @@ public sealed class WorkflowRegistry
                 .Select(e => $"{definition.Key} v{definition.Version}: {e}"));
         }
 
-        return errors.Count > 0 ? throw new WorkflowDefinitionException(errors) : result;
+        return errors.Count > 0 ? throw new WorkflowDefinitionException(errors) : (result, rawMap);
     }
 }
 
@@ -296,6 +490,11 @@ internal static class WorkflowDefinitionValidator
             if (state.IsFinal && state.Transitions.Count > 0)
             {
                 yield return $"{where}: finish states cannot have transitions.";
+            }
+
+            if (state.IsFinal && state.OnExit.Count > 0)
+            {
+                yield return $"{where}: finish states cannot have onExit tasks.";
             }
 
             if (state.Type == StateType.SubFlow)

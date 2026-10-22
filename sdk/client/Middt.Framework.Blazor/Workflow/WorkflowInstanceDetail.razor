@@ -100,7 +100,14 @@
             @if (instance.WaitingForInstanceId is { } child)
             {
                 <RadzenAlert AlertStyle="AlertStyle.Info" Variant="Variant.Flat" Shade="Shade.Lighter" AllowClose="false">
-                    Alt akışın tamamlanması bekleniyor (<span class="middt-wf-mono">@child</span>).
+                    @if (instance.ActiveSubFlow is { } sub)
+                    {
+                        <span>🔗 Alt akış çalışıyor: <strong>@sub.Workflow</strong> · Adım: <strong>@(sub.StateTitle ?? sub.State)</strong> (<span class="middt-wf-mono">@child</span>)</span>
+                    }
+                    else
+                    {
+                        <span>Alt akışın tamamlanması bekleniyor (<span class="middt-wf-mono">@child</span>).</span>
+                    }
                 </RadzenAlert>
             }
 

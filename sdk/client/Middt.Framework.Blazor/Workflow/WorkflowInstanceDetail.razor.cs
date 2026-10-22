@@ -169,12 +169,35 @@ public partial class WorkflowInstanceDetail
         // Instances keep running on the definition version they were started with.
         definition = await GetDefinitionAsync(instance.WorkflowVersion);
 
-        var inline = instance.Status == WorkflowInstanceStatus.Active && instance.WaitingForInstanceId is null
-            ? instance.AvailableTransitions.FirstOrDefault(t => t.Inline)
+        var inline = instance.Status == WorkflowInstanceStatus.Active
+            ? (instance.ActiveSubFlow?.AvailableTransitions.FirstOrDefault(t => t.Inline)
+               ?? (instance.WaitingForInstanceId is null ? instance.AvailableTransitions.FirstOrDefault(t => t.Inline) : null))
             : null;
-        stepPrefill = inline is null ? null : WorkflowUi.StepPrefill(instance.Data, inline.InputInto, inline.InputSchema);
+        var activeData = instance.ActiveSubFlow?.Data ?? instance.Data;
+        stepPrefill = inline is null ? null : WorkflowUi.StepPrefill(activeData, inline.InputInto, inline.InputSchema);
         stepTransition = inline;
         stepErrors = [];
+    }
+
+    private IReadOnlyList<AvailableTransitionModel> AllAvailableTransitions
+    {
+        get
+        {
+            if (instance is null)
+            {
+                return [];
+            }
+
+            var parentTrs = instance.AvailableTransitions;
+            var childTrs = instance.ActiveSubFlow?.AvailableTransitions;
+            if (childTrs is not { Count: > 0 })
+            {
+                return parentTrs;
+            }
+
+            var seen = childTrs.Select(t => t.Key).ToHashSet(StringComparer.Ordinal);
+            return [.. childTrs, .. parentTrs.Where(t => !seen.Contains(t.Key))];
+        }
     }
 
     private async Task<WorkflowDefinitionModel?> GetDefinitionAsync(int version)
@@ -220,26 +243,35 @@ public partial class WorkflowInstanceDetail
         get
         {
             var key = instance is null ? default(LayoutVariablesKey?)
-                : new LayoutVariablesKey(instance.Id, instance.DataVersion, instance.AgentRuns.Count, instance.UpdatedAt, instance.Layout, instance.Key, instance.State, instance.StateTitle, instance.Workflow, instance.Status, instance.StartedBy);
+                : new LayoutVariablesKey(instance.Id, instance.DataVersion, instance.ActiveSubFlow?.DataVersion ?? 0, instance.AgentRuns.Count, instance.UpdatedAt, instance.Layout, instance.Key, instance.State, instance.StateTitle, instance.Workflow, instance.Status, instance.StartedBy);
             if (layoutVariables is null || layoutVariablesKey != key)
             {
                 layoutVariablesKey = key;
-                availableTransitionKeys = instance?.AvailableTransitions.Select(t => t.Key).ToHashSet(StringComparer.Ordinal) ?? [];
+                availableTransitionKeys = AllAvailableTransitions.Select(t => t.Key).ToHashSet(StringComparer.Ordinal);
+                var mergedData = instance?.Data.DeepClone() as JsonObject;
+                if (mergedData is not null && instance?.ActiveSubFlow?.Data is { } subData)
+                {
+                    foreach (var (k, v) in subData)
+                    {
+                        mergedData[k] = v?.DeepClone();
+                    }
+                }
+
                 layoutVariables = new Dictionary<string, JsonNode?>
                 {
-                    ["data"] = instance?.Data.DeepClone(),
+                    ["data"] = mergedData,
                     ["instance"] = instance is null ? null : new JsonObject
                     {
                         ["id"] = instance.Id.ToString(),
                         ["key"] = instance.Key,
-                        ["state"] = instance.State,
-                        ["stateTitle"] = instance.StateTitle,
-                        ["workflow"] = instance.Workflow,
+                        ["state"] = instance.ActiveSubFlow?.State ?? instance.State,
+                        ["stateTitle"] = instance.ActiveSubFlow?.StateTitle ?? instance.StateTitle,
+                        ["workflow"] = instance.ActiveSubFlow?.Workflow ?? instance.Workflow,
                         ["status"] = instance.Status.ToString(),
                         ["startedBy"] = instance.StartedBy,
-                        ["agents"] = instance.Agents.DeepClone(),
-                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.AgentRuns, System.Text.Json.JsonSerializerOptions.Web),
-                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ToolCalls, System.Text.Json.JsonSerializerOptions.Web),
+                        ["agents"] = (instance.ActiveSubFlow?.Agents ?? instance.Agents).DeepClone(),
+                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ActiveSubFlow?.AgentRuns ?? instance.AgentRuns, System.Text.Json.JsonSerializerOptions.Web),
+                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ActiveSubFlow?.ToolCalls ?? instance.ToolCalls, System.Text.Json.JsonSerializerOptions.Web),
                     },
                 };
             }
@@ -259,7 +291,7 @@ public partial class WorkflowInstanceDetail
 
     private Task ExecuteLayoutTransitionAsync(string transitionKey, JsonObject? input)
     {
-        if (executing || instance?.AvailableTransitions.FirstOrDefault(t => t.Key == transitionKey) is not { } transition)
+        if (executing || AllAvailableTransitions.FirstOrDefault(t => t.Key == transitionKey) is not { } transition)
         {
             return Task.CompletedTask;
         }
@@ -272,14 +304,14 @@ public partial class WorkflowInstanceDetail
     private LayoutVariablesKey? layoutVariablesKey;
 
     private readonly record struct LayoutVariablesKey(
-        Guid Id, int DataVersion, int AgentRunCount, DateTime UpdatedAt, string? Layout, string? Key, string State, string? StateTitle, string Workflow, WorkflowInstanceStatus Status, string? StartedBy);
+        Guid Id, int DataVersion, int SubFlowDataVersion, int AgentRunCount, DateTime UpdatedAt, string? Layout, string? Key, string State, string? StateTitle, string Workflow, WorkflowInstanceStatus Status, string? StartedBy);
 
     /// <summary>Whether a step form is rendered inside the screen (wizard).</summary>
     private bool ShowStepForm => stepTransition is not null && instance is not null;
 
     /// <summary>Transitions shown as buttons: all available ones with <see cref="AvailableTransitionModel.Toolbar"/> enabled except the inline step transition.</summary>
     private IEnumerable<AvailableTransitionModel> ButtonTransitions =>
-        instance?.AvailableTransitions.Where(t => !ReferenceEquals(t, stepTransition) && t.Toolbar) ?? [];
+        AllAvailableTransitions.Where(t => !ReferenceEquals(t, stepTransition) && t.Toolbar);
 
     /// <summary>Next to a step form, transitions without input (e.g. "Geri") run directly; others open their dialog.</summary>
     private bool RunsDirectly(AvailableTransitionModel transition) => ShowStepForm && !HasInput(transition);

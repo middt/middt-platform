@@ -154,10 +154,27 @@ export class MiddtWorkflowInstanceDetailComponent {
 
   protected readonly pendingHasInput = computed(() => schemaHasInput(this.pendingTransition()?.inputSchema));
 
+  /** All transitions available on the instance or its active child subflow. */
+  protected readonly allAvailableTransitions = computed<AvailableTransitionModel[]>(() => {
+    const inst = this.instance();
+    if (!inst) {
+      return [];
+    }
+
+    const parentTrs = inst.availableTransitions ?? [];
+    const childTrs = inst.activeSubFlow?.availableTransitions ?? [];
+    if (childTrs.length === 0) {
+      return parentTrs;
+    }
+
+    const seen = new Set(childTrs.map(t => t.key));
+    return [...childTrs, ...parentTrs.filter(t => !seen.has(t.key))];
+  });
+
   /** Transitions shown as buttons: all available ones with `toolbar` enabled except the inline step transition. */
   protected readonly buttonTransitions = computed(() => {
     const step = this.stepTransition();
-    return (this.instance()?.availableTransitions ?? []).filter(t => t !== step && t.toolbar !== false);
+    return this.allAvailableTransitions().filter(t => t !== step && t.toolbar !== false);
   });
   /** Next to a step form, transitions without input (e.g. "Geri") run directly; others open their dialog. */
   protected readonly directTransitions = computed(() => this.buttonTransitions().filter(t => this.#runsDirectly(t)));
@@ -167,13 +184,13 @@ export class MiddtWorkflowInstanceDetailComponent {
     const instance = this.instance();
     return instance === null ? {} : workflowLayoutVariables(instance);
   });
-  protected readonly availableTransitionKeys = computed(() => new Set((this.instance()?.availableTransitions ?? []).map(t => t.key)));
+  protected readonly availableTransitionKeys = computed(() => new Set(this.allAvailableTransitions().map(t => t.key)));
   protected readonly executeLayoutTransition = (transitionKey: string, input: Record<string, unknown> | null): void => {
     if (this.executing()) {
       return;
     }
 
-    const transition = (this.instance()?.availableTransitions ?? []).find(t => t.key === transitionKey);
+    const transition = this.allAvailableTransitions().find(t => t.key === transitionKey);
     if (transition !== undefined) {
       void this.#execute(transition, input, false);
     }

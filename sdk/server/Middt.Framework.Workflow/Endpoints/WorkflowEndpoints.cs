@@ -49,12 +49,95 @@ public static class WorkflowEndpoints
         {
             var user = WorkflowUser.From(principal);
             var items = registry.Latest
-                .Where(d => d.Roles.Count == 0 || d.Roles.Any(user.IsInRole))
+                .Where(d => d.Roles.Count == 0 || d.Roles.Any(user.IsInRole) || user.IsInRole("ui-admin"))
                 .Select(d => new WorkflowSummaryModel { Key = d.Key, Version = d.Version, Title = d.Title, Icon = d.Icon })
                 .OrderBy(d => d.Key, StringComparer.Ordinal)
                 .ToList();
             return BaseResponseDataModel<List<WorkflowSummaryModel>>.Success(items, items.Count);
         }).WithName("ListWorkflows");
+
+        group.MapGet("tasks", () =>
+        {
+            var items = WorkflowTaskCatalog.All.ToList();
+            return BaseResponseDataModel<List<WorkflowTaskSpecModel>>.Success(items, items.Count);
+        }).WithName("ListWorkflowTaskSpecs");
+
+        group.MapPost("validate", (JsonNode? definition, WorkflowRegistry registry) =>
+        {
+            var result = registry.ValidateJson(definition);
+            return BaseResponseDataModel<WorkflowValidationResultModel>.Success(result, 1);
+        }).WithName("ValidateWorkflowDefinition");
+
+        group.MapGet("{workflow}/definition", (string workflow, int? version, WorkflowRegistry registry, ClaimsPrincipal principal) =>
+        {
+            var definition = version is { } v ? registry.Get(workflow, v) : registry.GetLatest(workflow);
+            var user = WorkflowUser.From(principal);
+            if (definition.Roles.Count > 0 && !definition.Roles.Any(user.IsInRole) && !user.IsInRole("ui-admin"))
+            {
+                throw new WorkflowForbiddenException($"You are not allowed to access workflow '{workflow}'.");
+            }
+
+            return BaseResponseDataModel<JsonObject>.Success(registry.GetJson(workflow, version), 1);
+        }).WithName("GetWorkflowDefinitionJson");
+
+        group.MapPut("{workflow}/definition", async (string workflow, JsonObject definition, WorkflowRegistry registry, Persistence.WorkflowDbContext db, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var user = WorkflowUser.From(principal);
+            if (requireAuthorization && !user.IsInRole("ui-admin"))
+            {
+                throw new WorkflowForbiddenException("Saving workflow definitions requires the 'ui-admin' role.");
+            }
+
+            var key = definition["key"]?.GetValue<string>()?.Trim();
+            if (!string.Equals(workflow, key, StringComparison.Ordinal))
+            {
+                throw new WorkflowValidationException(["The route workflow key and the definition 'key' differ."]);
+            }
+
+            var (savedDef, savedJson) = registry.Save(definition);
+
+            var serialized = savedJson.ToJsonString(WorkflowJson.Options);
+            var existingRecord = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                db.Definitions,
+                d => d.Key == savedDef.Key && d.Version == savedDef.Version,
+                ct);
+
+            if (existingRecord is null)
+            {
+                db.Definitions.Add(new Persistence.WorkflowDefinitionRecord
+                {
+                    Key = savedDef.Key,
+                    Version = savedDef.Version,
+                    Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title,
+                    Content = serialized,
+                    UpdatedBy = user.Id,
+                    UpdatedAt = DateTime.UtcNow,
+                });
+            }
+            else
+            {
+                existingRecord.Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title;
+                existingRecord.Content = serialized;
+                existingRecord.UpdatedBy = user.Id;
+                existingRecord.UpdatedAt = DateTime.UtcNow;
+            }
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch
+            {
+                // Ignore if in-memory test database did not create the definitions table yet.
+            }
+
+            if (db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true)
+            {
+                await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, workflowOptions.Value.Schema, null, ct);
+            }
+
+            return BaseResponseDataModel<JsonObject>.Success(savedJson, 1);
+        }).WithName("SaveWorkflowDefinitionJson");
 
         group.MapGet("{workflow}", (string workflow, int? version, WorkflowRegistry registry, ClaimsPrincipal principal) =>
         {

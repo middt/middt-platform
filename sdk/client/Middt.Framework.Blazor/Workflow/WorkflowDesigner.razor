@@ -1,0 +1,3576 @@
+@namespace Middt.Framework.Blazor.Workflow
+@using System.Globalization
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Microsoft.Extensions.DependencyInjection
+@using Middt.Framework.Blazor.Ui
+@using Middt.Framework.Client.Http
+@using Middt.Framework.Model.Workflow
+@using Middt.Framework.Ui.Model
+
+<div class="middt-wf-studio" data-testid="workflow-designer">
+    @* Top Studio Toolbar *@
+    <RadzenCard>
+        <div class="middt-ui-toolbar" style="justify-content: space-between">
+            <div class="middt-ui-toolbar">
+                <label for="wf-select" style="font-weight: 600; font-size: .88rem">İş Akışı:</label>
+                <select id="wf-select" class="middt-wf-input" style="width: 240px"
+                        value="@(selectedWorkflowKey ?? "")"
+                        @onchange="@(e => OnSelectWorkflowAsync(e.Value?.ToString()))">
+                    @if (selectedWorkflowKey is null)
+                    {
+                        <option value="">-- Yeni İş Akışı --</option>
+                    }
+                    @foreach (var wf in workflows)
+                    {
+                        <option value="@wf.Key">@(wf.Title ?? wf.Key) (@wf.Key · v@(wf.Version))</option>
+                    }
+                </select>
+                <RadzenButton Icon="add" Text="Yeni Akış" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light" Click="NewWorkflow" />
+                <span class="middt-ui-badge middt-ui-badge-info">v@(GetInt(doc, "version", 1))</span>
+            </div>
+
+            <div class="middt-wf-tabs" style="margin: 0; border: 0; padding: 0" role="tablist">
+                <button type="button" class="@(activeTab == "visual" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                        @onclick="@(() => SwitchTab("visual"))">
+                    🎨 Sürükle-Bırak Tuval
+                </button>
+                <button type="button" class="@(activeTab == "schema" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                        @onclick="@(() => SwitchTab("schema"))">
+                    🗂️ Veri Şeması (dataSchema)
+                </button>
+                <button type="button" class="@(activeTab == "json" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                        @onclick="@(() => SwitchTab("json"))">
+                    { } JSON Kodu
+                </button>
+                <button type="button" class="middt-wf-tab"
+                        title="Bu iş akışının ekranlarını doğrudan tasarla veya yeni ekran oluştur"
+                        @onclick="OpenToolbarScreenDesigner">
+                    🖥️ Ekran Tasarımcısı
+                </button>
+            </div>
+
+            <div class="middt-ui-toolbar">
+                @if (activeTab == "visual")
+                {
+                    <RadzenButton Icon="select_all" Text="Tümünü Seç" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small" Click="SelectAllOnBoard" />
+                    <RadzenButton Icon="auto_fix_high" Text="Otomatik Hizala" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small" Click="AutoLayoutBoard" />
+                    <RadzenButton Icon="zoom_out" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small" Click="@(() => ChangeZoom(-0.1))" />
+                    <span style="font-size: .8rem; font-weight: 600; min-width: 42px; text-align: center">@(Math.Round(zoom * 100))%</span>
+                    <RadzenButton Icon="zoom_in" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small" Click="@(() => ChangeZoom(0.1))" />
+                }
+                <RadzenButton Icon="rule" Text="Doğrula" ButtonStyle="ButtonStyle.Secondary" Size="ButtonSize.Small" Click="ValidateAsync" />
+                <RadzenButton Icon="save" Text="Kaydet" Size="ButtonSize.Small" Click="SaveAsync" IsBusy="busy" />
+            </div>
+        </div>
+
+        @if (errors.Count > 0)
+        {
+            <div class="middt-ui-alert middt-ui-alert-danger rz-mt-2" role="alert">
+                <strong>@errors.Count doğrulama hatası:</strong>
+                <ul class="middt-ui-list">
+                    @foreach (var err in errors)
+                    {
+                        <li>@err</li>
+                    }
+                </ul>
+            </div>
+        }
+        else if (validMessage is not null)
+        {
+            <div class="middt-ui-alert middt-ui-alert-success rz-mt-2" role="status">@validMessage</div>
+        }
+    </RadzenCard>
+
+    @if (activeTab == "visual")
+    {
+        <div class="middt-wf-studio-body">
+            @* 1. Left Drag & Drop Palette *@
+            <aside class="middt-wf-palette" aria-label="Sürükle bırak bileşen paleti">
+                <div class="middt-wf-palette-group">
+                    <div class="middt-wf-palette-group-title">📍 Durumlar (Tuvale Sürükle)</div>
+                    @foreach (var stTpl in StateTemplates)
+                    {
+                        <div class="middt-wf-palette-chip"
+                             draggable="true"
+                             title="Tuvale sürükleyip bırakın veya çift tıklayın"
+                             @ondragstart="@(e => StartPaletteStateDrag(e, stTpl.Type, stTpl.SubType, stTpl.DefaultTitle))"
+                             @ondblclick="@(() => AddStateAtDefaultPos(stTpl.Type, stTpl.SubType, stTpl.DefaultTitle))">
+                            <span class="middt-wf-palette-chip-icon">@stTpl.Icon</span>
+                            <div class="middt-wf-palette-chip-text">
+                                <strong>@stTpl.Label</strong>
+                                <small>@stTpl.Type / @stTpl.SubType</small>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <hr class="middt-ui-divider" />
+
+                <div class="middt-wf-palette-group">
+                    <div class="middt-wf-palette-group-title">⚡ Görevler (Durum / Oka Sürükle)</div>
+                    <input class="middt-wf-input" placeholder="Görev ara (set, http, agent...)" @bind="paletteFilter" @bind:event="oninput" />
+                    @foreach (var grp in FilteredTaskGroups())
+                    {
+                        <div class="middt-wf-palette-group-title">@grp.Key</div>
+                        @foreach (var spec in grp)
+                        {
+                            <div class="middt-wf-palette-chip"
+                                 draggable="true"
+                                 title="@spec.Description — Bir durumun veya geçiş okunun üzerine sürükleyin"
+                                 @ondragstart="@(e => StartPaletteTaskDrag(e, spec.Name))"
+                                 @ondblclick="@(() => QuickAddTaskToSelection(spec.Name))">
+                                <span class="middt-wf-palette-chip-icon">⚡</span>
+                                <div class="middt-wf-palette-chip-text">
+                                    <strong>@spec.Title</strong>
+                                    <small>@spec.Name</small>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </aside>
+
+            @* 2. Center 2D Interactive SVG + Nodes Board *@
+            <div class="@GetViewportClass()"
+                 tabindex="0"
+                 aria-label="2B İş Akışı Çizim Tuvali"
+                 style="background-position: @(F(panX))px @(F(panY))px"
+                 @onpointerdown="OnViewportPointerDown"
+                 @onpointermove="OnBoardPointerMove"
+                 @onpointerup="OnBoardPointerUp"
+                 @onkeydown="OnCanvasKeyDown">
+
+                @* Floating Tool Mode Dock (Pointer/Select vs Hand/Pan) *@
+                <div class="middt-wf-tool-dock" @onpointerdown:stopPropagation="true">
+                    <button type="button"
+                            class="@(toolMode == "select" ? "middt-wf-tool-btn middt-wf-tool-btn-active" : "middt-wf-tool-btn")"
+                            title="İmleç / Seçim Modu: Nesnelere odaklanın, boş alanda basılı tutup kutu çizerek çoklu seçin veya nesneleri taşıyın"
+                            @onclick="@(() => toolMode = "select")">
+                        🖱️ Seç / Odakla
+                    </button>
+                    <button type="button"
+                            class="@(toolMode == "pan" ? "middt-wf-tool-btn middt-wf-tool-btn-active" : "middt-wf-tool-btn")"
+                            title="El Aracı (Kaydırma Modu): Sol tuşa basılı tutarak çizim alanını sola, sağa, yukarı ve aşağı kaydırın"
+                            @onclick="@(() => toolMode = "pan")">
+                        ✋ El Aracı (Kaydır)
+                    </button>
+                    <button type="button"
+                            class="middt-wf-tool-btn"
+                            title="Görünümü ve yakınlaştırmayı merkeze sıfırla"
+                            @onclick="ResetViewport">
+                        🎯 Merkeze Al
+                    </button>
+                </div>
+
+                @* Floating Multi-Selection & Group Action Bar *@
+                @if (selectedNodeKeys.Count > 0 || selectedEdgeIds.Count > 0)
+                {
+                    <div class="middt-wf-selection-bar" @onpointerdown:stopPropagation="true">
+                        <span>
+                            📦
+                            @if (selectedNodeKeys.Count > 0)
+                            {
+                                <strong>@selectedNodeKeys.Count Durum</strong>
+                            }
+                            @if (selectedNodeKeys.Count > 0 && selectedEdgeIds.Count > 0)
+                            {
+                                <span> · </span>
+                            }
+                            @if (selectedEdgeIds.Count > 0)
+                            {
+                                <strong>@selectedEdgeIds.Count Ok</strong>
+                            }
+                            seçili
+                        </span>
+
+                        @if (selectedNodeKeys.Count > 1)
+                        {
+                            <button type="button" class="middt-wf-selection-btn" title="Seçili durumları yatay hizala" @onclick="AlignSelectedHorizontal">
+                                📐 Yatay Hizala
+                            </button>
+                            <button type="button" class="middt-wf-selection-btn" title="Seçili durumları dikey hizala" @onclick="AlignSelectedVertical">
+                                📐 Dikey Hizala
+                            </button>
+                        }
+                        @if (selectedNodeKeys.Count(k => k != StartNodeKey) > 0)
+                        {
+                            <button type="button" class="middt-wf-selection-btn" title="Seçili durumları çoğalt" @onclick="DuplicateSelectedStates">
+                                📑 Çoğalt
+                            </button>
+                        }
+                        <button type="button" class="middt-wf-selection-btn middt-wf-selection-btn-danger" title="Seçili tüm durumları ve okları sil (Delete)" @onclick="DeleteSelection">
+                            🗑️ Seçilenleri Sil (@(selectedNodeKeys.Count(k => k != StartNodeKey) + selectedEdgeIds.Count))
+                        </button>
+                        <button type="button" class="middt-wf-selection-btn" title="Seçimi temizle (Esc)" @onclick="ClearSelection">
+                            ✕ Temizle
+                        </button>
+                    </div>
+                }
+
+                <div class="middt-wf-board"
+                     style="transform: translate(@(F(panX))px, @(F(panY))px) scale(@zoom.ToString("0.##", CultureInfo.InvariantCulture))"
+                     @onpointerdown:stopPropagation="true"
+                     @onpointerdown="OnBoardPointerDown"
+                     @ondragover="OnBoardDragOver"
+                     @ondragover:preventDefault="true"
+                     @ondrop="OnBoardDrop">
+
+                    @* Rubber-Band / Marquee Box Selection Overlay *@
+                    @if (pointerMode == "lasso")
+                    {
+                        var lx = Math.Min(lassoStartX, lassoCurrentX);
+                        var ly = Math.Min(lassoStartY, lassoCurrentY);
+                        var lw = Math.Abs(lassoCurrentX - lassoStartX);
+                        var lh = Math.Abs(lassoCurrentY - lassoStartY);
+                        <div class="middt-wf-lasso"
+                             style="left: @(F(lx))px; top: @(F(ly))px; width: @(F(lw))px; height: @(F(lh))px"></div>
+                    }
+
+                    @* SVG Bezier Connections Layer *@
+                    <svg class="middt-wf-svg-layer" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <marker id="wf-arrow-default" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                                <path d="M0,0 L10,4 L0,8 Z" fill="#64748b" />
+                            </marker>
+                            <marker id="wf-arrow-selected" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                                <path d="M0,0 L10,4 L0,8 Z" fill="#2563eb" />
+                            </marker>
+                            <marker id="wf-arrow-start" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                                <path d="M0,0 L10,4 L0,8 Z" fill="#0284c7" />
+                            </marker>
+                        </defs>
+
+                        @* Start -> start.target edge *@
+                        @{
+                            var startObj = EnsureObject(doc, "start");
+                            var startTargetKey = GetString(startObj, "target");
+                            if (!string.IsNullOrWhiteSpace(startTargetKey) && FindState(startTargetKey) is not null)
+                            {
+                                var startEdge = ComputeEdgeGeometry(StartNodeKey, startTargetKey, 0, 1);
+                                <g class="middt-wf-edge-group"
+                                   @onpointerdown:stopPropagation="true"
+                                   @onclick:stopPropagation="true"
+                                   @onclick="SelectStart">
+                                    <path d="@startEdge.Path" class="middt-wf-edge-hit" />
+                                    <path d="@startEdge.Path" class="middt-wf-edge-path-start" marker-end="url(#wf-arrow-start)" />
+                                </g>
+                            }
+
+                            @* State Transitions (Clickable & Selectable Curves) *@
+                            foreach (var edge in BuildAllEdges())
+                            {
+                                var eCopy = edge;
+                                var isSel = IsEdgeSelected(eCopy.EdgeId);
+                                <g class="middt-wf-edge-group"
+                                   @onpointerdown:stopPropagation="true"
+                                   @onclick:stopPropagation="true"
+                                   @onclick="@(ev => OnEdgeClick(ev, eCopy.FromKey, eCopy.TransitionIndex))">
+                                    <path d="@eCopy.Geometry.Path" class="middt-wf-edge-hit" />
+                                    <path d="@eCopy.Geometry.Path"
+                                          class="@(isSel ? "middt-wf-edge-path-selected" : "middt-wf-edge-path")"
+                                          marker-end="@(isSel ? "url(#wf-arrow-selected)" : "url(#wf-arrow-default)")" />
+                                </g>
+                            }
+
+                            @* Live Preview Wire while drawing a connection arrow with the mouse *@
+                            if (pointerMode == "connect-wire" && pointerSourceNodeKey is not null)
+                            {
+                                var previewPath = ComputePreviewWirePath(pointerSourceNodeKey, wireCursorX, wireCursorY);
+                                <path d="@previewPath" class="middt-wf-edge-path-preview" marker-end="url(#wf-arrow-selected)" />
+                            }
+                        }
+                    </svg>
+
+                    @* Interactive Transition Badges on Midpoints of SVG Edges *@
+                    @foreach (var edge in BuildAllEdges())
+                    {
+                        var eCopy = edge;
+                        var isSel = IsEdgeSelected(eCopy.EdgeId);
+                        <div class="@(isSel ? "middt-wf-edge-badge middt-wf-edge-badge-active" : "middt-wf-edge-badge")"
+                             style="left: @(F(eCopy.Geometry.MidX))px; top: @(F(eCopy.Geometry.MidY))px"
+                             title="Oku seçmek için tıklayın (Shift+Tık: çoklu seçim) veya üzerine görev sürükleyin"
+                             @onpointerdown:stopPropagation="true"
+                             @onclick:stopPropagation="true"
+                             @onclick="@(ev => OnEdgeClick(ev, eCopy.FromKey, eCopy.TransitionIndex))"
+                             @ondragover:preventDefault="true"
+                             @ondragover:stopPropagation="true"
+                             @ondrop:stopPropagation="true"
+                             @ondrop="@(e => OnDropOntoTransitionBadge(e, eCopy.FromKey, eCopy.TransitionIndex))">
+                            <span>@TriggerIcon(eCopy.Trigger) @eCopy.Label</span>
+                            @if (eCopy.TaskCount > 0)
+                            {
+                                <span class="middt-ui-badge middt-ui-badge-primary" style="font-size: .65rem; padding: .05rem .35rem">⚡@eCopy.TaskCount</span>
+                            }
+                            <button type="button"
+                                    class="middt-wf-edge-del"
+                                    title="Bu geçiş okunu sil"
+                                    @onclick:stopPropagation="true"
+                                    @onclick="@(() => RemoveSingleEdge(eCopy.FromKey, eCopy.TransitionIndex))">✕</button>
+                        </div>
+                    }
+
+                    @* Start Node on 2D Board *@
+                    @{
+                        var startPos = GetNodePos(StartNodeKey);
+                        var startNodeObj = EnsureObject(doc, "start");
+                        var startTasks = EnsureArray(startNodeObj, "onExecute");
+                    }
+                    <div class="@GetStartNodeClass()"
+                         style="left: @(F(startPos.X))px; top: @(F(startPos.Y))px"
+                         @onpointerdown:stopPropagation="true"
+                         @onpointerdown="@(ev => OnNodeHeaderPointerDown(ev, StartNodeKey))">
+                        <div class="middt-wf-board-node-handle"
+                             title="Taşımak için basılı tutup sürükleyin">
+                            <div>
+                                <div class="middt-wf-node-title">🚀 Başlangıç (start)</div>
+                                <div class="middt-wf-node-key">Hedef: @(GetString(startNodeObj, "target") ?? "-")</div>
+                            </div>
+                            <span class="middt-ui-badge middt-ui-badge-info">Start</span>
+                        </div>
+
+                        <div class="middt-wf-node-section">
+                            <span class="middt-wf-node-section-label">onExecute Görevleri (@startTasks.Count)</span>
+                            <div class="@(hoverDropKey == "start:onExecute" ? "middt-wf-dropzone middt-wf-dropzone-over" : "middt-wf-dropzone")"
+                                 @ondragenter="@(() => hoverDropKey = "start:onExecute")"
+                                 @ondragleave="@(() => ClearHoverDrop("start:onExecute"))"
+                                 @ondragover:preventDefault="true"
+                                 @ondragover:stopPropagation="true"
+                                 @ondrop:stopPropagation="true"
+                                 @ondrop="@(e => OnDropOntoHook(e, StartNodeKey, "onExecute"))">
+                                @if (startTasks.Count == 0)
+                                {
+                                    <div class="middt-wf-dropzone-empty">+ Görevi buraya sürükleyin</div>
+                                }
+                                @for (var ti = 0; ti < startTasks.Count; ti++)
+                                {
+                                    var taskIdx = ti;
+                                    if (startTasks[taskIdx] is JsonObject tObj)
+                                    {
+                                        <button type="button"
+                                                draggable="true"
+                                                class="@(selectedNodeKey == StartNodeKey && selectedTaskHook == "onExecute" && selectedTaskIndex == taskIdx ? "middt-wf-task-pill middt-wf-task-pill-active" : "middt-wf-task-pill")"
+                                                @onpointerdown:stopPropagation="true"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="@(() => SelectStartTask(taskIdx))"
+                                                @ondragstart:stopPropagation="true"
+                                                @ondragstart="@(e => StartExistingTaskDrag(e, StartNodeKey, "onExecute", taskIdx))">
+                                            <span>⚡ @TaskSummary(tObj)</span>
+                                            <small>@TaskBadges(tObj)</small>
+                                        </button>
+                                    }
+                                }
+                            </div>
+                        </div>
+
+                        @* Output Port for Start Node (Drag with mouse to draw arrow!) *@
+                        <button type="button"
+                                class="@(pointerMode == "connect-wire" && pointerSourceNodeKey == StartNodeKey ? "middt-wf-port middt-wf-port-out middt-wf-port-active" : "middt-wf-port middt-wf-port-out")"
+                                title="Başlangıç okunu çizmek için basılı tutup hedef duruma sürükleyin"
+                                @onpointerdown:stopPropagation="true"
+                                @onpointerdown="@(ev => OnOutputPortPointerDown(ev, StartNodeKey))"
+                                @onclick:stopPropagation="true"></button>
+                    </div>
+
+                    @* State Nodes on 2D Board *@
+                    @foreach (var stateObj in GetStates())
+                    {
+                        var stateKey = GetString(stateObj, "key") ?? string.Empty;
+                        var stateTitle = GetString(stateObj, "title") ?? stateKey;
+                        var stateType = GetString(stateObj, "type") ?? "Intermediate";
+                        var stateSubType = GetString(stateObj, "subType") ?? "None";
+                        var pos = GetNodePos(stateKey);
+                        var onEntry = EnsureArray(stateObj, "onEntry");
+                        var onExit = EnsureArray(stateObj, "onExit");
+
+                        <div class="@GetBoardNodeClass(stateKey, stateType, stateSubType)"
+                             style="left: @(F(pos.X))px; top: @(F(pos.Y))px"
+                             @onpointerenter="@(() => OnNodePointerEnter(stateKey))"
+                             @onpointerleave="@(() => OnNodePointerLeave(stateKey))"
+                             @onpointerup="@(ev => OnNodePointerUp(ev, stateKey))"
+                             @onpointerdown:stopPropagation="true"
+                             @onpointerdown="@(ev => OnNodeHeaderPointerDown(ev, stateKey))"
+                             @ondragover:preventDefault="true"
+                             @ondrop:stopPropagation="true"
+                             @ondrop="@(e => OnDropOntoStateNode(e, stateKey))">
+
+                            @* Input Port (Left) *@
+                            <button type="button"
+                                    class="@(hoverConnectTargetKey == stateKey ? "middt-wf-port middt-wf-port-in middt-wf-port-active" : "middt-wf-port middt-wf-port-in")"
+                                    title="Geçiş okunu buraya bırakın"
+                                    @onpointerup:stopPropagation="true"
+                                    @onpointerup="@(ev => OnNodePointerUp(ev, stateKey))"
+                                    @onpointerdown:stopPropagation="true"></button>
+
+                            @* Mouse-Draggable Header (Supports Single & Group Move!) *@
+                            <div class="middt-wf-board-node-handle"
+                                 title="Taşımak için basılı tutup sürükleyin (Çoklu seçimde tüm grubu taşır)">
+                                <div>
+                                    <div class="middt-wf-node-title">@stateTitle</div>
+                                    <div class="middt-wf-node-key">@stateKey @(GetIntNullable(stateObj, "step") is { } st ? $"· Adım {st}" : null)</div>
+                                </div>
+                                <span class="middt-ui-badge @StateBadgeClass(stateType, stateSubType)">@stateType@(stateSubType != "None" ? $"/{stateSubType}" : "")</span>
+                            </div>
+
+                            @if (stateType == "SubFlow")
+                            {
+                                var sfWorkflow = GetNestedString(stateObj, "subFlow", "workflow");
+                                var sfOut = GetNestedString(stateObj, "subFlow", "outputInto");
+                                <small class="middt-ui-text-muted">
+                                    🔗 Alt Akış: <code>@(string.IsNullOrWhiteSpace(sfWorkflow) ? "(Seçilmedi)" : sfWorkflow)</code>@(!string.IsNullOrWhiteSpace(sfOut) ? $" → {sfOut}" : null)
+                                </small>
+                            }
+                            else if (stateObj["view"] is JsonObject viewObj && GetString(viewObj, "layout") is { Length: > 0 } layoutKey)
+                            {
+                                <button type="button"
+                                        class="middt-wf-edge-pill"
+                                        style="font-size: .73rem; padding: .15rem .45rem"
+                                        title="Bu durumun ekranını ('@layoutKey') görsel tasarımcıda düzenlemek için tıklayın"
+                                        @onpointerdown:stopPropagation="true"
+                                        @onclick:stopPropagation="true"
+                                        @onclick="@(() => OpenScreenDesignerForState(stateObj, layoutKey))">
+                                    <span>📄 Ekran: <code>@layoutKey</code></span>
+                                    <small>🎨 Düzenle</small>
+                                </button>
+                            }
+
+                            @* onEntry Dropzone *@
+                            <div class="middt-wf-node-section">
+                                <span class="middt-wf-node-section-label">onEntry Görevleri (@onEntry.Count)</span>
+                                <div class="@(hoverDropKey == $"{stateKey}:onEntry" ? "middt-wf-dropzone middt-wf-dropzone-over" : "middt-wf-dropzone")"
+                                     @ondragenter="@(() => hoverDropKey = $"{stateKey}:onEntry")"
+                                     @ondragleave="@(() => ClearHoverDrop($"{stateKey}:onEntry"))"
+                                     @ondragover:preventDefault="true"
+                                     @ondragover:stopPropagation="true"
+                                     @ondrop:stopPropagation="true"
+                                     @ondrop="@(e => OnDropOntoHook(e, stateKey, "onEntry"))">
+                                    @if (onEntry.Count == 0)
+                                    {
+                                        <div class="middt-wf-dropzone-empty">+ Görevi buraya sürükleyin</div>
+                                    }
+                                    @for (var ti = 0; ti < onEntry.Count; ti++)
+                                    {
+                                        var taskIdx = ti;
+                                        if (onEntry[taskIdx] is JsonObject tObj)
+                                        {
+                                            <button type="button"
+                                                    draggable="true"
+                                                    class="@(selectedNodeKey == stateKey && selectedTaskHook == "onEntry" && selectedTaskIndex == taskIdx ? "middt-wf-task-pill middt-wf-task-pill-active" : "middt-wf-task-pill")"
+                                                    @onpointerdown:stopPropagation="true"
+                                                    @onclick:stopPropagation="true"
+                                                    @onclick="@(() => SelectStateTask(stateKey, "onEntry", taskIdx))"
+                                                    @ondragstart:stopPropagation="true"
+                                                    @ondragstart="@(e => StartExistingTaskDrag(e, stateKey, "onEntry", taskIdx))">
+                                                <span>⚡ @TaskSummary(tObj)</span>
+                                                <small>@TaskBadges(tObj)</small>
+                                            </button>
+                                        }
+                                    }
+                                </div>
+                            </div>
+
+                            @* onExit Dropzone (Not available on Finish states because the workflow ends here) *@
+                            @if (stateType != "Finish")
+                            {
+                                <div class="middt-wf-node-section">
+                                    <span class="middt-wf-node-section-label">onExit Görevleri (@onExit.Count)</span>
+                                    <div class="@(hoverDropKey == $"{stateKey}:onExit" ? "middt-wf-dropzone middt-wf-dropzone-over" : "middt-wf-dropzone")"
+                                         @ondragenter="@(() => hoverDropKey = $"{stateKey}:onExit")"
+                                         @ondragleave="@(() => ClearHoverDrop($"{stateKey}:onExit"))"
+                                         @ondragover:preventDefault="true"
+                                         @ondragover:stopPropagation="true"
+                                         @ondrop:stopPropagation="true"
+                                         @ondrop="@(e => OnDropOntoHook(e, stateKey, "onExit"))">
+                                        @if (onExit.Count == 0)
+                                        {
+                                            <div class="middt-wf-dropzone-empty">+ Çıkış görevi sürükleyin</div>
+                                        }
+                                        @for (var ti = 0; ti < onExit.Count; ti++)
+                                        {
+                                            var taskIdx = ti;
+                                            if (onExit[taskIdx] is JsonObject tObj)
+                                            {
+                                                <button type="button"
+                                                        draggable="true"
+                                                        class="@(selectedNodeKey == stateKey && selectedTaskHook == "onExit" && selectedTaskIndex == taskIdx ? "middt-wf-task-pill middt-wf-task-pill-active" : "middt-wf-task-pill")"
+                                                        @onpointerdown:stopPropagation="true"
+                                                        @onclick:stopPropagation="true"
+                                                        @onclick="@(() => SelectStateTask(stateKey, "onExit", taskIdx))"
+                                                        @ondragstart:stopPropagation="true"
+                                                        @ondragstart="@(e => StartExistingTaskDrag(e, stateKey, "onExit", taskIdx))">
+                                                    <span>🚪 @TaskSummary(tObj)</span>
+                                                    <small>@TaskBadges(tObj)</small>
+                                                </button>
+                                            }
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            @* Output Port (Right) — Press and drag with mouse to draw an arrow! *@
+                            @if (stateType != "Finish")
+                            {
+                                <button type="button"
+                                        class="@(pointerMode == "connect-wire" && pointerSourceNodeKey == stateKey ? "middt-wf-port middt-wf-port-out middt-wf-port-active" : "middt-wf-port middt-wf-port-out")"
+                                        title="Ok çizmek için basılı tutup hedef duruma sürükleyin"
+                                        @onpointerdown:stopPropagation="true"
+                                        @onpointerdown="@(ev => OnOutputPortPointerDown(ev, stateKey))"
+                                        @onclick:stopPropagation="true"></button>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="middt-wf-canvas-hint">
+                    <span>🖱️ <strong>Seç / Odakla:</strong> Boşta sürükleyerek kutu seçimi, nesneye tıklayıp odaklanma</span>
+                    <span>·</span>
+                    <span>✋ <strong>El Aracı:</strong> Tuvali sola / sağa / yukarı / aşağı kaydır</span>
+                    <span>·</span>
+                    <span><strong>Sağ noktadan (●) sürükle:</strong> Ok çiz</span>
+                </div>
+            </div>
+
+            @* 3. Right Context-Sensitive Inspector *@
+            <aside class="middt-wf-inspector" aria-label="Seçili öğe özellikleri">
+                @RenderInspector()
+            </aside>
+        </div>
+    }
+    else if (activeTab == "schema")
+    {
+        <RadzenCard>
+            <div class="middt-ui-form">
+                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                    <div>
+                        <h3 class="middt-ui-section-title">🗂️ İş Akışı Veri Şeması (dataSchema)</h3>
+                        <small class="middt-ui-text-muted">Burada tanımlanan alanlar liste kolonlarını, arama filtrelerini ve PostgreSQL bölüm (partition) indekslerini otomatik oluşturur.</small>
+                    </div>
+                    <div class="middt-ui-toolbar">
+                        <input class="middt-wf-input" style="width: 180px" placeholder="Yeni alan adı (ör. amount)" @bind="newSchemaFieldName" />
+                        <RadzenButton Icon="add" Text="Alan Ekle" Size="ButtonSize.Small" Click="AddSchemaField" />
+                    </div>
+                </div>
+
+                @{
+                    var schemaObj = EnsureObject(doc, "dataSchema");
+                    var propsObj = EnsureObject(schemaObj, "properties");
+                    var reqArr = EnsureArray(schemaObj, "required");
+                }
+                @foreach (var prop in propsObj.ToList())
+                {
+                    var fieldName = prop.Key;
+                    if (prop.Value is JsonObject fieldSpec)
+                    {
+                        var isReq = reqArr.Any(x => x?.GetValue<string>() == fieldName);
+                        <div class="middt-wf-task-card">
+                            <div class="middt-ui-toolbar" style="justify-content: space-between">
+                                <strong><code>@fieldName</code> — @(GetString(fieldSpec, "title") ?? fieldName)</strong>
+                                <RadzenButton Icon="delete" Text="Sil" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.ExtraSmall"
+                                              Click="@(() => RemoveSchemaField(fieldName))" />
+                            </div>
+                            <div class="middt-wf-grid-3">
+                                <div class="middt-ui-input">
+                                    <label>Başlık (title)</label>
+                                    <input class="middt-wf-input" value="@GetString(fieldSpec, "title")"
+                                           @onchange="@(e => { SetString(fieldSpec, "title", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                </div>
+                                <div class="middt-ui-input">
+                                    <label>Veri Tipi (type)</label>
+                                    <select class="middt-wf-input" value="@(GetString(fieldSpec, "type") ?? "string")"
+                                            @onchange="@(e => { SetString(fieldSpec, "type", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                                        <option value="string">string (Metin)</option>
+                                        <option value="number">number (Ondalıklı Sayı / Tutar)</option>
+                                        <option value="integer">integer (Tam Sayı)</option>
+                                        <option value="boolean">boolean (Evet / Hayır)</option>
+                                        <option value="array">array (Dizi / Liste)</option>
+                                        <option value="object">object (Alt Nesne)</option>
+                                    </select>
+                                </div>
+                                <div class="middt-ui-input">
+                                    <label>Maskeleme (x-mask)</label>
+                                    <select class="middt-wf-input" value="@(GetString(fieldSpec, "x-mask") ?? "")"
+                                            @onchange="@(e => { SetString(fieldSpec, "x-mask", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                                        <option value="">Maskeleme Yok</option>
+                                        <option value="middle">middle (Ortasını Maskele)</option>
+                                        <option value="end">end (Sonunu Maskele)</option>
+                                    </select>
+                                </div>
+                                <label class="middt-ui-check">
+                                    <input type="checkbox" checked="@isReq"
+                                           @onchange="@(e => ToggleRequiredField(reqArr, fieldName, e.Value is true))" />
+                                    <span>Zorunlu Alan (required)</span>
+                                </label>
+                                <label class="middt-ui-check">
+                                    <input type="checkbox" checked="@GetBool(fieldSpec, "x-search")"
+                                           @onchange="@(e => { SetBool(fieldSpec, "x-search", e.Value is true); SyncJsonFromDoc(); })" />
+                                    <span>Arama Filtresi & İndeks (x-search)</span>
+                                </label>
+                                <label class="middt-ui-check">
+                                    <input type="checkbox" checked="@(fieldSpec["x-list"]?.GetValue<bool>() ?? true)"
+                                           @onchange="@(e => { fieldSpec["x-list"] = e.Value is true; SyncJsonFromDoc(); })" />
+                                    <span>Listede Kolon Göster (x-list)</span>
+                                </label>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </RadzenCard>
+    }
+    else if (activeTab == "json")
+    {
+        <RadzenCard>
+            <div class="middt-ui-form">
+                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                    <label for="wf-definition-json" class="middt-ui-text-muted">İş Akışı Tanımı JSON (Sürükle-bırak tuval ile çift yönlü senkronize)</label>
+                    <RadzenButton Icon="data_object" Text="JSON Biçimlendir" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.ExtraSmall" Click="FormatJson" />
+                </div>
+                <textarea id="wf-definition-json" class="middt-ui-editor rz-textarea" spellcheck="false"
+                          value="@json" @oninput="OnRawJsonInput"></textarea>
+            </div>
+        </RadzenCard>
+    }
+
+    @if (screenModalOpen)
+    {
+        <div class="middt-wf-modal-backdrop" @onclick="@(() => screenModalOpen = false)">
+            <div class="middt-wf-modal" @onclick:stopPropagation="true">
+                <div class="middt-wf-modal-header">
+                    <div style="display: flex; align-items: center; gap: .6rem">
+                        <span>🖥️</span>
+                        <strong>Görsel Ekran & Yerleşim Tasarımcısı</strong>
+                        @if (screenModalTargetStateKey is not null)
+                        {
+                            <span class="middt-ui-badge middt-ui-badge-primary">
+                                Bağlı Durum: @screenModalTargetStateKey
+                            </span>
+                        }
+                    </div>
+                    <RadzenButton Icon="close" Text="Kapat" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                  Click="@(() => screenModalOpen = false)" />
+                </div>
+                <div class="middt-wf-modal-body">
+                    <UiLayoutEditor @key="screenModalSession"
+                                    Embedded="true"
+                                    InitialKey="@screenModalKey"
+                                    InitialWorkflowKey="@GetString(doc, "key")"
+                                    InitialDocument="@screenModalDoc"
+                                    OnSavedKey="OnScreenModalSavedAsync"
+                                    OnChanged="LoadUiLayoutsAsync"
+                                    OnClose="@(() => screenModalOpen = false)" />
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const string StartNodeKey = "__start__";
+    private const double StartNodeWidth = 230;
+    private const double StateNodeWidth = 264;
+    private const double NodeApproxHeight = 165;
+    private const double PortOffsetY = 30;
+
+    private static readonly JsonSerializerOptions PrettyJson = new()
+    {
+        WriteIndented = true,
+    };
+
+    private sealed record StatePaletteTemplate(string Icon, string Label, string Type, string SubType, string DefaultTitle);
+
+    private static readonly IReadOnlyList<StatePaletteTemplate> StateTemplates =
+    [
+        new("👤", "İnsan Görevi Durumu", "Intermediate", "Human", "Uzman İncelemesi"),
+        new("⚙️", "Otomatik Sistem Durumu", "Intermediate", "None", "Sistem Kontrolü"),
+        new("🔀", "Alt İş Akışı Durumu", "SubFlow", "None", "Alt Akış Bekleme"),
+        new("✅", "Başarılı Bitiş Durumu", "Finish", "Success", "Onaylandı"),
+        new("❌", "Red / Hata Bitişi", "Finish", "Error", "Reddedildi"),
+        new("🚫", "İptal Bitiş Durumu", "Finish", "Cancelled", "İptal Edildi"),
+    ];
+
+    private sealed record NodePoint(double X, double Y);
+    private sealed record EdgeGeometry(string Path, double MidX, double MidY);
+    private sealed record CanvasEdge(string EdgeId, string FromKey, string TargetKey, int TransitionIndex, string Key, string Label, string Trigger, int TaskCount, EdgeGeometry Geometry);
+
+    private List<WorkflowSummaryModel> workflows = [];
+    private List<WorkflowTaskSpecModel> taskSpecs = [];
+    private List<UiLayoutSummary> uiLayouts = [];
+    private List<string> errors = [];
+    private Dictionary<string, NodePoint> nodePositions = new(StringComparer.Ordinal);
+    private HashSet<string> selectedNodeKeys = new(StringComparer.Ordinal);
+    private HashSet<string> selectedEdgeIds = new(StringComparer.Ordinal);
+    private string? selectedWorkflowKey;
+    private string selectedNodeKey = StartNodeKey;
+    private string selectedTaskHook = "onEntry";
+    private int selectedTaskIndex = -1;
+    private int selectedTransitionIndex = -1;
+    private string activeTab = "visual";
+    private string paletteFilter = string.Empty;
+    private string newSchemaFieldName = string.Empty;
+    private string? validMessage;
+    private string? hoverDropKey;
+    private string? hoverConnectTargetKey;
+    private double zoom = 1.0;
+    private double panX;
+    private double panY;
+    private string toolMode = "select"; // "select" | "pan"
+    private bool busy;
+
+    // Inline Screen / Layout Designer Modal state
+    private bool screenModalOpen;
+    private int screenModalSession;
+    private string? screenModalTargetStateKey;
+    private string? screenModalKey;
+    private UiLayoutDocument? screenModalDoc;
+
+    // Mouse / Pointer interaction state ("move-nodes" | "connect-wire" | "lasso" | "pan" | null)
+    private string? pointerMode;
+    private string? pointerSourceNodeKey;
+    private double pointerStartClientX;
+    private double pointerStartClientY;
+    private double panStartX;
+    private double panStartY;
+    private bool pointerMoved;
+    private Dictionary<string, NodePoint> moveInitialPositions = new(StringComparer.Ordinal);
+    private double wireStartX;
+    private double wireStartY;
+    private double wireCursorX;
+    private double wireCursorY;
+    private double lassoStartX;
+    private double lassoStartY;
+    private double lassoCurrentX;
+    private double lassoCurrentY;
+
+    // HTML5 Palette Drag state
+    private string? dragKind; // "palette-state" | "palette-task" | "move-task"
+    private string? dragStateType;
+    private string? dragStateSubType;
+    private string? dragStateTitle;
+    private string? dragTaskType;
+    private string? dragSourceNodeKey;
+    private string? dragSourceHook;
+    private int dragSourceIndex = -1;
+
+    private JsonObject doc = CreateStarterWorkflow();
+    private string json = string.Empty;
+
+    [Inject]
+    private WorkflowApiClient Client { get; set; } = default!;
+
+    [Inject]
+    private NotificationService Notification { get; set; } = default!;
+
+    [Inject]
+    private IServiceProvider Services { get; set; } = default!;
+
+    [Inject]
+    private NavigationManager Navigation { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        EnsureNodePositions(forceAutoLayout: true);
+        SyncJsonFromDoc();
+
+        var wfTask = Client.ListWorkflowsAsync();
+        var specsTask = Client.ListTaskSpecsAsync();
+        var layoutsTask = LoadUiLayoutsAsync();
+        await Task.WhenAll(wfTask, specsTask, layoutsTask);
+
+        var wfResp = await wfTask;
+        if (wfResp.IsSuccess)
+        {
+            workflows = wfResp.Data ?? [];
+        }
+
+        var specsResp = await specsTask;
+        if (specsResp.IsSuccess)
+        {
+            taskSpecs = specsResp.Data ?? [];
+        }
+
+        if (workflows.Count > 0)
+        {
+            await OpenWorkflowAsync(workflows[0].Key);
+        }
+    }
+
+    private async Task LoadUiLayoutsAsync()
+    {
+        if (Services.GetService<UiApiClient>() is { } uiClient)
+        {
+            var resp = await uiClient.ListAsync();
+            if (resp.IsSuccess && resp.Data is not null)
+            {
+                uiLayouts = resp.Data;
+            }
+        }
+    }
+
+    private void OpenToolbarScreenDesigner()
+    {
+        if (FindState(selectedNodeKey) is { } stObj && GetString(stObj, "type") != "SubFlow")
+        {
+            var existingKey = GetNestedString(stObj, "view", "layout");
+            if (!string.IsNullOrWhiteSpace(existingKey))
+            {
+                OpenScreenDesignerForState(stObj, existingKey);
+                return;
+            }
+
+            CreateAndBindNewScreenForState(stObj);
+            return;
+        }
+
+        screenModalTargetStateKey = null;
+        screenModalKey = uiLayouts.FirstOrDefault()?.Key;
+        screenModalDoc = null;
+        screenModalSession++;
+        screenModalOpen = true;
+    }
+
+    private void OpenScreenDesignerForState(JsonObject stateObj, string layoutKey)
+    {
+        screenModalTargetStateKey = GetString(stateObj, "key");
+        screenModalKey = layoutKey.Trim();
+        screenModalDoc = null;
+        screenModalSession++;
+        screenModalOpen = true;
+    }
+
+    private void CreateAndBindNewScreenForState(JsonObject stateObj)
+    {
+        var wfKey = GetString(doc, "key") ?? "workflow";
+        var stKey = GetString(stateObj, "key") ?? "state";
+        var stTitle = GetString(stateObj, "title") ?? stKey;
+        var newLayoutKey = $"{wfKey}-{stKey}-view";
+
+        var items = new JsonArray();
+        if (doc["dataSchema"] is JsonObject schemaObj && schemaObj["properties"] is JsonObject propsObj && propsObj.Count > 0)
+        {
+            foreach (var (field, node) in propsObj)
+            {
+                if (node is JsonObject fSpec)
+                {
+                    var fTitle = GetString(fSpec, "title") ?? field;
+                    var fType = GetString(fSpec, "type") ?? "string";
+                    var row = new JsonObject
+                    {
+                        ["label"] = fTitle,
+                        ["value"] = $"{{{{ data.{field} }}}}",
+                        ["visibleWhen"] = $"data.{field} != null",
+                    };
+                    if (fType == "number")
+                    {
+                        row["format"] = "N2";
+                    }
+
+                    items.Add(row);
+                }
+            }
+        }
+        else
+        {
+            items.Add(new JsonObject { ["label"] = "Başlık", ["value"] = "{{ data.title }}" });
+        }
+
+        var generatedDoc = new UiLayoutDocument
+        {
+            Key = newLayoutKey,
+            Title = $"{stTitle} Ekranı",
+            Kind = UiLayoutKind.View,
+            Body =
+            [
+                new UiNode
+                {
+                    Widget = "section",
+                    Props = new JsonObject { ["title"] = $"{stTitle} — Kayıt Özeti" },
+                    Children =
+                    [
+                        new UiNode
+                        {
+                            Widget = "fields",
+                            Props = new JsonObject { ["items"] = items },
+                        },
+                    ],
+                },
+                new UiNode
+                {
+                    Widget = "layout",
+                    Props = new JsonObject { ["key"] = "workflow-footer" },
+                },
+            ],
+        };
+
+        SetNestedString(stateObj, "view", "layout", newLayoutKey);
+        SyncJsonFromDoc();
+
+        screenModalTargetStateKey = stKey;
+        screenModalKey = newLayoutKey;
+        screenModalDoc = generatedDoc;
+        screenModalSession++;
+        screenModalOpen = true;
+    }
+
+    private async Task OnScreenModalSavedAsync(string savedLayoutKey)
+    {
+        await LoadUiLayoutsAsync();
+        if (!string.IsNullOrWhiteSpace(screenModalTargetStateKey) && FindState(screenModalTargetStateKey) is { } stObj)
+        {
+            SetNestedString(stObj, "view", "layout", savedLayoutKey);
+            SyncJsonFromDoc();
+        }
+    }
+
+    private void NavigateToStandaloneScreenDesigner(string layoutKey)
+    {
+        var wfKey = GetString(doc, "key") ?? string.Empty;
+        var url = $"/ui-admin?key={Uri.EscapeDataString(layoutKey.Trim())}";
+        if (!string.IsNullOrWhiteSpace(wfKey))
+        {
+            url += $"&workflow={Uri.EscapeDataString(wfKey)}";
+        }
+
+        Navigation.NavigateTo(url);
+    }
+
+    private IEnumerable<IGrouping<string, WorkflowTaskSpecModel>> FilteredTaskGroups()
+    {
+        var filter = paletteFilter.Trim();
+        var query = string.IsNullOrEmpty(filter)
+            ? taskSpecs
+            : taskSpecs.Where(t =>
+                t.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                t.Title.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                t.Category.Contains(filter, StringComparison.OrdinalIgnoreCase));
+        return query.GroupBy(t => t.Category);
+    }
+
+    // --- Mouse / Pointer Canvas Interactions (Pan, Move Group, Draw Arrow, Marquee Lasso) ---
+
+    private string GetViewportClass()
+    {
+        if (pointerMode == "pan")
+        {
+            return "middt-wf-viewport middt-wf-viewport-pan middt-wf-viewport-panning";
+        }
+
+        return toolMode == "pan"
+            ? "middt-wf-viewport middt-wf-viewport-pan"
+            : "middt-wf-viewport middt-wf-viewport-select";
+    }
+
+    private void ResetViewport()
+    {
+        panX = 0;
+        panY = 0;
+        zoom = 1.0;
+    }
+
+    private void StartPan(PointerEventArgs e)
+    {
+        pointerMode = "pan";
+        pointerMoved = false;
+        pointerStartClientX = e.ClientX;
+        pointerStartClientY = e.ClientY;
+        panStartX = panX;
+        panStartY = panY;
+    }
+
+    private void OnViewportPointerDown(PointerEventArgs e)
+    {
+        if (toolMode == "pan" || e.Button == 1 || e.AltKey)
+        {
+            StartPan(e);
+            return;
+        }
+
+        if (e.Button != 0)
+        {
+            return;
+        }
+
+        if (!e.ShiftKey && !e.CtrlKey && !e.MetaKey)
+        {
+            selectedNodeKeys.Clear();
+            selectedEdgeIds.Clear();
+            selectedTaskIndex = -1;
+            selectedTransitionIndex = -1;
+        }
+
+        pointerMode = "lasso";
+        pointerMoved = false;
+        pointerStartClientX = e.ClientX;
+        pointerStartClientY = e.ClientY;
+        lassoStartX = Math.Max(0, (e.OffsetX - panX) / zoom);
+        lassoStartY = Math.Max(0, (e.OffsetY - panY) / zoom);
+        lassoCurrentX = lassoStartX;
+        lassoCurrentY = lassoStartY;
+    }
+
+    private void OnBoardPointerDown(PointerEventArgs e)
+    {
+        if (toolMode == "pan" || e.Button == 1 || e.AltKey)
+        {
+            StartPan(e);
+            return;
+        }
+
+        if (e.Button != 0)
+        {
+            return;
+        }
+
+        // Start rubber-band / marquee selection on empty board
+        if (!e.ShiftKey && !e.CtrlKey && !e.MetaKey)
+        {
+            selectedNodeKeys.Clear();
+            selectedEdgeIds.Clear();
+            selectedTaskIndex = -1;
+            selectedTransitionIndex = -1;
+        }
+
+        pointerMode = "lasso";
+        pointerMoved = false;
+        pointerStartClientX = e.ClientX;
+        pointerStartClientY = e.ClientY;
+        lassoStartX = Math.Max(0, e.OffsetX);
+        lassoStartY = Math.Max(0, e.OffsetY);
+        lassoCurrentX = lassoStartX;
+        lassoCurrentY = lassoStartY;
+    }
+
+    private void OnNodeHeaderPointerDown(PointerEventArgs e, string nodeKey)
+    {
+        if (toolMode == "pan" || e.Button == 1 || e.AltKey)
+        {
+            StartPan(e);
+            return;
+        }
+
+        if (e.Button != 0)
+        {
+            return;
+        }
+
+        if (e.ShiftKey || e.CtrlKey || e.MetaKey)
+        {
+            if (!selectedNodeKeys.Remove(nodeKey))
+            {
+                selectedNodeKeys.Add(nodeKey);
+            }
+        }
+        else if (!selectedNodeKeys.Contains(nodeKey))
+        {
+            selectedNodeKeys.Clear();
+            selectedEdgeIds.Clear();
+            selectedNodeKeys.Add(nodeKey);
+        }
+
+        selectedNodeKey = nodeKey;
+        selectedTaskIndex = -1;
+        selectedTransitionIndex = -1;
+
+        pointerMode = "move-nodes";
+        pointerSourceNodeKey = nodeKey;
+        pointerMoved = false;
+        pointerStartClientX = e.ClientX;
+        pointerStartClientY = e.ClientY;
+        moveInitialPositions.Clear();
+        foreach (var k in selectedNodeKeys)
+        {
+            moveInitialPositions[k] = GetNodePos(k);
+        }
+    }
+
+    private void OnOutputPortPointerDown(PointerEventArgs e, string fromNodeKey)
+    {
+        if (e.Button != 0)
+        {
+            return;
+        }
+
+        var pos = GetNodePos(fromNodeKey);
+        var width = fromNodeKey == StartNodeKey ? StartNodeWidth : StateNodeWidth;
+        pointerMode = "connect-wire";
+        pointerSourceNodeKey = fromNodeKey;
+        pointerMoved = false;
+        pointerStartClientX = e.ClientX;
+        pointerStartClientY = e.ClientY;
+        wireStartX = pos.X + width;
+        wireStartY = pos.Y + PortOffsetY;
+        wireCursorX = wireStartX;
+        wireCursorY = wireStartY;
+        hoverConnectTargetKey = null;
+    }
+
+    private void OnBoardPointerMove(PointerEventArgs e)
+    {
+        if (pointerMode is null)
+        {
+            return;
+        }
+
+        var rawDx = e.ClientX - pointerStartClientX;
+        var rawDy = e.ClientY - pointerStartClientY;
+        if (Math.Abs(rawDx) > 3 || Math.Abs(rawDy) > 3)
+        {
+            pointerMoved = true;
+        }
+
+        if (pointerMode == "pan")
+        {
+            panX = Math.Clamp(panStartX + rawDx, -2400, 900);
+            panY = Math.Clamp(panStartY + rawDy, -1600, 700);
+        }
+        else if (pointerMode == "move-nodes")
+        {
+            var dx = rawDx / zoom;
+            var dy = rawDy / zoom;
+            foreach (var (key, initPos) in moveInitialPositions)
+            {
+                var nx = Math.Max(16, Snap(initPos.X + dx));
+                var ny = Math.Max(16, Snap(initPos.Y + dy));
+                SetNodePos(key, nx, ny);
+            }
+        }
+        else if (pointerMode == "connect-wire")
+        {
+            wireCursorX = wireStartX + (rawDx / zoom);
+            wireCursorY = wireStartY + (rawDy / zoom);
+            hoverConnectTargetKey = FindStateAtPoint(wireCursorX, wireCursorY);
+        }
+        else if (pointerMode == "lasso")
+        {
+            lassoCurrentX = Math.Max(0, lassoStartX + (rawDx / zoom));
+            lassoCurrentY = Math.Max(0, lassoStartY + (rawDy / zoom));
+            UpdateLassoSelection();
+        }
+    }
+
+    private void OnBoardPointerUp(PointerEventArgs e)
+    {
+        if (pointerMode == "move-nodes")
+        {
+            if (pointerMoved)
+            {
+                SyncJsonFromDoc();
+            }
+            else if (pointerSourceNodeKey is not null && !e.ShiftKey && !e.CtrlKey && !e.MetaKey)
+            {
+                SelectSingleState(pointerSourceNodeKey);
+            }
+        }
+        else if (pointerMode == "connect-wire" && pointerSourceNodeKey is not null)
+        {
+            var targetKey = hoverConnectTargetKey ?? FindStateAtPoint(wireCursorX, wireCursorY);
+            if (!string.IsNullOrEmpty(targetKey))
+            {
+                CompleteConnection(pointerSourceNodeKey, targetKey);
+            }
+        }
+
+        ResetPointerState();
+    }
+
+    private void OnNodePointerEnter(string stateKey)
+    {
+        if (pointerMode == "connect-wire")
+        {
+            hoverConnectTargetKey = stateKey;
+        }
+    }
+
+    private void OnNodePointerLeave(string stateKey)
+    {
+        if (hoverConnectTargetKey == stateKey)
+        {
+            hoverConnectTargetKey = null;
+        }
+    }
+
+    private void OnNodePointerUp(PointerEventArgs e, string targetStateKey)
+    {
+        if (pointerMode == "connect-wire" && pointerSourceNodeKey is not null)
+        {
+            CompleteConnection(pointerSourceNodeKey, targetStateKey);
+            ResetPointerState();
+            return;
+        }
+
+        if (pointerMode == "move-nodes")
+        {
+            if (pointerMoved)
+            {
+                SyncJsonFromDoc();
+            }
+            else if (pointerSourceNodeKey is not null && !e.ShiftKey && !e.CtrlKey && !e.MetaKey)
+            {
+                SelectSingleState(pointerSourceNodeKey);
+            }
+        }
+
+        ResetPointerState();
+    }
+
+    private void ResetPointerState()
+    {
+        pointerMode = null;
+        pointerSourceNodeKey = null;
+        hoverConnectTargetKey = null;
+        pointerMoved = false;
+        moveInitialPositions.Clear();
+    }
+
+    private string? FindStateAtPoint(double x, double y)
+    {
+        foreach (var st in GetStates())
+        {
+            var k = GetString(st, "key");
+            if (string.IsNullOrEmpty(k))
+            {
+                continue;
+            }
+
+            var pos = GetNodePos(k);
+            if (x >= pos.X - 16 && x <= pos.X + StateNodeWidth + 16 &&
+                y >= pos.Y - 12 && y <= pos.Y + NodeApproxHeight + 12)
+            {
+                return k;
+            }
+        }
+
+        return null;
+    }
+
+    private void UpdateLassoSelection()
+    {
+        var minX = Math.Min(lassoStartX, lassoCurrentX);
+        var maxX = Math.Max(lassoStartX, lassoCurrentX);
+        var minY = Math.Min(lassoStartY, lassoCurrentY);
+        var maxY = Math.Max(lassoStartY, lassoCurrentY);
+
+        selectedNodeKeys.Clear();
+        foreach (var st in GetStates())
+        {
+            var k = GetString(st, "key");
+            if (string.IsNullOrEmpty(k))
+            {
+                continue;
+            }
+
+            var pos = GetNodePos(k);
+            var intersects = pos.X < maxX && (pos.X + StateNodeWidth) > minX &&
+                             pos.Y < maxY && (pos.Y + NodeApproxHeight) > minY;
+            if (intersects)
+            {
+                selectedNodeKeys.Add(k);
+                selectedNodeKey = k;
+            }
+        }
+
+        selectedEdgeIds.Clear();
+        foreach (var edge in BuildAllEdges())
+        {
+            if (edge.Geometry.MidX >= minX && edge.Geometry.MidX <= maxX &&
+                edge.Geometry.MidY >= minY && edge.Geometry.MidY <= maxY)
+            {
+                selectedEdgeIds.Add(edge.EdgeId);
+            }
+        }
+    }
+
+    private void SelectSingleState(string nodeKey)
+    {
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedNodeKeys.Add(nodeKey);
+        selectedNodeKey = nodeKey;
+        selectedTaskIndex = -1;
+        selectedTransitionIndex = -1;
+    }
+
+    private void OnEdgeClick(MouseEventArgs e, string fromKey, int transitionIndex)
+    {
+        var edgeId = MakeEdgeId(fromKey, transitionIndex);
+        if (e.ShiftKey || e.CtrlKey || e.MetaKey)
+        {
+            if (!selectedEdgeIds.Remove(edgeId))
+            {
+                selectedEdgeIds.Add(edgeId);
+            }
+        }
+        else
+        {
+            selectedNodeKeys.Clear();
+            selectedEdgeIds.Clear();
+            selectedEdgeIds.Add(edgeId);
+        }
+
+        SelectTransition(fromKey, transitionIndex);
+    }
+
+    private void OnCanvasKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Delete" or "Backspace")
+        {
+            DeleteSelection();
+        }
+        else if (e.Key == "Escape")
+        {
+            ClearSelection();
+            ResetPointerState();
+        }
+    }
+
+    // --- Group Operations (Select All, Align, Duplicate, Delete Group) ---
+
+    private void SelectAllOnBoard()
+    {
+        selectedNodeKeys.Clear();
+        foreach (var st in GetStates())
+        {
+            if (GetString(st, "key") is { Length: > 0 } k)
+            {
+                selectedNodeKeys.Add(k);
+            }
+        }
+
+        selectedEdgeIds.Clear();
+        foreach (var edge in BuildAllEdges())
+        {
+            selectedEdgeIds.Add(edge.EdgeId);
+        }
+    }
+
+    private void ClearSelection()
+    {
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedTaskIndex = -1;
+        selectedTransitionIndex = -1;
+    }
+
+    private void DeleteSelection()
+    {
+        var changedAny = false;
+
+        // 1. Delete selected edges (in reverse index order per state so indices stay valid)
+        var edgesToDelete = selectedEdgeIds
+            .Select(ParseEdgeId)
+            .Where(x => x is not null)
+            .Select(x => x!.Value)
+            .GroupBy(x => x.FromKey)
+            .ToList();
+
+        foreach (var grp in edgesToDelete)
+        {
+            if (FindState(grp.Key) is { } stObj && stObj["transitions"] is JsonArray trArr)
+            {
+                foreach (var idx in grp.Select(g => g.Index).OrderByDescending(i => i))
+                {
+                    if (idx >= 0 && idx < trArr.Count)
+                    {
+                        trArr.RemoveAt(idx);
+                        changedAny = true;
+                    }
+                }
+            }
+        }
+
+        // 2. Delete selected states (except StartNodeKey)
+        var statesToDelete = selectedNodeKeys.Where(k => k != StartNodeKey).ToHashSet(StringComparer.Ordinal);
+        if (statesToDelete.Count > 0)
+        {
+            var statesArr = EnsureArray(doc, "states");
+            for (var i = statesArr.Count - 1; i >= 0; i--)
+            {
+                if (statesArr[i] is JsonObject st && GetString(st, "key") is { } k && statesToDelete.Contains(k))
+                {
+                    statesArr.RemoveAt(i);
+                    nodePositions.Remove(k);
+                    (doc["x-layout"] as JsonObject)?.Remove(k);
+                    changedAny = true;
+                }
+            }
+
+            // Also remove dangling transitions pointing to deleted states
+            foreach (var st in GetStates())
+            {
+                if (st["transitions"] is JsonArray trArr)
+                {
+                    for (var i = trArr.Count - 1; i >= 0; i--)
+                    {
+                        if (trArr[i] is JsonObject tr && GetString(tr, "target") is { } tgt && statesToDelete.Contains(tgt))
+                        {
+                            trArr.RemoveAt(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedNodeKey = StartNodeKey;
+        selectedTransitionIndex = -1;
+        selectedTaskIndex = -1;
+
+        if (changedAny)
+        {
+            SyncJsonFromDoc();
+        }
+    }
+
+    private void RemoveSingleEdge(string fromKey, int transitionIndex)
+    {
+        if (FindState(fromKey) is not { } stObj)
+        {
+            return;
+        }
+
+        var trs = EnsureArray(stObj, "transitions");
+        if (transitionIndex >= 0 && transitionIndex < trs.Count)
+        {
+            trs.RemoveAt(transitionIndex);
+            selectedEdgeIds.Remove(MakeEdgeId(fromKey, transitionIndex));
+            if (selectedNodeKey == fromKey && selectedTransitionIndex == transitionIndex)
+            {
+                selectedTransitionIndex = -1;
+            }
+
+            SyncJsonFromDoc();
+        }
+    }
+
+    private void AlignSelectedHorizontal()
+    {
+        var keys = selectedNodeKeys.Where(k => k != StartNodeKey).ToList();
+        if (keys.Count < 2)
+        {
+            return;
+        }
+
+        var avgY = Snap(keys.Average(k => GetNodePos(k).Y));
+        var ordered = keys.OrderBy(k => GetNodePos(k).X).ToList();
+        var startX = GetNodePos(ordered[0]).X;
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            SetNodePos(ordered[i], Snap(startX + (i * 340)), avgY);
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void AlignSelectedVertical()
+    {
+        var keys = selectedNodeKeys.Where(k => k != StartNodeKey).ToList();
+        if (keys.Count < 2)
+        {
+            return;
+        }
+
+        var avgX = Snap(keys.Average(k => GetNodePos(k).X));
+        var ordered = keys.OrderBy(k => GetNodePos(k).Y).ToList();
+        var startY = GetNodePos(ordered[0]).Y;
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            SetNodePos(ordered[i], avgX, Snap(startY + (i * 250)));
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void DuplicateSelectedStates()
+    {
+        var keys = selectedNodeKeys.Where(k => k != StartNodeKey).ToList();
+        if (keys.Count == 0)
+        {
+            return;
+        }
+
+        var statesArr = EnsureArray(doc, "states");
+        var newSelection = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var k in keys)
+        {
+            if (FindState(k) is not { } orig || orig.DeepClone() is not JsonObject clone)
+            {
+                continue;
+            }
+
+            var newKey = $"{k}-copy";
+            var suffix = 2;
+            while (FindState(newKey) is not null)
+            {
+                newKey = $"{k}-copy-{suffix++}";
+            }
+
+            clone["key"] = newKey;
+            clone["title"] = $"{GetString(orig, "title") ?? k} (Kopya)";
+            statesArr.Add(clone);
+
+            var pos = GetNodePos(k);
+            SetNodePos(newKey, pos.X + 48, pos.Y + 48);
+            newSelection.Add(newKey);
+            selectedNodeKey = newKey;
+        }
+
+        selectedNodeKeys = newSelection;
+        selectedEdgeIds.Clear();
+        SyncJsonFromDoc();
+    }
+
+    private static string MakeEdgeId(string fromKey, int index) => $"{fromKey}::{index}";
+
+    private static (string FromKey, int Index)? ParseEdgeId(string edgeId)
+    {
+        var sep = edgeId.LastIndexOf("::", StringComparison.Ordinal);
+        if (sep <= 0 || !int.TryParse(edgeId.AsSpan(sep + 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx))
+        {
+            return null;
+        }
+
+        return (edgeId[..sep], idx);
+    }
+
+    private bool IsEdgeSelected(string edgeId)
+    {
+        if (selectedEdgeIds.Contains(edgeId))
+        {
+            return true;
+        }
+
+        return ParseEdgeId(edgeId) is { } p && selectedNodeKey == p.FromKey && selectedTransitionIndex == p.Index;
+    }
+
+    private string ComputePreviewWirePath(string fromKey, double targetX, double targetY)
+    {
+        var fromPos = GetNodePos(fromKey);
+        var fromWidth = fromKey == StartNodeKey ? StartNodeWidth : StateNodeWidth;
+        var x1 = fromPos.X + fromWidth;
+        var y1 = fromPos.Y + PortOffsetY;
+        var dx = Math.Max(60.0, Math.Abs(targetX - x1) * 0.45);
+        var cx1 = x1 + dx;
+        var cy1 = y1;
+        var cx2 = targetX - dx;
+        var cy2 = targetY;
+        return FormattableString.Invariant($"M {x1:0.#} {y1:0.#} C {cx1:0.#} {cy1:0.#}, {cx2:0.#} {cy2:0.#}, {targetX:0.#} {targetY:0.#}");
+    }
+
+    private RenderFragment RenderInspector() => __builder =>
+    {
+        @* 1. Selected Task Inspector *@
+        if (GetSelectedTaskObject() is { } taskObj)
+        {
+            var taskType = GetString(taskObj, "task") ?? "set";
+            var spec = taskSpecs.FirstOrDefault(s => string.Equals(s.Name, taskType, StringComparison.OrdinalIgnoreCase));
+            var cfg = EnsureObject(taskObj, "config");
+            var errObj = taskObj["onError"] as JsonObject;
+            var errAction = errObj is not null ? (GetString(errObj, "action") ?? "Fail") : "Fail";
+
+            <div class="middt-ui-form">
+                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                    <div>
+                        <span class="middt-ui-badge middt-ui-badge-primary">⚡ Görev (@selectedTaskHook)</span>
+                        <h3 class="middt-ui-section-title rz-mt-1">@(spec?.Title ?? taskType)</h3>
+                    </div>
+                    <div class="middt-ui-toolbar">
+                        <RadzenButton Icon="arrow_upward" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                      Disabled="@(selectedTaskIndex <= 0)" Click="@(() => MoveSelectedTask(-1))" />
+                        <RadzenButton Icon="arrow_downward" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                      Click="@(() => MoveSelectedTask(1))" />
+                        <RadzenButton Icon="delete" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Danger"
+                                      Click="DeleteSelectedTask" />
+                    </div>
+                </div>
+
+                @if (spec is not null)
+                {
+                    <small class="middt-ui-text-muted">@spec.Description</small>
+                }
+
+                <div class="middt-wf-grid-2">
+                    <div class="middt-ui-input">
+                        <label>Görev Anahtarı (key)</label>
+                        <input class="middt-wf-input" value="@GetString(taskObj, "key")"
+                               @onchange="@(e => { SetString(taskObj, "key", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Görev Tipi (task)</label>
+                        <select class="middt-wf-input" value="@taskType"
+                                @onchange="@(e => ChangeTaskType(taskObj, e.Value?.ToString()))">
+                            @foreach (var s in taskSpecs)
+                            {
+                                <option value="@s.Name">@s.Title</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+
+                <div class="middt-ui-input">
+                    <label>Çalışma Koşulu (when — C# İfadesi)</label>
+                    <input class="middt-wf-input" value="@GetString(taskObj, "when")"
+                           placeholder="data.amount >= 50000"
+                           @onchange="@(e => { SetString(taskObj, "when", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                </div>
+
+                @if (selectedTaskHook == "onEntry" && selectedNodeKey != StartNodeKey)
+                {
+                    <label class="middt-ui-check">
+                        <input type="checkbox" checked="@GetBool(taskObj, "background")"
+                               @onchange="@(e => { SetBool(taskObj, "background", e.Value is true); SyncJsonFromDoc(); })" />
+                        <span>Arka Planda Çalıştır (<code>background: true</code>)</span>
+                    </label>
+                }
+
+                <div class="middt-wf-grid-2">
+                    <div class="middt-ui-input">
+                        <label>Hata Politikası (onError.action)</label>
+                        <select class="middt-wf-input" value="@errAction"
+                                @onchange="@(e => SetErrorAction(taskObj, e.Value?.ToString()))">
+                            <option value="Fail">Fail (Faulted Durumuna Geç)</option>
+                            <option value="Continue">Continue (Hatayı Yut ve Devam Et)</option>
+                            <option value="Retry">Retry (Yeniden Dene)</option>
+                            <option value="Transition">Transition (Hata Geçişine Yönlendir)</option>
+                        </select>
+                    </div>
+                    @if (errAction == "Retry" && errObj is not null)
+                    {
+                        <div class="middt-ui-input">
+                            <label>Tekrar Sayısı / Bekleme (maxRetries / delay)</label>
+                            <div class="middt-ui-picker">
+                                <input type="number" class="middt-wf-input" style="width: 70px" value="@GetInt(errObj, "maxRetries", 3)"
+                                       @onchange="@(e => { SetInt(errObj, "maxRetries", e.Value?.ToString(), 3); SyncJsonFromDoc(); })" />
+                                <input class="middt-wf-input" value="@(GetString(errObj, "delay") ?? "00:00:05")"
+                                       @onchange="@(e => { SetString(errObj, "delay", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                            </div>
+                        </div>
+                    }
+                    else if (errAction == "Transition" && errObj is not null)
+                    {
+                        <div class="middt-ui-input">
+                            <label>Hata Geçiş Anahtarı (onError.transition)</label>
+                            <input class="middt-wf-input" value="@GetString(errObj, "transition")"
+                                   placeholder="to-error-state"
+                                   @onchange="@(e => { SetString(errObj, "transition", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                        </div>
+                    }
+                </div>
+
+                <hr class="middt-ui-divider" />
+                <h4 class="middt-ui-section-title">🔧 Görev Parametreleri (config)</h4>
+
+                @if (spec is not null && spec.Params.Count > 0)
+                {
+                    @foreach (var param in spec.Params)
+                    {
+                        <div class="middt-ui-input">
+                            <label>
+                                @param.Label
+                                @if (param.Required)
+                                {
+                                    <span style="color: #dc2626">*</span>
+                                }
+                            </label>
+                            @if (param.Type == "boolean")
+                            {
+                                var defBool = string.Equals(param.DefaultValue, "true", StringComparison.OrdinalIgnoreCase);
+                                <label class="middt-ui-check">
+                                    <input type="checkbox" checked="@(cfg[param.Name]?.GetValue<bool>() ?? defBool)"
+                                           @onchange="@(e => { cfg[param.Name] = e.Value is true; SyncJsonFromDoc(); })" />
+                                    <span>@param.Description</span>
+                                </label>
+                            }
+                            else if (param.Type == "enum")
+                            {
+                                <select class="middt-wf-input" value="@(GetString(cfg, param.Name) ?? param.DefaultValue ?? "")"
+                                        @onchange="@(e => { SetString(cfg, param.Name, e.Value?.ToString()); SyncJsonFromDoc(); })">
+                                    @foreach (var opt in param.Options)
+                                    {
+                                        <option value="@opt">@(string.IsNullOrEmpty(opt) ? "(Seçiniz / Yok)" : opt)</option>
+                                    }
+                                </select>
+                                <small class="middt-ui-text-muted">@param.Description</small>
+                            }
+                            else if (param.Type == "number")
+                            {
+                                <input type="number" class="middt-wf-input"
+                                       value="@(GetNodeRawText(cfg, param.Name) ?? param.DefaultValue ?? "")"
+                                       @onchange="@(e => { SetIntNullable(cfg, param.Name, e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                <small class="middt-ui-text-muted">@param.Description</small>
+                            }
+                            else if (param.Type == "json")
+                            {
+                                <textarea class="middt-wf-input middt-wf-code-box" spellcheck="false"
+                                          value="@GetJsonParamText(cfg, param.Name)"
+                                          @onchange="@(e => { SetJsonParam(cfg, param.Name, e.Value?.ToString()); SyncJsonFromDoc(); })"></textarea>
+                                <small class="middt-ui-text-muted">@param.Description</small>
+                            }
+                            else
+                            {
+                                <input class="middt-wf-input"
+                                       value="@(GetString(cfg, param.Name) ?? "")"
+                                       placeholder="@(param.DefaultValue ?? "")"
+                                       @onchange="@(e => { SetString(cfg, param.Name, e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                <small class="middt-ui-text-muted">@param.Description</small>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    <textarea class="middt-wf-input middt-wf-code-box" spellcheck="false"
+                              value="@cfg.ToJsonString(PrettyJson)"
+                              @onchange="@(e => { ReplaceObjectFromJson(taskObj, "config", e.Value?.ToString()); SyncJsonFromDoc(); })"></textarea>
+                }
+            </div>
+            return;
+        }
+
+        @* 2. Selected Transition Edge Inspector *@
+        if (GetSelectedTransitionObject() is { } trObj && FindState(selectedNodeKey) is not null)
+        {
+            var trTrigger = GetString(trObj, "trigger") ?? "Manual";
+            var trTasks = EnsureArray(trObj, "onExecute");
+
+            <div class="middt-ui-form">
+                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                    <div>
+                        <span class="middt-ui-badge middt-ui-badge-info">🔀 Geçiş Oku (Transition)</span>
+                        <h3 class="middt-ui-section-title rz-mt-1">@(GetString(trObj, "title") ?? GetString(trObj, "key"))</h3>
+                        <small class="middt-ui-text-muted"><code>@selectedNodeKey</code> → <code>@GetString(trObj, "target")</code></small>
+                    </div>
+                    <RadzenButton Icon="delete" Text="Oku Sil" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Danger"
+                                  Click="DeleteSelectedTransition" />
+                </div>
+
+                <div class="middt-wf-grid-2">
+                    <div class="middt-ui-input">
+                        <label>Geçiş Anahtarı (key)</label>
+                        <input class="middt-wf-input" value="@GetString(trObj, "key")"
+                               @onchange="@(e => { SetString(trObj, "key", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Başlık / Buton Adı (title)</label>
+                        <input class="middt-wf-input" value="@GetString(trObj, "title")"
+                               @onchange="@(e => { SetString(trObj, "title", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Hedef Durum (target)</label>
+                        <select class="middt-wf-input" value="@(GetString(trObj, "target") ?? "$self")"
+                                @onchange="@(e => { SetString(trObj, "target", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                            <option value="$self">$self (Aynı Durumda Kal)</option>
+                            @foreach (var st in GetStates())
+                            {
+                                var k = GetString(st, "key") ?? string.Empty;
+                                <option value="@k">@k (@(GetString(st, "title") ?? k))</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Tetikleyici Türü (trigger)</label>
+                        <select class="middt-wf-input" value="@trTrigger"
+                                @onchange="@(e => { SetString(trObj, "trigger", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                            <option value="Manual">Manual (Kullanıcı Butonu / API)</option>
+                            <option value="Automatic">Automatic (Koşullu Otomatik)</option>
+                            <option value="Scheduled">Scheduled (Zamanlayıcı / SLA)</option>
+                            <option value="Event">Event (Mesaj / Olay Tetikli)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="middt-ui-input">
+                    <label>Koşul Kuralı (rule — C# İfadesi)</label>
+                    <input class="middt-wf-input" value="@GetString(trObj, "rule")"
+                           placeholder="data.amount <= 50000"
+                           @onchange="@(e => { SetString(trObj, "rule", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                </div>
+
+                <div class="middt-ui-input">
+                    <label>Açıklama (description — AI Ajan Yönlendirmesi için)</label>
+                    <input class="middt-wf-input" value="@GetString(trObj, "description")"
+                           @onchange="@(e => { SetString(trObj, "description", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                </div>
+
+                @if (trTrigger == "Manual")
+                {
+                    <div class="middt-wf-grid-2">
+                        <div class="middt-ui-input">
+                            <label>Buton Stili (style)</label>
+                            <select class="middt-wf-input" value="@(GetString(trObj, "style") ?? "")"
+                                    @onchange="@(e => { SetString(trObj, "style", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                                <option value="">Varsayılan</option>
+                                <option value="primary">primary (Mavi)</option>
+                                <option value="success">success (Yeşil)</option>
+                                <option value="warning">warning (Sarı)</option>
+                                <option value="danger">danger (Kırmızı)</option>
+                                <option value="secondary">secondary (Gri)</option>
+                            </select>
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Yetkili Roller (roles)</label>
+                            <input class="middt-wf-input" value="@GetCsvArray(trObj, "roles")" placeholder="manager, $starter"
+                                   @onchange="@(e => { SetCsvArray(trObj, "roles", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                        </div>
+                    </div>
+                }
+                else if (trTrigger == "Automatic")
+                {
+                    <label class="middt-ui-check">
+                        <input type="checkbox" checked="@GetBool(trObj, "default")"
+                               @onchange="@(e => { SetBool(trObj, "default", e.Value is true); SyncJsonFromDoc(); })" />
+                        <span>Varsayılan Dal (<code>default: true</code>)</span>
+                    </label>
+                }
+                else if (trTrigger == "Scheduled")
+                {
+                    <div class="middt-ui-input">
+                        <label>Bekleme Süresi (after)</label>
+                        <input class="middt-wf-input" value="@GetString(trObj, "after")" placeholder="00:10:00 veya PT10M"
+                               @onchange="@(e => { SetString(trObj, "after", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                }
+                else if (trTrigger == "Event")
+                {
+                    <div class="middt-ui-input">
+                        <label>Beklenen Olay Adı (event)</label>
+                        <input class="middt-wf-input" value="@GetString(trObj, "event")" placeholder="PaymentCaptured"
+                               @onchange="@(e => { SetString(trObj, "event", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                }
+
+                <hr class="middt-ui-divider" />
+                <h4 class="middt-ui-section-title">⚡ Geçiş Görevleri (onExecute: @trTasks.Count)</h4>
+                <div class="middt-wf-dropzone"
+                     @ondragover:preventDefault="true"
+                     @ondrop="@(e => OnDropOntoTransitionBadge(e, selectedNodeKey, selectedTransitionIndex))">
+                    @if (trTasks.Count == 0)
+                    {
+                        <div class="middt-wf-dropzone-empty">Sol paletten bir görevi buraya veya tuvaldeki geçiş okuna sürükleyin</div>
+                    }
+                    @for (var ti = 0; ti < trTasks.Count; ti++)
+                    {
+                        var taskIdx = ti;
+                        if (trTasks[taskIdx] is JsonObject tObj)
+                        {
+                            <button type="button" class="middt-wf-task-pill"
+                                    @onclick="@(() => SelectTransitionTask(selectedNodeKey, selectedTransitionIndex, taskIdx))">
+                                <span>⚡ @TaskSummary(tObj)</span>
+                                <small>@TaskBadges(tObj)</small>
+                            </button>
+                        }
+                    }
+                </div>
+            </div>
+            return;
+        }
+
+        @* 3. Selected State Node Inspector *@
+        if (FindState(selectedNodeKey) is { } stateObj)
+        {
+            var stateKey = GetString(stateObj, "key") ?? string.Empty;
+            var transitions = EnsureArray(stateObj, "transitions");
+
+            <div class="middt-ui-form">
+                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                    <div>
+                        <span class="middt-ui-badge middt-ui-badge-primary">📍 Durum (State)</span>
+                        <h3 class="middt-ui-section-title rz-mt-1">@(GetString(stateObj, "title") ?? stateKey)</h3>
+                    </div>
+                    <RadzenButton Icon="delete" Text="Durumu Sil" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.ExtraSmall"
+                                  Click="@(() => RemoveState(stateKey))" />
+                </div>
+
+                <div class="middt-wf-grid-2">
+                    <div class="middt-ui-input">
+                        <label>Durum Anahtarı (key)</label>
+                        <input class="middt-wf-input" value="@stateKey"
+                               @onchange="@(e => RenameState(stateObj, e.Value?.ToString()))" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Durum Başlığı (title)</label>
+                        <input class="middt-wf-input" value="@GetString(stateObj, "title")"
+                               @onchange="@(e => { SetString(stateObj, "title", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Durum Tipi (type)</label>
+                        <select class="middt-wf-input" value="@(GetString(stateObj, "type") ?? "Intermediate")"
+                                @onchange="@(e => ChangeStateType(stateObj, e.Value?.ToString()))">
+                            <option value="Initial">Initial</option>
+                            <option value="Intermediate">Intermediate</option>
+                            <option value="SubFlow">SubFlow</option>
+                            <option value="Finish">Finish</option>
+                        </select>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Alt Tip (subType)</label>
+                        <select class="middt-wf-input" value="@(GetString(stateObj, "subType") ?? "None")"
+                                @onchange="@(e => { SetString(stateObj, "subType", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                            <option value="None">None (Sistem / Otomatik)</option>
+                            <option value="Human">Human (İnsan Görevi)</option>
+                            <option value="Success">Success (Başarılı Sonuç)</option>
+                            <option value="Error">Error (Red / Hata)</option>
+                            <option value="Cancelled">Cancelled (İptal)</option>
+                            <option value="Timeout">Timeout (Zaman Aşımı)</option>
+                        </select>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>İlerleme Çubuğu Adım Sırası (step)</label>
+                        <input type="number" class="middt-wf-input" placeholder="Ör: 1, 2, 3" value="@(GetIntNullable(stateObj, "step")?.ToString(CultureInfo.InvariantCulture) ?? "")"
+                               @onchange="@(e => { SetIntNullable(stateObj, "step", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                        <small class="middt-ui-text-muted">Kayıt detay ekranının üstündeki ilerleme çubuğunda (1 → 2 → 3) kaçıncı aşama olarak görüneceğini belirler. Boş bırakılırsa adım çubuğunda yer almaz.</small>
+                    </div>
+                    @if (GetString(stateObj, "type") != "SubFlow")
+                    {
+                        var curLayoutKey = GetNestedString(stateObj, "view", "layout") ?? string.Empty;
+                        <div class="middt-ui-input">
+                            <label>Ekran Yerleşimi (view.layout)</label>
+                            <div class="middt-ui-picker">
+                                <select class="middt-wf-input" value="@curLayoutKey"
+                                        @onchange="@(e => { SetNestedString(stateObj, "view", "layout", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                                    <option value="">(Ekran seçilmedi — Varsayılan Şema Görünümü)</option>
+                                    @foreach (var l in uiLayouts)
+                                    {
+                                        <option value="@l.Key">@l.Key (@(l.Title ?? l.Key) · @l.Kind)</option>
+                                    }
+                                    @if (!string.IsNullOrEmpty(curLayoutKey) && !uiLayouts.Any(l => string.Equals(l.Key, curLayoutKey, StringComparison.Ordinal)))
+                                    {
+                                        <option value="@curLayoutKey">@curLayoutKey (Yeni / Özel)</option>
+                                    }
+                                </select>
+                                <input class="middt-wf-input" style="max-width: 140px" value="@curLayoutKey"
+                                       placeholder="credit-review"
+                                       @onchange="@(e => { SetNestedString(stateObj, "view", "layout", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                            </div>
+                            <div class="middt-ui-toolbar" style="margin-top: .25rem">
+                                @if (!string.IsNullOrWhiteSpace(curLayoutKey))
+                                {
+                                    <RadzenButton Icon="edit" Text="Ekranı Tasarla / Düzenle" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Info"
+                                                  Click="@(() => OpenScreenDesignerForState(stateObj, curLayoutKey))" />
+                                    <RadzenButton Icon="open_in_new" Text="Bağımsız Aç" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                                  Click="@(() => NavigateToStandaloneScreenDesigner(curLayoutKey))" />
+                                }
+                                <RadzenButton Icon="auto_fix_high" Text="Yeni Ekran Oluştur & Bağla" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Secondary"
+                                              Click="@(() => CreateAndBindNewScreenForState(stateObj))" />
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="middt-ui-input">
+                            <label>Ekran Yerleşimi (Alt Akışтан Otomatik)</label>
+                            <small class="middt-ui-text-muted">🔗 <strong>SubFlow</strong> durumlarında ayrı bir ekran tanımlanmaz; çalışma zamanında çağrılan alt akışın kendi aktif adım ekranı (<code>view.layout</code>) otomatik olarak gösterilir.</small>
+                        </div>
+                    }
+                </div>
+
+                @if (GetString(stateObj, "type") == "SubFlow")
+                {
+                    var subFlowObj = EnsureObject(stateObj, "subFlow");
+                    var sfTarget = GetString(subFlowObj, "workflow") ?? string.Empty;
+                    var sfInputObj = EnsureObject(subFlowObj, "input");
+                    var sfForward = subFlowObj["forwardTransitions"] is null || GetBool(subFlowObj, "forwardTransitions");
+
+                    <hr class="middt-ui-divider" />
+                    <div class="middt-ui-toolbar" style="justify-content: space-between">
+                        <h4 class="middt-ui-section-title">🔗 Alt Akış Ayarları (subFlow)</h4>
+                        @if (!string.IsNullOrWhiteSpace(sfTarget))
+                        {
+                            <RadzenButton Icon="open_in_new" Text="@($"'{sfTarget}' Akışını Aç")" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Info"
+                                          Click="@(() => OpenWorkflowAsync(sfTarget))" />
+                        }
+                    </div>
+
+                    <div class="middt-wf-grid-2">
+                        <div class="middt-ui-input">
+                            <label>Çağrılacak Alt Akış (subFlow.workflow)</label>
+                            <select class="middt-wf-input" value="@sfTarget"
+                                    @onchange="@(e => { SetString(subFlowObj, "workflow", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                                <option value="">(Alt akış seçiniz)</option>
+                                @foreach (var w in workflows.Where(w => !string.Equals(w.Key, GetString(doc, "key"), StringComparison.Ordinal)))
+                                {
+                                    <option value="@w.Key">@w.Key (@(w.Title ?? w.Key))</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Sonucun Yazılacağı Alan (subFlow.outputInto)</label>
+                            <input class="middt-wf-input" value="@GetString(subFlowObj, "outputInto")"
+                                   placeholder="Ör: riskResult (boşsa kök veriye birleştirir)"
+                                   @onchange="@(e => { SetString(subFlowObj, "outputInto", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                        </div>
+                    </div>
+
+                    <label class="middt-ui-check">
+                        <input type="checkbox" checked="@sfForward"
+                               @onchange="@(e => { SetBool(subFlowObj, "forwardTransitions", e.Value is true); SyncJsonFromDoc(); })" />
+                        <span>Alt akışın manuel geçiş butonlarını üst akış ekranından doğrudan tetiklemeye izin ver (<code>forwardTransitions: true</code>)</span>
+                    </label>
+
+                    <div class="middt-ui-toolbar" style="justify-content: space-between; margin-top: .35rem">
+                        <label style="font-size: .78rem; font-weight: 600">Alt Akışa Gönderilecek Giriş Verileri (subFlow.input: @sfInputObj.Count)</label>
+                        <RadzenButton Icon="add" Text="Parametre Ekle" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                      Click="@(() => AddSubFlowInputRow(sfInputObj))" />
+                    </div>
+                    <small class="middt-ui-text-muted">Boş bırakılırsa üst akışın tüm verisi alt akışa kopyalanır.</small>
+                    @foreach (var kv in sfInputObj.ToList())
+                    {
+                        var paramKey = kv.Key;
+                        var paramExpr = kv.Value?.ToString() ?? string.Empty;
+                        <div class="middt-ui-picker">
+                            <input class="middt-wf-input" style="max-width: 150px" value="@paramKey" placeholder="hedefAlan"
+                                   @onchange="@(e => RenameSubFlowInputKey(sfInputObj, paramKey, e.Value?.ToString()))" />
+                            <span>=</span>
+                            <input class="middt-wf-input" style="flex: 1" value="@paramExpr" placeholder="data.customerKey"
+                                   @onchange="@(e => { sfInputObj[paramKey] = e.Value?.ToString() ?? string.Empty; SyncJsonFromDoc(); })" />
+                            <RadzenButton Icon="delete" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.ExtraSmall"
+                                          Click="@(() => { sfInputObj.Remove(paramKey); SyncJsonFromDoc(); })" />
+                        </div>
+                    }
+                }
+
+                @if (GetString(stateObj, "type") != "Finish")
+                {
+                    <hr class="middt-ui-divider" />
+                    <div class="middt-ui-toolbar" style="justify-content: space-between">
+                        <h4 class="middt-ui-section-title">🔀 Çıkan Geçiş Okları (@transitions.Count)</h4>
+                        <RadzenButton Icon="add" Text="Geçiş Ekle" Size="ButtonSize.ExtraSmall" Click="@(() => AddTransition(stateObj))" />
+                    </div>
+                    <small class="middt-ui-text-muted">İpucu: Tuvalde durumun sağındaki mavi noktadan (●) başka bir duruma basılı tutup sürükleyerek canlı ok çizebilirsiniz.</small>
+                    @for (var tri = 0; tri < transitions.Count; tri++)
+                    {
+                        var trIdx = tri;
+                        if (transitions[trIdx] is JsonObject trItem)
+                        {
+                            <div class="middt-ui-picker">
+                                <button type="button" class="middt-wf-edge-pill" style="flex: 1"
+                                        @onclick="@(() => SelectTransition(stateKey, trIdx))">
+                                    <span>@TriggerIcon(GetString(trItem, "trigger")) @(GetString(trItem, "title") ?? GetString(trItem, "key")) → @(GetString(trItem, "target"))</span>
+                                    <small>Düzenle →</small>
+                                </button>
+                                <RadzenButton Icon="delete" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.ExtraSmall"
+                                              Click="@(() => RemoveSingleEdge(stateKey, trIdx))" />
+                            </div>
+                        }
+                    }
+                }
+                else
+                {
+                    <hr class="middt-ui-divider" />
+                    <small class="middt-ui-text-muted">🏁 <strong>Finish (Bitiş)</strong> durumlarında akış sonlandığı için çıkış görevi (<code>onExit</code>) veya çıkan geçiş oku (<code>transitions</code>) eklenemez; yalnızca giriş görevleri (<code>onEntry</code>) çalışır.</small>
+                }
+            </div>
+            return;
+        }
+
+        @* 4. Default: Workflow Root & Start Node Inspector *@
+        var stObj = EnsureObject(doc, "start");
+        <div class="middt-ui-form">
+            <span class="middt-ui-badge middt-ui-badge-info">🚀 İş Akışı & Başlangıç</span>
+            <h3 class="middt-ui-section-title">@(GetString(doc, "title") ?? "İş Akışı Ayarları")</h3>
+
+            <div class="middt-wf-grid-2">
+                <div class="middt-ui-input">
+                    <label>Akış Anahtarı (key)</label>
+                    <input class="middt-wf-input" value="@GetString(doc, "key")"
+                           disabled="@(selectedWorkflowKey is not null)"
+                           @onchange="@(e => { SetString(doc, "key", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                </div>
+                <div class="middt-ui-input">
+                    <label>Akış Başlığı (title)</label>
+                    <input class="middt-wf-input" value="@GetString(doc, "title")"
+                           @onchange="@(e => { SetString(doc, "title", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                </div>
+                <div class="middt-ui-input">
+                    <label>Menü İkonu (icon)</label>
+                    <input class="middt-wf-input" value="@GetString(doc, "icon")" placeholder="account_tree"
+                           @onchange="@(e => { SetString(doc, "icon", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                </div>
+                <div class="middt-ui-input">
+                    <label>Tarihçe Modu (history)</label>
+                    <select class="middt-wf-input" value="@(GetString(doc, "history") ?? "Full")"
+                            @onchange="@(e => { SetString(doc, "history", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                        <option value="Full">Full (Tam Snapshot)</option>
+                        <option value="Delta">Delta (JSON Patch Farkı)</option>
+                        <option value="None">None (Tarihçe Tutma)</option>
+                    </select>
+                </div>
+                <div class="middt-ui-input">
+                    <label>Erişim Modu (instanceAccess.mode)</label>
+                    <select class="middt-wf-input" value="@GetAccessMode()"
+                            @onchange="@(e => SetAccessMode(e.Value?.ToString()))">
+                        <option value="all">all (Yetkili Herkes Görür)</option>
+                        <option value="owner">owner (Sadece Başlatan ve Supervisor)</option>
+                    </select>
+                </div>
+                <div class="middt-ui-input">
+                    <label>Roller (roles, virgülle)</label>
+                    <input class="middt-wf-input" value="@GetCsvArray(doc, "roles")"
+                           @onchange="@(e => { SetCsvArray(doc, "roles", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                </div>
+            </div>
+
+            <hr class="middt-ui-divider" />
+            <h4 class="middt-ui-section-title">🚀 Başlangıç (start) Ayarları</h4>
+            <div class="middt-ui-input">
+                <label>İlk Hedef Durum (start.target)</label>
+                <select class="middt-wf-input" value="@GetString(stObj, "target")"
+                        @onchange="@(e => { SetString(stObj, "target", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                    @foreach (var st in GetStates())
+                    {
+                        var k = GetString(st, "key") ?? string.Empty;
+                        <option value="@k">@k (@(GetString(st, "title") ?? k))</option>
+                    }
+                </select>
+            </div>
+            <div class="middt-ui-input">
+                <label>Başlangıç Giriş Kuralı (start.input.rule)</label>
+                <input class="middt-wf-input" value="@GetNestedString(stObj, "input", "rule")"
+                       placeholder="input.amount > 0"
+                       @onchange="@(e => { SetNestedString(stObj, "input", "rule", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+            </div>
+        </div>
+    };
+
+    // --- HTML5 Palette Drag & Drop Handlers ---
+
+    private void StartPaletteStateDrag(DragEventArgs e, string type, string subType, string defaultTitle)
+    {
+        dragKind = "palette-state";
+        dragStateType = type;
+        dragStateSubType = subType;
+        dragStateTitle = defaultTitle;
+    }
+
+    private void StartPaletteTaskDrag(DragEventArgs e, string taskType)
+    {
+        dragKind = "palette-task";
+        dragTaskType = taskType;
+    }
+
+    private void StartExistingTaskDrag(DragEventArgs e, string nodeKey, string hook, int taskIndex)
+    {
+        dragKind = "move-task";
+        dragSourceNodeKey = nodeKey;
+        dragSourceHook = hook;
+        dragSourceIndex = taskIndex;
+    }
+
+    private void OnBoardDragOver(DragEventArgs e)
+    {
+        // Allows drop on board
+    }
+
+    private void OnBoardDrop(DragEventArgs e)
+    {
+        hoverDropKey = null;
+        if (dragKind == "palette-state" && dragStateType is not null)
+        {
+            var dropPos = ComputeBoardDropPos(e);
+            CreateStateOnBoard(dragStateType, dragStateSubType ?? "None", dragStateTitle ?? "Yeni Durum", dropPos.X, dropPos.Y);
+        }
+        else if (dragKind == "palette-task" && dragTaskType is not null)
+        {
+            var dropPos = ComputeBoardDropPos(e);
+            var newStateKey = CreateStateOnBoard("Intermediate", "None", $"{dragTaskType} Adımı", dropPos.X, dropPos.Y);
+            if (FindState(newStateKey) is { } stObj)
+            {
+                var onEntry = EnsureArray(stObj, "onEntry");
+                onEntry.Add(CreateTaskNode(dragTaskType));
+                SelectStateTask(newStateKey, "onEntry", onEntry.Count - 1);
+                SyncJsonFromDoc();
+            }
+        }
+
+        ClearDragState();
+    }
+
+    private void OnDropOntoStateNode(DragEventArgs e, string targetStateKey)
+    {
+        hoverDropKey = null;
+        if (dragKind is "palette-task" or "move-task")
+        {
+            OnDropOntoHook(e, targetStateKey, "onEntry");
+            return;
+        }
+
+        OnBoardDrop(e);
+    }
+
+    private void ChangeStateType(JsonObject stateObj, string? newType)
+    {
+        SetString(stateObj, "type", newType);
+        if (string.Equals(newType, "Finish", StringComparison.Ordinal))
+        {
+            stateObj.Remove("onExit");
+            stateObj.Remove("transitions");
+            stateObj.Remove("subFlow");
+        }
+        else if (string.Equals(newType, "SubFlow", StringComparison.Ordinal))
+        {
+            stateObj.Remove("view");
+            var sf = EnsureObject(stateObj, "subFlow");
+            if (sf["workflow"] is null)
+            {
+                var firstOther = workflows.FirstOrDefault(w => !string.Equals(w.Key, GetString(doc, "key"), StringComparison.Ordinal))?.Key ?? string.Empty;
+                sf["workflow"] = firstOther;
+            }
+        }
+        else
+        {
+            stateObj.Remove("subFlow");
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void AddSubFlowInputRow(JsonObject sfInputObj)
+    {
+        var idx = sfInputObj.Count + 1;
+        var paramKey = $"param{idx}";
+        while (sfInputObj.ContainsKey(paramKey))
+        {
+            idx++;
+            paramKey = $"param{idx}";
+        }
+
+        sfInputObj[paramKey] = "data.title";
+        SyncJsonFromDoc();
+    }
+
+    private void RenameSubFlowInputKey(JsonObject sfInputObj, string oldKey, string? newKey)
+    {
+        var trimmed = newKey?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(trimmed) || string.Equals(oldKey, trimmed, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var existingVal = sfInputObj[oldKey]?.DeepClone();
+        sfInputObj.Remove(oldKey);
+        sfInputObj[trimmed] = existingVal ?? string.Empty;
+        SyncJsonFromDoc();
+    }
+
+    private void OnDropOntoHook(DragEventArgs e, string targetNodeKey, string targetHook)
+    {
+        hoverDropKey = null;
+        if (targetHook == "onExit" && FindState(targetNodeKey) is { } tgtSt && GetString(tgtSt, "type") == "Finish")
+        {
+            ClearDragState();
+            return;
+        }
+
+        var targetArr = GetHookArray(targetNodeKey, targetHook);
+        if (targetArr is null)
+        {
+            ClearDragState();
+            return;
+        }
+
+        if (dragKind == "palette-task" && dragTaskType is not null)
+        {
+            targetArr.Add(CreateTaskNode(dragTaskType));
+            selectedNodeKey = targetNodeKey;
+            selectedTransitionIndex = -1;
+            selectedTaskHook = targetHook;
+            selectedTaskIndex = targetArr.Count - 1;
+            SyncJsonFromDoc();
+        }
+        else if (dragKind == "move-task" && dragSourceNodeKey is not null && dragSourceHook is not null)
+        {
+            var srcArr = GetHookArray(dragSourceNodeKey, dragSourceHook);
+            if (srcArr is not null && dragSourceIndex >= 0 && dragSourceIndex < srcArr.Count)
+            {
+                var moving = srcArr[dragSourceIndex]?.DeepClone();
+                if (moving is not null)
+                {
+                    srcArr.RemoveAt(dragSourceIndex);
+                    targetArr.Add(moving);
+                    selectedNodeKey = targetNodeKey;
+                    selectedTransitionIndex = -1;
+                    selectedTaskHook = targetHook;
+                    selectedTaskIndex = targetArr.Count - 1;
+                    SyncJsonFromDoc();
+                }
+            }
+        }
+
+        ClearDragState();
+    }
+
+    private void OnDropOntoTransitionBadge(DragEventArgs e, string stateKey, int transitionIndex)
+    {
+        hoverDropKey = null;
+        if (FindState(stateKey) is not { } stObj)
+        {
+            ClearDragState();
+            return;
+        }
+
+        var transitions = EnsureArray(stObj, "transitions");
+        if (transitionIndex < 0 || transitionIndex >= transitions.Count || transitions[transitionIndex] is not JsonObject trObj)
+        {
+            ClearDragState();
+            return;
+        }
+
+        var onExec = EnsureArray(trObj, "onExecute");
+        if (dragKind == "palette-task" && dragTaskType is not null)
+        {
+            onExec.Add(CreateTaskNode(dragTaskType));
+            SelectTransitionTask(stateKey, transitionIndex, onExec.Count - 1);
+            SyncJsonFromDoc();
+        }
+        else if (dragKind == "move-task" && dragSourceNodeKey is not null && dragSourceHook is not null)
+        {
+            var srcArr = GetHookArray(dragSourceNodeKey, dragSourceHook);
+            if (srcArr is not null && dragSourceIndex >= 0 && dragSourceIndex < srcArr.Count)
+            {
+                var moving = srcArr[dragSourceIndex]?.DeepClone();
+                if (moving is not null)
+                {
+                    srcArr.RemoveAt(dragSourceIndex);
+                    onExec.Add(moving);
+                    SelectTransitionTask(stateKey, transitionIndex, onExec.Count - 1);
+                    SyncJsonFromDoc();
+                }
+            }
+        }
+
+        ClearDragState();
+    }
+
+    private void CompleteConnection(string fromNodeKey, string targetStateKey)
+    {
+        if (fromNodeKey == StartNodeKey)
+        {
+            var startObj = EnsureObject(doc, "start");
+            startObj["target"] = targetStateKey;
+            SelectStart();
+            SyncJsonFromDoc();
+            return;
+        }
+
+        if (FindState(fromNodeKey) is not { } fromState || GetString(fromState, "type") == "Finish")
+        {
+            return;
+        }
+
+        var transitions = EnsureArray(fromState, "transitions");
+        var actualTarget = string.Equals(fromNodeKey, targetStateKey, StringComparison.Ordinal) ? "$self" : targetStateKey;
+        var key = $"to-{targetStateKey}-{transitions.Count + 1}";
+        transitions.Add(new JsonObject
+        {
+            ["key"] = key,
+            ["title"] = actualTarget == "$self" ? "Güncelle" : $"Geçiş: {targetStateKey}",
+            ["target"] = actualTarget,
+            ["trigger"] = "Manual",
+        });
+
+        var newIdx = transitions.Count - 1;
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedEdgeIds.Add(MakeEdgeId(fromNodeKey, newIdx));
+        SelectTransition(fromNodeKey, newIdx);
+        SyncJsonFromDoc();
+    }
+
+    private void ClearHoverDrop(string key)
+    {
+        if (hoverDropKey == key)
+        {
+            hoverDropKey = null;
+        }
+    }
+
+    private void ClearDragState()
+    {
+        dragKind = null;
+        dragStateType = null;
+        dragStateSubType = null;
+        dragStateTitle = null;
+        dragTaskType = null;
+        dragSourceNodeKey = null;
+        dragSourceHook = null;
+        dragSourceIndex = -1;
+    }
+
+    private NodePoint ComputeBoardDropPos(DragEventArgs e)
+    {
+        if (e.OffsetX > 20 && e.OffsetY > 20)
+        {
+            return new NodePoint(Snap(e.OffsetX), Snap(e.OffsetY));
+        }
+
+        var maxX = nodePositions.Values.Select(p => p.X).DefaultIfEmpty(60).Max();
+        return new NodePoint(Snap(maxX + 320), 140);
+    }
+
+    private string CreateStateOnBoard(string type, string subType, string title, double x, double y)
+    {
+        var states = EnsureArray(doc, "states");
+        var idx = states.Count + 1;
+        var key = $"state-{idx}";
+        while (FindState(key) is not null)
+        {
+            idx++;
+            key = $"state-{idx}";
+        }
+
+        var newState = new JsonObject
+        {
+            ["key"] = key,
+            ["title"] = title,
+            ["type"] = type,
+            ["subType"] = subType,
+            ["step"] = idx,
+        };
+        if (type == "SubFlow")
+        {
+            var firstOther = workflows.FirstOrDefault(w => !string.Equals(w.Key, GetString(doc, "key"), StringComparison.Ordinal))?.Key ?? string.Empty;
+            newState["subFlow"] = new JsonObject
+            {
+                ["workflow"] = firstOther,
+                ["outputInto"] = "subFlowResult",
+                ["forwardTransitions"] = true,
+            };
+        }
+
+        if (type != "Finish")
+        {
+            newState["onEntry"] = new JsonArray();
+            newState["transitions"] = new JsonArray();
+        }
+
+        states.Add(newState);
+        SetNodePos(key, x, y);
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedNodeKeys.Add(key);
+        SelectState(key);
+        SyncJsonFromDoc();
+        return key;
+    }
+
+    private void AddStateAtDefaultPos(string type, string subType, string title)
+    {
+        var basePos = GetNodePos(selectedNodeKey);
+        CreateStateOnBoard(type, subType, title, Snap(basePos.X + 340), Snap(basePos.Y));
+    }
+
+    private void QuickAddTaskToSelection(string taskType)
+    {
+        var targetNode = selectedNodeKey;
+        var hook = targetNode == StartNodeKey ? "onExecute" : "onEntry";
+        var arr = GetHookArray(targetNode, hook);
+        if (arr is null)
+        {
+            return;
+        }
+
+        arr.Add(CreateTaskNode(taskType));
+        selectedTaskHook = hook;
+        selectedTransitionIndex = -1;
+        selectedTaskIndex = arr.Count - 1;
+        SyncJsonFromDoc();
+    }
+
+    private JsonObject CreateTaskNode(string taskType)
+    {
+        var spec = taskSpecs.FirstOrDefault(s => string.Equals(s.Name, taskType, StringComparison.OrdinalIgnoreCase));
+        var cfg = spec?.Template.DeepClone() as JsonObject ?? new JsonObject();
+        var uniqueSuffix = Guid.NewGuid().ToString("N")[..4];
+        return new JsonObject
+        {
+            ["key"] = $"{taskType}-{uniqueSuffix}",
+            ["task"] = taskType,
+            ["config"] = cfg,
+        };
+    }
+
+    // --- 2D Layout & SVG Bezier Geometry ---
+
+    private void AutoLayoutBoard()
+    {
+        EnsureNodePositions(forceAutoLayout: true);
+        SyncJsonFromDoc();
+    }
+
+    private void ChangeZoom(double delta)
+    {
+        zoom = Math.Clamp(Math.Round(zoom + delta, 2), 0.5, 1.5);
+    }
+
+    private void EnsureNodePositions(bool forceAutoLayout)
+    {
+        var layoutObj = doc["x-layout"] as JsonObject;
+        if (!forceAutoLayout && layoutObj is not null)
+        {
+            nodePositions.Clear();
+            foreach (var kv in layoutObj)
+            {
+                if (kv.Value is JsonObject pt)
+                {
+                    var x = pt["x"]?.GetValue<double>() ?? 60;
+                    var y = pt["y"]?.GetValue<double>() ?? 160;
+                    nodePositions[kv.Key] = new NodePoint(x, y);
+                }
+            }
+        }
+
+        var states = GetStates();
+        if (forceAutoLayout || !nodePositions.ContainsKey(StartNodeKey))
+        {
+            ComputeDagAutoLayout(states);
+            return;
+        }
+
+        var nextCol = 1;
+        foreach (var st in states)
+        {
+            var k = GetString(st, "key") ?? string.Empty;
+            if (!string.IsNullOrEmpty(k) && !nodePositions.ContainsKey(k))
+            {
+                SetNodePos(k, 60 + (nextCol * 340), 140);
+                nextCol++;
+            }
+        }
+    }
+
+    private void ComputeDagAutoLayout(List<JsonObject> states)
+    {
+        nodePositions.Clear();
+        SetNodePos(StartNodeKey, 40, 220);
+
+        var startTarget = GetNestedString(doc, "start", "target");
+        var layers = new Dictionary<string, int>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+
+        if (!string.IsNullOrWhiteSpace(startTarget) && FindState(startTarget) is not null)
+        {
+            layers[startTarget] = 0;
+            queue.Enqueue(startTarget);
+        }
+
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            var curLayer = layers[cur];
+            if (FindState(cur) is { } stObj && stObj["transitions"] is JsonArray trArr)
+            {
+                foreach (var item in trArr.OfType<JsonObject>())
+                {
+                    var tgt = GetString(item, "target");
+                    if (!string.IsNullOrWhiteSpace(tgt) && tgt != "$self" && !layers.ContainsKey(tgt) && FindState(tgt) is not null)
+                    {
+                        layers[tgt] = curLayer + 1;
+                        queue.Enqueue(tgt);
+                    }
+                }
+            }
+        }
+
+        var maxLayer = layers.Values.DefaultIfEmpty(0).Max();
+        foreach (var st in states)
+        {
+            var k = GetString(st, "key") ?? string.Empty;
+            if (!string.IsNullOrEmpty(k) && !layers.ContainsKey(k))
+            {
+                maxLayer++;
+                layers[k] = maxLayer;
+            }
+        }
+
+        foreach (var grp in layers.GroupBy(kv => kv.Value).OrderBy(g => g.Key))
+        {
+            var col = grp.Key;
+            var keys = grp.Select(kv => kv.Key).ToList();
+            for (var row = 0; row < keys.Count; row++)
+            {
+                var x = 340 + (col * 350);
+                var y = 80 + (row * 260);
+                SetNodePos(keys[row], x, y);
+            }
+        }
+    }
+
+    private NodePoint GetNodePos(string nodeKey) =>
+        nodePositions.TryGetValue(nodeKey, out var pt) ? pt : new NodePoint(80, 160);
+
+    private void SetNodePos(string nodeKey, double x, double y)
+    {
+        var pt = new NodePoint(Snap(x), Snap(y));
+        nodePositions[nodeKey] = pt;
+        var layoutObj = EnsureObject(doc, "x-layout");
+        layoutObj[nodeKey] = new JsonObject
+        {
+            ["x"] = pt.X,
+            ["y"] = pt.Y,
+        };
+    }
+
+    private static double Snap(double v) => Math.Round(v / 16.0) * 16.0;
+    private static string F(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+
+    private List<CanvasEdge> BuildAllEdges()
+    {
+        var list = new List<CanvasEdge>();
+        var states = GetStates();
+
+        var pairCounts = new Dictionary<(string From, string Target), int>();
+        foreach (var st in states)
+        {
+            var fromKey = GetString(st, "key") ?? string.Empty;
+            if (st["transitions"] is not JsonArray trs)
+            {
+                continue;
+            }
+
+            foreach (var tr in trs.OfType<JsonObject>())
+            {
+                var rawTarget = GetString(tr, "target") ?? "$self";
+                var resolvedTarget = rawTarget == "$self" ? fromKey : rawTarget;
+                var pair = (fromKey, resolvedTarget);
+                pairCounts[pair] = pairCounts.GetValueOrDefault(pair) + 1;
+            }
+        }
+
+        var pairSeen = new Dictionary<(string From, string Target), int>();
+        foreach (var st in states)
+        {
+            var fromKey = GetString(st, "key") ?? string.Empty;
+            if (st["transitions"] is not JsonArray trs)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < trs.Count; i++)
+            {
+                if (trs[i] is not JsonObject tr)
+                {
+                    continue;
+                }
+
+                var rawTarget = GetString(tr, "target") ?? "$self";
+                var resolvedTarget = rawTarget == "$self" ? fromKey : rawTarget;
+                if (FindState(resolvedTarget) is null)
+                {
+                    continue;
+                }
+
+                var pair = (fromKey, resolvedTarget);
+                var idxInPair = pairSeen.GetValueOrDefault(pair);
+                pairSeen[pair] = idxInPair + 1;
+                var totalInPair = pairCounts[pair];
+
+                var geom = ComputeEdgeGeometry(fromKey, resolvedTarget, idxInPair, totalInPair);
+                var tKey = GetString(tr, "key") ?? $"t-{i + 1}";
+                var tLabel = GetString(tr, "title") ?? tKey;
+                var tTrigger = GetString(tr, "trigger") ?? "Manual";
+                var taskCount = (tr["onExecute"] as JsonArray)?.Count ?? 0;
+
+                list.Add(new CanvasEdge(MakeEdgeId(fromKey, i), fromKey, resolvedTarget, i, tKey, tLabel, tTrigger, taskCount, geom));
+            }
+        }
+
+        return list;
+    }
+
+    private EdgeGeometry ComputeEdgeGeometry(string fromKey, string targetKey, int parallelIndex, int parallelTotal)
+    {
+        var fromPos = GetNodePos(fromKey);
+        var fromWidth = fromKey == StartNodeKey ? StartNodeWidth : StateNodeWidth;
+        var x1 = fromPos.X + fromWidth;
+        var y1 = fromPos.Y + PortOffsetY;
+
+        if (string.Equals(fromKey, targetKey, StringComparison.Ordinal))
+        {
+            var loopHeight = 56 + (parallelIndex * 24);
+            var sx = fromPos.X + fromWidth - 36;
+            var sy = fromPos.Y;
+            var ex = fromPos.X + fromWidth;
+            var ey = fromPos.Y + PortOffsetY;
+            var path = FormattableString.Invariant($"M {sx:0.#} {sy:0.#} C {sx:0.#} {sy - loopHeight:0.#}, {ex + 54:0.#} {sy - loopHeight:0.#}, {ex:0.#} {ey:0.#}");
+            return new EdgeGeometry(path, sx + 22, sy - (loopHeight * 0.72));
+        }
+
+        var toPos = GetNodePos(targetKey);
+        var x2 = toPos.X;
+        var y2 = toPos.Y + PortOffsetY;
+
+        var spread = (parallelIndex - ((parallelTotal - 1) / 2.0)) * 34.0;
+        var dx = Math.Max(90.0, Math.Abs(x2 - x1) * 0.45);
+        var cx1 = x1 + dx;
+        var cy1 = y1 + spread;
+        var cx2 = x2 - dx;
+        var cy2 = y2 + spread;
+
+        var bezier = FormattableString.Invariant($"M {x1:0.#} {y1:0.#} C {cx1:0.#} {cy1:0.#}, {cx2:0.#} {cy2:0.#}, {x2:0.#} {y2:0.#}");
+        var midX = (0.125 * x1) + (0.375 * cx1) + (0.375 * cx2) + (0.125 * x2);
+        var midY = (0.125 * y1) + (0.375 * cy1) + (0.375 * cy2) + (0.125 * y2);
+        return new EdgeGeometry(bezier, midX, midY);
+    }
+
+    // --- Selection & Editing Helpers ---
+
+    private JsonArray? GetHookArray(string nodeKey, string hook)
+    {
+        if (nodeKey == StartNodeKey)
+        {
+            return EnsureArray(EnsureObject(doc, "start"), "onExecute");
+        }
+
+        if (FindState(nodeKey) is { } stObj)
+        {
+            if (hook is "onEntry" or "onExit")
+            {
+                return EnsureArray(stObj, hook);
+            }
+
+            if (hook.StartsWith("transition:", StringComparison.Ordinal) &&
+                int.TryParse(hook.AsSpan("transition:".Length), NumberStyles.Integer, CultureInfo.InvariantCulture, out var trIdx))
+            {
+                var trs = EnsureArray(stObj, "transitions");
+                if (trIdx >= 0 && trIdx < trs.Count && trs[trIdx] is JsonObject trObj)
+                {
+                    return EnsureArray(trObj, "onExecute");
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private JsonObject? GetSelectedTaskObject()
+    {
+        if (selectedTaskIndex < 0)
+        {
+            return null;
+        }
+
+        var arr = GetHookArray(selectedNodeKey, selectedTaskHook);
+        if (arr is null || selectedTaskIndex >= arr.Count)
+        {
+            return null;
+        }
+
+        return arr[selectedTaskIndex] as JsonObject;
+    }
+
+    private JsonObject? GetSelectedTransitionObject()
+    {
+        if (selectedTransitionIndex < 0 || FindState(selectedNodeKey) is not { } stObj)
+        {
+            return null;
+        }
+
+        var trs = EnsureArray(stObj, "transitions");
+        return selectedTransitionIndex < trs.Count ? trs[selectedTransitionIndex] as JsonObject : null;
+    }
+
+    private void MoveSelectedTask(int delta)
+    {
+        var arr = GetHookArray(selectedNodeKey, selectedTaskHook);
+        if (arr is null)
+        {
+            return;
+        }
+
+        var newIdx = selectedTaskIndex + delta;
+        if (newIdx < 0 || newIdx >= arr.Count)
+        {
+            return;
+        }
+
+        var item = arr[selectedTaskIndex]?.DeepClone();
+        arr.RemoveAt(selectedTaskIndex);
+        arr.Insert(newIdx, item);
+        selectedTaskIndex = newIdx;
+        SyncJsonFromDoc();
+    }
+
+    private void DeleteSelectedTask()
+    {
+        var arr = GetHookArray(selectedNodeKey, selectedTaskHook);
+        if (arr is null || selectedTaskIndex < 0 || selectedTaskIndex >= arr.Count)
+        {
+            return;
+        }
+
+        arr.RemoveAt(selectedTaskIndex);
+        selectedTaskIndex = -1;
+        SyncJsonFromDoc();
+    }
+
+    private void DeleteSelectedTransition()
+    {
+        RemoveSingleEdge(selectedNodeKey, selectedTransitionIndex);
+    }
+
+    private async Task OnSelectWorkflowAsync(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            NewWorkflow();
+            return;
+        }
+
+        await OpenWorkflowAsync(key);
+    }
+
+    private async Task OpenWorkflowAsync(string key)
+    {
+        errors.Clear();
+        validMessage = null;
+        var resp = await Client.GetDefinitionJsonAsync(key);
+        if (!resp.IsSuccess || resp.Data is null)
+        {
+            errors.AddRange(resp.MessageList);
+            return;
+        }
+
+        selectedWorkflowKey = key;
+        doc = resp.Data;
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedNodeKey = StartNodeKey;
+        selectedTaskIndex = -1;
+        selectedTransitionIndex = -1;
+        EnsureNodePositions(forceAutoLayout: doc["x-layout"] is null);
+        SyncJsonFromDoc();
+    }
+
+    private void NewWorkflow()
+    {
+        errors.Clear();
+        validMessage = null;
+        selectedWorkflowKey = null;
+        doc = CreateStarterWorkflow();
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedNodeKey = StartNodeKey;
+        selectedTaskIndex = -1;
+        selectedTransitionIndex = -1;
+        EnsureNodePositions(forceAutoLayout: true);
+        SyncJsonFromDoc();
+    }
+
+    private void SwitchTab(string tab)
+    {
+        if (activeTab == "json" && tab != "json")
+        {
+            TryParseRawJson();
+        }
+        else
+        {
+            SyncJsonFromDoc();
+        }
+
+        activeTab = tab;
+    }
+
+    private void SelectStart()
+    {
+        selectedNodeKeys.Clear();
+        selectedEdgeIds.Clear();
+        selectedNodeKeys.Add(StartNodeKey);
+        selectedNodeKey = StartNodeKey;
+        selectedTaskIndex = -1;
+        selectedTransitionIndex = -1;
+    }
+
+    private void SelectStartTask(int idx)
+    {
+        selectedNodeKey = StartNodeKey;
+        selectedTaskHook = "onExecute";
+        selectedTaskIndex = idx;
+        selectedTransitionIndex = -1;
+    }
+
+    private void SelectState(string stateKey)
+    {
+        selectedNodeKey = stateKey;
+        selectedTaskIndex = -1;
+        selectedTransitionIndex = -1;
+    }
+
+    private void SelectStateTask(string stateKey, string hook, int idx)
+    {
+        selectedNodeKey = stateKey;
+        selectedTaskHook = hook;
+        selectedTaskIndex = idx;
+        selectedTransitionIndex = -1;
+    }
+
+    private void SelectTransition(string stateKey, int trIdx)
+    {
+        selectedNodeKey = stateKey;
+        selectedTransitionIndex = trIdx;
+        selectedTaskIndex = -1;
+    }
+
+    private void SelectTransitionTask(string stateKey, int trIdx, int taskIdx)
+    {
+        selectedNodeKey = stateKey;
+        selectedTransitionIndex = -1;
+        selectedTaskHook = $"transition:{trIdx}";
+        selectedTaskIndex = taskIdx;
+    }
+
+    private void RemoveState(string stateKey)
+    {
+        selectedNodeKeys.Clear();
+        selectedNodeKeys.Add(stateKey);
+        selectedEdgeIds.Clear();
+        DeleteSelection();
+    }
+
+    private void RenameState(JsonObject stateObj, string? newKey)
+    {
+        if (string.IsNullOrWhiteSpace(newKey))
+        {
+            return;
+        }
+
+        var trimmed = newKey.Trim();
+        var oldKey = GetString(stateObj, "key");
+        stateObj["key"] = trimmed;
+
+        if (!string.IsNullOrEmpty(oldKey))
+        {
+            if (nodePositions.Remove(oldKey, out var pos))
+            {
+                SetNodePos(trimmed, pos.X, pos.Y);
+                (doc["x-layout"] as JsonObject)?.Remove(oldKey);
+            }
+
+            if (selectedNodeKeys.Remove(oldKey))
+            {
+                selectedNodeKeys.Add(trimmed);
+            }
+
+            if (doc["start"] is JsonObject startObj && GetString(startObj, "target") == oldKey)
+            {
+                startObj["target"] = trimmed;
+            }
+
+            foreach (var st in GetStates())
+            {
+                if (st["transitions"] is JsonArray trArr)
+                {
+                    foreach (var tr in trArr.OfType<JsonObject>())
+                    {
+                        if (GetString(tr, "target") == oldKey)
+                        {
+                            tr["target"] = trimmed;
+                        }
+                    }
+                }
+            }
+        }
+
+        selectedNodeKey = trimmed;
+        SyncJsonFromDoc();
+    }
+
+    private void AddTransition(JsonObject stateObj)
+    {
+        var transitions = EnsureArray(stateObj, "transitions");
+        var states = GetStates();
+        var defaultTarget = states.Select(s => GetString(s, "key")).FirstOrDefault(k => !string.IsNullOrEmpty(k)) ?? "$self";
+        transitions.Add(new JsonObject
+        {
+            ["key"] = $"transition-{transitions.Count + 1}",
+            ["title"] = "Devam Et",
+            ["target"] = defaultTarget,
+            ["trigger"] = "Manual",
+        });
+        selectedTransitionIndex = transitions.Count - 1;
+        selectedTaskIndex = -1;
+        SyncJsonFromDoc();
+    }
+
+    private void ChangeTaskType(JsonObject taskObj, string? newType)
+    {
+        if (string.IsNullOrWhiteSpace(newType))
+        {
+            return;
+        }
+
+        taskObj["task"] = newType;
+        var spec = taskSpecs.FirstOrDefault(s => string.Equals(s.Name, newType, StringComparison.OrdinalIgnoreCase));
+        taskObj["config"] = spec?.Template.DeepClone() as JsonObject ?? new JsonObject();
+        SyncJsonFromDoc();
+    }
+
+    private void SetErrorAction(JsonObject taskObj, string? action)
+    {
+        if (string.IsNullOrWhiteSpace(action) || action == "Fail")
+        {
+            taskObj.Remove("onError");
+        }
+        else
+        {
+            var err = EnsureObject(taskObj, "onError");
+            err["action"] = action;
+            if (action == "Retry" && err["maxRetries"] is null)
+            {
+                err["maxRetries"] = 3;
+                err["delay"] = "00:00:05";
+            }
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void AddSchemaField()
+    {
+        var name = newSchemaFieldName.Trim();
+        if (string.IsNullOrEmpty(name))
+        {
+            return;
+        }
+
+        var schemaObj = EnsureObject(doc, "dataSchema");
+        schemaObj["type"] = "object";
+        var props = EnsureObject(schemaObj, "properties");
+        props[name] = new JsonObject
+        {
+            ["type"] = "string",
+            ["title"] = name,
+            ["x-search"] = true,
+            ["x-list"] = true,
+        };
+        newSchemaFieldName = string.Empty;
+        SyncJsonFromDoc();
+    }
+
+    private void RemoveSchemaField(string fieldName)
+    {
+        if (doc["dataSchema"] is JsonObject schemaObj)
+        {
+            (schemaObj["properties"] as JsonObject)?.Remove(fieldName);
+            if (schemaObj["required"] is JsonArray reqArr)
+            {
+                for (var i = reqArr.Count - 1; i >= 0; i--)
+                {
+                    if (reqArr[i]?.GetValue<string>() == fieldName)
+                    {
+                        reqArr.RemoveAt(i);
+                    }
+                }
+            }
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void ToggleRequiredField(JsonArray reqArr, string fieldName, bool isRequired)
+    {
+        for (var i = reqArr.Count - 1; i >= 0; i--)
+        {
+            if (reqArr[i]?.GetValue<string>() == fieldName)
+            {
+                reqArr.RemoveAt(i);
+            }
+        }
+
+        if (isRequired)
+        {
+            reqArr.Add(fieldName);
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void OnRawJsonInput(ChangeEventArgs e)
+    {
+        json = e.Value?.ToString() ?? string.Empty;
+        TryParseRawJson();
+    }
+
+    private bool TryParseRawJson()
+    {
+        try
+        {
+            if (JsonNode.Parse(json) is JsonObject parsed)
+            {
+                doc = parsed;
+                EnsureNodePositions(forceAutoLayout: false);
+                errors.Clear();
+                return true;
+            }
+
+            errors = ["İş akışı tanımı bir JSON nesnesi ({ ... }) olmalıdır."];
+            return false;
+        }
+        catch (JsonException ex)
+        {
+            errors = [$"JSON sözdizimi hatası: {ex.Message}"];
+            return false;
+        }
+    }
+
+    private void FormatJson()
+    {
+        if (TryParseRawJson())
+        {
+            SyncJsonFromDoc();
+        }
+    }
+
+    private void SyncJsonFromDoc()
+    {
+        json = doc.ToJsonString(PrettyJson);
+        validMessage = null;
+    }
+
+    private async Task ValidateAsync()
+    {
+        errors.Clear();
+        validMessage = null;
+        if (!TryParseRawJson())
+        {
+            return;
+        }
+
+        var resp = await Client.ValidateDefinitionAsync(doc);
+        if (!resp.IsSuccess || resp.Data is null)
+        {
+            errors.AddRange(resp.MessageList);
+            return;
+        }
+
+        if (resp.Data.IsValid)
+        {
+            validMessage = "✔ İş akışı tanımı, geçiş hedefleri ve tüm C# ifadeleri geçerli.";
+        }
+        else
+        {
+            errors.AddRange(resp.Data.Errors);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        errors.Clear();
+        validMessage = null;
+        if (!TryParseRawJson())
+        {
+            return;
+        }
+
+        var key = GetString(doc, "key")?.Trim();
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            errors.Add("İş akışı anahtarı (key) zorunludur.");
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var resp = await Client.SaveDefinitionAsync(key, doc);
+            if (!resp.IsSuccess)
+            {
+                errors.AddRange(resp.MessageList);
+                return;
+            }
+
+            selectedWorkflowKey = key;
+            validMessage = $"✔ '{key}' iş akışı kaydedildi ve çalışma zamanında devreye alındı.";
+            Notification.Notify(NotificationSeverity.Success, "Kaydedildi", $"'{key}' iş akışı güncellendi.");
+
+            var listResp = await Client.ListWorkflowsAsync();
+            if (listResp.IsSuccess)
+            {
+                workflows = listResp.Data ?? [];
+            }
+
+            await OnChanged.InvokeAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    // --- Static Helpers ---
+
+    private List<JsonObject> GetStates() =>
+        doc["states"] is JsonArray arr ? arr.OfType<JsonObject>().ToList() : [];
+
+    private JsonObject? FindState(string? key) =>
+        string.IsNullOrWhiteSpace(key) ? null : GetStates().FirstOrDefault(s => GetString(s, "key") == key);
+
+    private static JsonObject EnsureObject(JsonObject parent, string prop)
+    {
+        if (parent[prop] is JsonObject obj)
+        {
+            return obj;
+        }
+
+        var created = new JsonObject();
+        parent[prop] = created;
+        return created;
+    }
+
+    private static JsonArray EnsureArray(JsonObject parent, string prop)
+    {
+        if (parent[prop] is JsonArray arr)
+        {
+            return arr;
+        }
+
+        var created = new JsonArray();
+        parent[prop] = created;
+        return created;
+    }
+
+    private static string? GetString(JsonObject obj, string prop) =>
+        obj[prop] is JsonValue val && val.TryGetValue<string>(out var s) ? s : null;
+
+    private static void SetString(JsonObject obj, string prop, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            obj.Remove(prop);
+        }
+        else
+        {
+            obj[prop] = value.Trim();
+        }
+    }
+
+    private static string? GetNestedString(JsonObject obj, string parentProp, string childProp) =>
+        obj[parentProp] is JsonObject p ? GetString(p, childProp) : null;
+
+    private static void SetNestedString(JsonObject obj, string parentProp, string childProp, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            if (obj[parentProp] is JsonObject p)
+            {
+                p.Remove(childProp);
+                if (p.Count == 0)
+                {
+                    obj.Remove(parentProp);
+                }
+            }
+        }
+        else
+        {
+            EnsureObject(obj, parentProp)[childProp] = value.Trim();
+        }
+    }
+
+    private static int GetInt(JsonObject obj, string prop, int fallback) =>
+        obj[prop] is JsonValue val && val.TryGetValue<int>(out var i) ? i : fallback;
+
+    private static int? GetIntNullable(JsonObject obj, string prop) =>
+        obj[prop] is JsonValue val && val.TryGetValue<int>(out var i) ? i : null;
+
+    private static void SetInt(JsonObject obj, string prop, string? raw, int fallback) =>
+        obj[prop] = int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : fallback;
+
+    private static void SetIntNullable(JsonObject obj, string prop, string? raw)
+    {
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i))
+        {
+            obj[prop] = i;
+        }
+        else
+        {
+            obj.Remove(prop);
+        }
+    }
+
+    private static bool GetBool(JsonObject obj, string prop) =>
+        obj[prop] is JsonValue val && val.TryGetValue<bool>(out var b) && b;
+
+    private static void SetBool(JsonObject obj, string prop, bool value)
+    {
+        if (value)
+        {
+            obj[prop] = true;
+        }
+        else
+        {
+            obj.Remove(prop);
+        }
+    }
+
+    private static string GetCsvArray(JsonObject obj, string prop) =>
+        obj[prop] is JsonArray arr
+            ? string.Join(", ", arr.Select(x => x?.GetValue<string>()).Where(s => !string.IsNullOrWhiteSpace(s)))
+            : string.Empty;
+
+    private static void SetCsvArray(JsonObject obj, string prop, string? csv)
+    {
+        var items = (csv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)
+            .ToArray();
+        if (items.Length == 0)
+        {
+            obj.Remove(prop);
+        }
+        else
+        {
+            obj[prop] = new JsonArray(items.Select(s => (JsonNode)JsonValue.Create(s)!).ToArray());
+        }
+    }
+
+    private string GetAccessMode() =>
+        GetNestedString(doc, "instanceAccess", "mode") ?? "all";
+
+    private void SetAccessMode(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode) || mode == "all")
+        {
+            doc.Remove("instanceAccess");
+        }
+        else
+        {
+            EnsureObject(doc, "instanceAccess")["mode"] = mode;
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private static string? GetNodeRawText(JsonObject obj, string prop) =>
+        obj[prop]?.ToJsonString();
+
+    private static string GetJsonParamText(JsonObject cfg, string prop) =>
+        cfg[prop] is { } node ? node.ToJsonString(PrettyJson) : string.Empty;
+
+    private static void SetJsonParam(JsonObject cfg, string prop, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            cfg.Remove(prop);
+            return;
+        }
+
+        try
+        {
+            cfg[prop] = JsonNode.Parse(raw);
+        }
+        catch (JsonException)
+        {
+            cfg[prop] = raw;
+        }
+    }
+
+    private static void ReplaceObjectFromJson(JsonObject parent, string prop, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            parent[prop] = new JsonObject();
+            return;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(raw) is JsonObject parsed)
+            {
+                parent[prop] = parsed;
+            }
+        }
+        catch (JsonException)
+        {
+            // Keep existing object if invalid
+        }
+    }
+
+    private string GetStartNodeClass()
+    {
+        var cls = "middt-wf-board-node middt-wf-board-node-start";
+        if (selectedNodeKeys.Contains(StartNodeKey) && selectedNodeKeys.Count > 1)
+        {
+            cls += " middt-wf-board-node-multi";
+        }
+        else if (selectedNodeKey == StartNodeKey || selectedNodeKeys.Contains(StartNodeKey))
+        {
+            cls += " middt-wf-board-node-selected";
+        }
+
+        return cls;
+    }
+
+    private string GetBoardNodeClass(string stateKey, string stateType, string stateSubType)
+    {
+        var cls = "middt-wf-board-node";
+        if (stateType == "Finish")
+        {
+            cls += stateSubType is "Error" or "Cancelled" or "Timeout"
+                ? " middt-wf-board-node-finish-error"
+                : " middt-wf-board-node-finish-success";
+        }
+
+        if (hoverConnectTargetKey == stateKey)
+        {
+            cls += " middt-wf-board-node-connect-target";
+        }
+        else if (selectedNodeKeys.Contains(stateKey) && selectedNodeKeys.Count > 1)
+        {
+            cls += " middt-wf-board-node-multi";
+        }
+        else if (selectedNodeKey == stateKey || selectedNodeKeys.Contains(stateKey))
+        {
+            cls += " middt-wf-board-node-selected";
+        }
+
+        return cls;
+    }
+
+    private static string StateBadgeClass(string stateType, string stateSubType) =>
+        (stateType, stateSubType) switch
+        {
+            ("Finish", "Success") => "middt-ui-badge-success",
+            ("Finish", "Error" or "Timeout") => "middt-ui-badge-danger",
+            ("Finish", "Cancelled") => "middt-ui-badge-warning",
+            (_, "Human") => "middt-ui-badge-primary",
+            _ => "middt-ui-badge-info",
+        };
+
+    private static string TriggerIcon(string? trigger) =>
+        trigger switch
+        {
+            "Automatic" => "⚡",
+            "Scheduled" => "⏱️",
+            "Event" => "📨",
+            _ => "👆",
+        };
+
+    private static string TaskSummary(JsonObject taskObj)
+    {
+        var type = GetString(taskObj, "task") ?? "set";
+        var key = GetString(taskObj, "key") ?? type;
+        return $"{key} ({type})";
+    }
+
+    private static string TaskBadges(JsonObject taskObj)
+    {
+        var parts = new List<string>();
+        if (GetBool(taskObj, "background"))
+        {
+            parts.Add("bg");
+        }
+
+        if (!string.IsNullOrWhiteSpace(GetString(taskObj, "when")))
+        {
+            parts.Add("when");
+        }
+
+        if (taskObj["onError"] is JsonObject err && GetString(err, "action") is { } act && act != "Fail")
+        {
+            parts.Add(act);
+        }
+
+        return string.Join("·", parts);
+    }
+
+    private static JsonObject CreateStarterWorkflow() =>
+        new()
+        {
+            ["key"] = "new-workflow",
+            ["version"] = 1,
+            ["title"] = "Yeni İş Akışı",
+            ["icon"] = "account_tree",
+            ["history"] = "Full",
+            ["dataSchema"] = new JsonObject
+            {
+                ["type"] = "object",
+                ["required"] = new JsonArray("title"),
+                ["properties"] = new JsonObject
+                {
+                    ["title"] = new JsonObject { ["type"] = "string", ["title"] = "Başlık", ["x-search"] = true, ["x-list"] = true },
+                    ["amount"] = new JsonObject { ["type"] = "number", ["title"] = "Tutar", ["x-search"] = true, ["x-list"] = true },
+                },
+            },
+            ["start"] = new JsonObject
+            {
+                ["key"] = "start",
+                ["target"] = "review",
+                ["input"] = new JsonObject
+                {
+                    ["schema"] = new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["required"] = new JsonArray("title"),
+                        ["properties"] = new JsonObject
+                        {
+                            ["title"] = new JsonObject { ["type"] = "string", ["title"] = "Başlık" },
+                            ["amount"] = new JsonObject { ["type"] = "number", ["title"] = "Tutar" },
+                        },
+                    },
+                },
+                ["onExecute"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["key"] = "assign-key",
+                        ["task"] = "setKey",
+                        ["config"] = new JsonObject
+                        {
+                            ["key"] = "WF-{{ now.ToString(\"yyyyMMdd\") }}",
+                            ["ensureUnique"] = true,
+                        },
+                    },
+                },
+            },
+            ["states"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["key"] = "review",
+                    ["title"] = "İnceleme & Onay",
+                    ["type"] = "Intermediate",
+                    ["subType"] = "Human",
+                    ["step"] = 1,
+                    ["onEntry"] = new JsonArray(),
+                    ["transitions"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["key"] = "approve",
+                            ["title"] = "Onayla",
+                            ["target"] = "approved",
+                            ["trigger"] = "Manual",
+                            ["style"] = "success",
+                            ["icon"] = "check_circle",
+                        },
+                        new JsonObject
+                        {
+                            ["key"] = "reject",
+                            ["title"] = "Reddet",
+                            ["target"] = "rejected",
+                            ["trigger"] = "Manual",
+                            ["style"] = "danger",
+                            ["icon"] = "cancel",
+                        },
+                    },
+                },
+                new JsonObject
+                {
+                    ["key"] = "approved",
+                    ["title"] = "Onaylandı",
+                    ["type"] = "Finish",
+                    ["subType"] = "Success",
+                    ["step"] = 2,
+                },
+                new JsonObject
+                {
+                    ["key"] = "rejected",
+                    ["title"] = "Reddedildi",
+                    ["type"] = "Finish",
+                    ["subType"] = "Error",
+                    ["step"] = 2,
+                },
+            },
+        };
+}

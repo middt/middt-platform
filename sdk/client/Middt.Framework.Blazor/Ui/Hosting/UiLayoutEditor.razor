@@ -1,6 +1,9 @@
 @namespace Middt.Framework.Blazor.Ui
+@using System.Globalization
 @using System.Text.Json
 @using System.Text.Json.Nodes
+@using Microsoft.Extensions.DependencyInjection
+@using Middt.Framework.Model.Workflow
 @using Middt.Framework.Expressions
 @using Middt.Framework.Blazor.Ui.Components
 @using Middt.Framework.Ui.Model
@@ -8,125 +11,275 @@
 @using Middt.Framework.Ui.Validation
 @using Middt.Framework.Ui.Widgets
 
-@* Runtime layout editor: list, edit JSON, validate (server), preview, save with optimistic concurrency, revisions. Protect the hosting page with the API's admin role. *@
-<div class="middt-ui-admin">
-    <RadzenCard class="middt-ui-admin-list">
+@* 2D Drag-and-Drop Visual Screen & Layout Studio (works standalone at /ui-admin and embedded inside WorkflowDesigner). *@
+<div class="middt-wf-studio" data-testid="ui-layout-designer">
+    <RadzenCard class="rz-p-3">
         <div class="middt-ui-toolbar" style="justify-content: space-between">
-            <h2 class="middt-ui-section-title">Yerleşimler</h2>
-            <RadzenButton Icon="add" Text="Yeni" Size="ButtonSize.Small" Click="NewLayout" />
+            <div class="middt-ui-toolbar">
+                <label for="ui-layout-select" style="font-weight: 600; font-size: .88rem">Ekran / Yerleşim:</label>
+                <select id="ui-layout-select" class="middt-wf-input" style="width: 240px"
+                        value="@(selectedKey ?? "")" @onchange="@(e => OnSelectLayoutAsync(e.Value?.ToString()))">
+                    @if (selectedKey is null)
+                    {
+                        <option value="">-- Yeni Yerleşim (@doc.Key) --</option>
+                    }
+                    @foreach (var item in layouts)
+                    {
+                        <option value="@item.Key">@(item.Title ?? item.Key) (@item.Key · @item.Kind · v@(item.Version))</option>
+                    }
+                </select>
+                <RadzenButton Icon="add" Text="Yeni Sayfa" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light"
+                              Click="@(() => NewLayout(UiLayoutKind.Page))" />
+                <RadzenButton Icon="view_quilt" Text="Yeni Akış Ekranı" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light"
+                              Click="@(() => NewLayout(UiLayoutKind.View))" />
+                <span class="middt-ui-badge @(doc.Kind == UiLayoutKind.View ? "middt-ui-badge-primary" : "middt-ui-badge-info")">
+                    @(doc.Kind == UiLayoutKind.View ? "view (Akış / Parça)" : "page (Tam Sayfa)")
+                </span>
+                @if (version > 0)
+                {
+                    <span class="middt-ui-badge middt-ui-badge-secondary">v@(version)</span>
+                }
+            </div>
+
+            <div class="middt-ui-toolbar">
+                @if (workflows.Count > 0)
+                {
+                    <label for="ui-wf-schema-select" style="font-size: .8rem; font-weight: 600">🔗 Akış Şeması:</label>
+                    <select id="ui-wf-schema-select" class="middt-wf-input" style="width: 195px"
+                            value="@(linkedWorkflowKey ?? "")"
+                            @onchange="@(e => OnSelectWorkflowSchemaAsync(e.Value?.ToString()))">
+                        <option value="">(İş akışı seçiniz)</option>
+                        @foreach (var wf in workflows)
+                        {
+                            <option value="@wf.Key">@(wf.Title ?? wf.Key) (@wf.Key)</option>
+                        }
+                    </select>
+                    @if (workflowFields.Count > 0)
+                    {
+                        <RadzenButton Icon="auto_fix_high" Text="Şemadan Alanları Ekle" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Info"
+                                      title="Seçili iş akışının dataSchema alanlarından otomatik Bölüm + Etiket/Değer tablosu oluşturur"
+                                      Click="GenerateSectionFromWorkflowSchema" />
+                    }
+                }
+            </div>
+
+            <div class="middt-ui-toolbar">
+                <RadzenButton Icon="data_object" Text="Biçimlendir" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small" Click="Format" />
+                <RadzenButton Icon="rule" Text="Doğrula" ButtonStyle="ButtonStyle.Secondary" Size="ButtonSize.Small" Click="ValidateAsync" />
+                <RadzenButton Icon="visibility" Text="Önizle" ButtonStyle="ButtonStyle.Secondary" Size="ButtonSize.Small" Click="Preview" />
+                <RadzenButton Icon="save" Text="Kaydet" ButtonStyle="ButtonStyle.Primary" Size="ButtonSize.Small" Click="SaveAsync" IsBusy="busy" />
+                @if (selectedKey is not null)
+                {
+                    <RadzenButton Icon="delete" Text="Sil" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.Small" Click="DeleteAsync" Disabled="busy" />
+                }
+                @if (Embedded)
+                {
+                    <RadzenButton Icon="close" Text="Akışa Dön" ButtonStyle="ButtonStyle.Dark" Size="ButtonSize.Small" Click="@(() => OnClose.InvokeAsync())" />
+                }
+            </div>
         </div>
-        <ul class="middt-ui-admin-items" aria-label="Yerleşimler">
-            @foreach (var item in layouts)
-            {
-                <li>
-                    <button type="button" class="@(item.Key == selectedKey ? "middt-ui-admin-item middt-ui-admin-item-active" : "middt-ui-admin-item")"
-                            aria-current="@(item.Key == selectedKey ? "true" : null)" @onclick="@(() => OpenAsync(item.Key))">
-                        <span>@(item.Title ?? item.Key)</span>
-                        <small>@item.Key · @item.Kind · v@(item.Version)</small>
-                    </button>
-                </li>
-            }
-        </ul>
+
+        @if (errors.Count > 0)
+        {
+            <div class="middt-ui-alert middt-ui-alert-danger rz-mt-2" role="alert">
+                <strong>@errors.Count hata</strong>
+                <ul class="middt-ui-list">
+                    @foreach (var e in errors)
+                    {
+                        <li>@e</li>
+                    }
+                </ul>
+            </div>
+        }
+        else if (validMessage is not null)
+        {
+            <div class="middt-ui-alert middt-ui-alert-success rz-mt-2" role="status">@validMessage</div>
+        }
     </RadzenCard>
 
-    <div class="middt-ui-admin-main">
-        <RadzenCard>
-            <div class="middt-ui-toolbar" style="justify-content: space-between">
-                <h2 class="middt-ui-section-title">@(selectedKey is null ? "Yeni yerleşim" : selectedKey) @(version > 0 ? $"(v{version})" : null)</h2>
-                <div class="middt-ui-toolbar">
-                    <RadzenButton Icon="data_object" Text="Biçimlendir" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small" Click="Format" />
-                    <RadzenButton Icon="rule" Text="Doğrula" ButtonStyle="ButtonStyle.Secondary" Size="ButtonSize.Small" Click="ValidateAsync" />
-                    <RadzenButton Icon="visibility" Text="Önizle" ButtonStyle="ButtonStyle.Secondary" Size="ButtonSize.Small" Click="Preview" />
-                    <RadzenButton Icon="save" Text="Kaydet" Size="ButtonSize.Small" Click="SaveAsync" IsBusy="busy" />
-                    @if (selectedKey is not null)
+    <div class="middt-wf-studio-body">
+        @* 1. Left Column: Palette of Draggable Widgets + Saved Layouts List *@
+        <aside class="middt-wf-palette" aria-label="Ekran bileşen paleti ve yerleşimler">
+            <div class="middt-wf-palette-group">
+                <div class="middt-wf-palette-group-title">🧩 Bileşen Paleti (Sürükle & Bırak)</div>
+                <input class="middt-wf-input" placeholder="Bileşen ara (section, fields, alert...)"
+                       @bind="paletteFilter" @bind:event="oninput" />
+                @foreach (var grp in GetFilteredPaletteGroups())
+                {
+                    <div class="middt-wf-palette-group-title">@grp.Category</div>
+                    @foreach (var item in grp.Items)
                     {
-                        <RadzenButton Icon="delete" Text="Sil" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.Small" Click="DeleteAsync" Disabled="busy" />
+                        <div class="middt-wf-palette-chip"
+                             draggable="true"
+                             title="@item.Description — Tuvale sürükleyin veya çift tıklayın"
+                             @ondragstart="@(() => StartPaletteWidgetDrag(item.Widget))"
+                             @ondblclick="@(() => QuickAddWidget(item.Widget))">
+                            <span class="middt-wf-palette-chip-icon">@item.Icon</span>
+                            <div class="middt-wf-palette-chip-text">
+                                <strong>@item.Title</strong>
+                                <small>@item.Widget</small>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+
+            @if (workflowFields.Count > 0)
+            {
+                <hr class="middt-ui-divider" />
+                <div class="middt-wf-palette-group">
+                    <div class="middt-wf-palette-group-title">🗂️ Akış Veri Alanları (@linkedWorkflowKey)</div>
+                    <small class="middt-ui-text-muted">Tıklayarak seçili <code>fields</code> bileşenine veya tuvale ekleyin:</small>
+                    @foreach (var wfField in workflowFields)
+                    {
+                        <button type="button" class="middt-wf-task-pill"
+                                title="Tıklayarak '{{ data.@wfField.Field }}' alanını ekle"
+                                @onclick="@(() => InsertWorkflowField(wfField))">
+                            <span>➕ @wfField.Title</span>
+                            <small><code>data.@wfField.Field</code></small>
+                        </button>
                     }
                 </div>
-            </div>
-            <label for="ui-layout-json" class="middt-wf-sr-only">Yerleşim JSON</label>
-            <textarea id="ui-layout-json" class="middt-ui-editor rz-textarea" spellcheck="false" @bind="json" @bind:event="oninput"></textarea>
-            @if (errors.Count > 0)
-            {
-                <div class="middt-ui-alert middt-ui-alert-danger" role="alert">
-                    <strong>@errors.Count hata</strong>
-                    <ul class="middt-ui-list">
-                        @foreach (var e in errors)
-                        {
-                            <li>@e</li>
-                        }
-                    </ul>
+            }
+
+            <hr class="middt-ui-divider" />
+            <details open="@(!Embedded)">
+                <summary style="font-weight: 700; font-size: .78rem; cursor: pointer">📂 Kayıtlı Yerleşimler (@layouts.Count)</summary>
+                <ul class="middt-ui-admin-items" aria-label="Yerleşimler">
+                    @foreach (var item in layouts)
+                    {
+                        <li>
+                            <button type="button"
+                                    class="@(item.Key == selectedKey ? "middt-ui-admin-item middt-ui-admin-item-active" : "middt-ui-admin-item")"
+                                    aria-current="@(item.Key == selectedKey ? "true" : null)"
+                                    @onclick="@(() => OpenAsync(item.Key))">
+                                <span>@(item.Title ?? item.Key)</span>
+                                <small>@item.Key · @item.Kind · v@(item.Version)</small>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            </details>
+        </aside>
+
+        @* 2. Center Column: Visual Drag-and-Drop Screen Tree + Live Preview + JSON Code *@
+        <div style="display: flex; flex-direction: column; gap: .75rem; min-width: 0">
+            <div class="middt-ui-studio-canvas"
+                 @ondragover:preventDefault="true"
+                 @ondrop="@(() => OnDropIntoContainer(string.Empty))">
+                <div class="middt-ui-toolbar" style="justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding-bottom: .5rem">
+                    <div style="display: flex; align-items: center; gap: .5rem; cursor: pointer" @onclick="@(() => SelectNode(null))">
+                        <span class="middt-ui-badge middt-ui-badge-info">🖥️ Ekran Gövdesi (body)</span>
+                        <strong>@(doc.Title ?? doc.Key)</strong>
+                        <code class="middt-ui-text-code">(@doc.Key)</code>
+                    </div>
+                    <div class="middt-ui-toolbar">
+                        <RadzenButton Icon="settings" Text="Ekran Ayarları" Size="ButtonSize.ExtraSmall"
+                                      ButtonStyle="@(selectedPath is null ? ButtonStyle.Primary : ButtonStyle.Light)"
+                                      Click="@(() => SelectNode(null))" />
+                    </div>
                 </div>
-            }
-            else if (validMessage is not null)
-            {
-                <div class="middt-ui-alert middt-ui-alert-success" role="status">@validMessage</div>
-            }
-        </RadzenCard>
 
-        @if (preview is not null && previewContext is not null)
-        {
-            <RadzenCard>
-                <h2 class="middt-ui-section-title rz-mb-2">Önizleme</h2>
-                <UiLayoutView @key="previewKey" Layout="preview" Context="previewContext" />
-            </RadzenCard>
-        }
-
-        @if (revisions.Count > 0)
-        {
-            <RadzenCard>
-                <details>
-                    <summary>Önceki sürümler (@revisions.Count)</summary>
-                    <ul class="middt-ui-list">
-                        @foreach (var revision in revisions)
-                        {
-                            <li>
-                                v@(revision.Version) · @revision.CreatedAt.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture) · @revision.CreatedBy
-                                <RadzenButton Text="Editöre yükle" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light" Click="@(() => LoadRevision(revision))" />
-                            </li>
-                        }
-                    </ul>
-                </details>
-            </RadzenCard>
-        }
-
-        <RadzenCard>
-            <details>
-                <summary>Bileşenler (@widgets.Count)</summary>
-                @foreach (var widget in widgets)
+                @if (doc.Body.Count == 0)
                 {
-                    <div class="rz-mt-2">
-                        <strong>@widget.Name</strong> @(widget.Interactive ? "· etkileşimli" : null) @(widget.Children != "none" ? $"· children: {widget.Children}" : null)
-                        <div class="middt-ui-text middt-ui-text-muted">@widget.Description</div>
-                        <code class="middt-ui-text-code">@string.Join(", ", widget.Props.Select(p => p.Required ? p.Name + "*" : p.Name))</code>
+                    <div class="middt-wf-dropzone" style="padding: 2rem; text-align: center">
+                        <div class="middt-wf-dropzone-empty" style="font-size: .88rem">
+                            Sol paletten bir bileşeni (ör. <strong>Kart / Bölüm</strong>, <strong>Yan Yana Sütunlar</strong>, <strong>Etiket / Değer Tablosu</strong>) buraya sürükleyip bırakın veya çift tıklayın.
+                        </div>
                     </div>
                 }
-            </details>
-        </RadzenCard>
+                else
+                {
+                    @for (var i = 0; i < doc.Body.Count; i++)
+                    {
+                        var idx = i;
+                        var path = idx.ToString(CultureInfo.InvariantCulture);
+                        @RenderWidgetNodeCard(doc.Body[idx], path, doc.Body, idx)
+                    }
+                }
+            </div>
+
+            @if (preview is not null && previewContext is not null)
+            {
+                <RadzenCard>
+                    <div class="middt-ui-toolbar" style="justify-content: space-between; margin-bottom: .5rem">
+                        <h2 class="middt-ui-section-title">👁️ Canlı Önizleme</h2>
+                        <RadzenButton Icon="close" Text="Önizlemeyi Gizle" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                      Click="@(() => preview = null)" />
+                    </div>
+                    <UiLayoutView @key="previewKey" Layout="preview" Context="previewContext" />
+                </RadzenCard>
+            }
+
+            <RadzenCard>
+                <div class="middt-ui-toolbar" style="justify-content: space-between; margin-bottom: .4rem">
+                    <label for="ui-layout-json" style="font-weight: 600; font-size: .85rem">
+                        { } Yerleşim JSON Kodu (Görsel tuval ile çift yönlü senkronize)
+                    </label>
+                    @if (revisions.Count > 0)
+                    {
+                        <details>
+                            <summary style="font-size: .8rem; cursor: pointer">Önceki sürümler (@revisions.Count)</summary>
+                            <ul class="middt-ui-list">
+                                @foreach (var revision in revisions)
+                                {
+                                    <li>
+                                        v@(revision.Version) · @revision.CreatedAt.ToLocalTime().ToString("g", CultureInfo.CurrentCulture) · @revision.CreatedBy
+                                        <RadzenButton Text="Editöre yükle" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light" Click="@(() => LoadRevision(revision))" />
+                                    </li>
+                                }
+                            </ul>
+                        </details>
+                    }
+                </div>
+                <textarea id="ui-layout-json" class="middt-ui-editor rz-textarea" style="min-height: 200px" spellcheck="false"
+                          value="@json" @onchange="OnRawJsonInput"></textarea>
+            </RadzenCard>
+        </div>
+
+        @* 3. Right Column: Context-Sensitive Property Inspector *@
+        <aside class="middt-wf-inspector" aria-label="Seçili bileşen veya ekran özellikleri">
+            @RenderInspector()
+        </aside>
     </div>
 </div>
 
 @code {
-    private const string Template = """
-        {
-          "key": "new-page",
-          "title": "Yeni sayfa",
-          "kind": "page",
-          "menu": { "title": "Yeni sayfa", "icon": "dashboard", "order": 100 },
-          "body": [
-            { "widget": "heading", "text": "Merhaba {{ user.Name }}" },
-            { "widget": "text", "text": "Bu sayfa çalışma zamanında eklendi." }
-          ]
-        }
-        """;
+    private sealed record WidgetPaletteItem(string Category, string Widget, string Icon, string Title, string Description);
+
+    private static readonly WidgetPaletteItem[] PaletteItems =
+    [
+        new("📦 Düzen & Kapsayıcılar", "section", "🗂️", "Kart / Bölüm (section)", "Başlıklı kart kapsayıcısı; içine diğer bileşenler sürüklenir."),
+        new("📦 Düzen & Kapsayıcılar", "columns", "🏛️", "Yan Yana Sütunlar (columns)", "Alt bileşenlerini yan yana sütunlar halinde gösterir."),
+        new("📦 Düzen & Kapsayıcılar", "list", "🔁", "Tekrarlayan Liste (list)", "Bir dizi (data.items) içindeki her kayıt için alt bileşenleri tekrarlar."),
+        new("📦 Düzen & Kapsayıcılar", "record", "🔍", "Kayıt Yükleyici (record)", "Tekil bir varlık kaydını (entity/recordId) yükler."),
+        new("📦 Düzen & Kapsayıcılar", "layout", "🧩", "Alt Ekran Gömme (layout)", "Başka bir 'view' ekranını bu ekranın içine gömer."),
+        new("📝 İçerik & Göstergeler", "fields", "📋", "Etiket / Değer Tablosu (fields)", "Müşteri adı, tutar, durum gibi etiket-değer alanlarını listeler."),
+        new("📝 İçerik & Göstergeler", "heading", "🔤", "Başlık (heading)", "H1–H6 seviyesinde dinamik başlık metni."),
+        new("📝 İçerik & Göstergeler", "text", "📄", "Metin / Paragraf (text)", "Açıklama, kod veya bilgi paragrafı."),
+        new("📝 İçerik & Göstergeler", "alert", "⚠️", "Uyarı Kutusu (alert)", "Bilgi, başarı, uyarı veya hata mesaj kutusu."),
+        new("📝 İçerik & Göstergeler", "badge", "🏷️", "Durum Rozeti (badge)", "Renkli durum etiketi (Onaylandı, Bekliyor vb.)."),
+        new("📝 İçerik & Göstergeler", "divider", "➖", "Ayırıcı Çizgi (divider)", "Bölümler arası yatay çizgi."),
+        new("📝 İçerik & Göstergeler", "link", "🔗", "Bağlantı / Buton (link)", "Sayfa içi veya harici yönlendirme bağlantısı."),
+        new("📊 Veri Tablosu", "grid", "📊", "Veri Tablosu (grid)", "Sunucu sayfalı, arama filtreli ve CRUD destekli tablo."),
+    ];
 
     private List<UiLayoutSummary> layouts = [];
     private List<UiWidgetSpecModel> widgets = [];
     private List<UiLayoutRevisionModel> revisions = [];
+    private List<WorkflowSummaryModel> workflows = [];
+    private List<(string Field, string Title, string Type)> workflowFields = [];
     private List<string> errors = [];
+
+    private UiLayoutDocument doc = CreateDefaultDocument(UiLayoutKind.Page);
     private string? selectedKey;
+    private string? selectedPath;
+    private string? linkedWorkflowKey;
+    private string paletteFilter = string.Empty;
+    private string? dragWidgetType;
+    private string? dragSourcePath;
     private int version;
-    private string json = Template;
+    private string json = string.Empty;
     private string? validMessage;
     private bool busy;
     private UiLayoutDocument? preview;
@@ -148,15 +301,644 @@
     [Inject]
     private AuthenticationStateProvider AuthenticationStateProvider { get; set; } = default!;
 
+    [Inject]
+    private IServiceProvider Services { get; set; } = default!;
+
+    [Inject]
+    private NavigationManager Navigation { get; set; } = default!;
+
     /// <summary>Raised after a save or delete (e.g. to refresh the menu).</summary>
     [Parameter]
     public EventCallback OnChanged { get; set; }
 
+    /// <summary>Raised with the saved layout's key when a layout is saved.</summary>
+    [Parameter]
+    public EventCallback<string> OnSavedKey { get; set; }
+
+    /// <summary>Raised when the user clicks "Akışa Dön" in embedded mode.</summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    /// <summary>True when rendered inside a modal/drawer in WorkflowDesigner.</summary>
+    [Parameter]
+    public bool Embedded { get; set; }
+
+    /// <summary>Optional layout key to open or initialize on startup.</summary>
+    [Parameter]
+    public string? InitialKey { get; set; }
+
+    /// <summary>Optional workflow key whose dataSchema should be preloaded for field binding.</summary>
+    [Parameter]
+    public string? InitialWorkflowKey { get; set; }
+
+    /// <summary>Optional pre-built document when creating a brand new workflow state screen.</summary>
+    [Parameter]
+    public UiLayoutDocument? InitialDocument { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
+        SyncJsonFromDoc();
         await LoadListAsync();
         var response = await Client.WidgetsAsync();
         widgets = response.Data ?? [];
+
+        if (Services.GetService<WorkflowApiClient>() is { } wfClient)
+        {
+            var wfResp = await wfClient.ListWorkflowsAsync();
+            if (wfResp.IsSuccess && wfResp.Data is not null)
+            {
+                workflows = wfResp.Data;
+            }
+        }
+
+        // Check query string if not provided via parameters
+        var targetKey = InitialKey;
+        var targetWf = InitialWorkflowKey;
+        if (!Embedded)
+        {
+            var uri = new Uri(Navigation.Uri);
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            targetKey ??= query["key"];
+            targetWf ??= query["workflow"];
+        }
+
+        if (!string.IsNullOrWhiteSpace(targetWf))
+        {
+            await LoadWorkflowSchemaFieldsAsync(targetWf);
+        }
+
+        if (InitialDocument is not null)
+        {
+            selectedKey = layouts.Any(l => string.Equals(l.Key, InitialDocument.Key, StringComparison.Ordinal))
+                ? InitialDocument.Key
+                : null;
+            version = InitialDocument.Version;
+            doc = UiJson.Parse(UiJson.Serialize(InitialDocument));
+            selectedPath = null;
+            SyncJsonFromDoc();
+        }
+        else if (!string.IsNullOrWhiteSpace(targetKey))
+        {
+            if (layouts.Any(l => string.Equals(l.Key, targetKey, StringComparison.Ordinal)))
+            {
+                await OpenAsync(targetKey);
+            }
+            else
+            {
+                selectedKey = null;
+                version = 0;
+                doc = CreateDefaultDocument(UiLayoutKind.View, targetKey);
+                if (workflowFields.Count > 0)
+                {
+                    GenerateSectionFromWorkflowSchema();
+                }
+                else
+                {
+                    SyncJsonFromDoc();
+                }
+            }
+        }
+    }
+
+    private RenderFragment RenderWidgetNodeCard(UiNode node, string path, List<UiNode> parentList, int indexInParent) => __builder =>
+    {
+        var isSelected = string.Equals(selectedPath, path, StringComparison.Ordinal);
+        var isContainer = IsContainerWidget(node.Widget);
+
+        <div class="@(isSelected ? "middt-ui-widget-card middt-ui-widget-card-selected" : "middt-ui-widget-card")"
+             draggable="true"
+             @onclick:stopPropagation="true"
+             @onclick="@(() => SelectNode(path))"
+             @ondragstart:stopPropagation="true"
+             @ondragstart="@(() => StartExistingNodeDrag(path))">
+            <div class="middt-ui-toolbar" style="justify-content: space-between">
+                <div style="display: flex; align-items: center; gap: .45rem; min-width: 0">
+                    <span>@GetWidgetIcon(node.Widget)</span>
+                    <span class="middt-ui-badge middt-ui-badge-primary" style="font-size: .72rem">@node.Widget</span>
+                    <strong style="font-size: .86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                        @GetWidgetSummary(node)
+                    </strong>
+                    @if (!string.IsNullOrWhiteSpace(node.VisibleWhen))
+                    {
+                        <span class="middt-ui-badge middt-ui-badge-warning" style="font-size: .68rem" title="Görünürlük koşulu (visibleWhen)">
+                            👁️ @node.VisibleWhen
+                        </span>
+                    }
+                </div>
+                <div class="middt-ui-toolbar" @onclick:stopPropagation="true">
+                    @if (node.Widget == "layout" && node.StringProp("key") is { Length: > 0 } subLayoutKey)
+                    {
+                        <RadzenButton Icon="open_in_new" Text="@subLayoutKey" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Info"
+                                      title="Gömülü alt ekranı aç"
+                                      Click="@(() => OpenAsync(subLayoutKey))" />
+                    }
+                    <RadzenButton Icon="arrow_upward" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                  Disabled="@(indexInParent <= 0)"
+                                  Click="@(() => MoveNodeInList(parentList, indexInParent, -1))" />
+                    <RadzenButton Icon="arrow_downward" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                  Disabled="@(indexInParent >= parentList.Count - 1)"
+                                  Click="@(() => MoveNodeInList(parentList, indexInParent, 1))" />
+                    <RadzenButton Icon="content_copy" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                  title="Bileşeni çoğalt"
+                                  Click="@(() => DuplicateNodeInList(parentList, indexInParent))" />
+                    <RadzenButton Icon="delete" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Danger"
+                                  title="Bileşeni sil"
+                                  Click="@(() => DeleteNodeFromList(parentList, indexInParent))" />
+                </div>
+            </div>
+
+            @if (node.Widget == "fields" && node.ArrayProp("items") is { Count: > 0 } fieldItems)
+            {
+                <div style="display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .15rem">
+                    @foreach (var fItem in fieldItems.OfType<JsonObject>())
+                    {
+                        <span class="middt-wf-edge-pill" style="width: auto; font-size: .73rem; padding: .15rem .45rem">
+                            <strong>@(GetJsonString(fItem, "label") ?? "Alan"):</strong>
+                            <code>@(GetJsonString(fItem, "value") ?? "")</code>
+                        </span>
+                    }
+                </div>
+            }
+
+            @if (isContainer)
+            {
+                var children = node.Children ??= [];
+                <div class="middt-ui-widget-children"
+                     @ondragover:preventDefault="true"
+                     @ondragover:stopPropagation="true"
+                     @ondrop:stopPropagation="true"
+                     @ondrop="@(() => OnDropIntoContainer(path))">
+                    <div class="middt-ui-toolbar" style="justify-content: space-between">
+                        <small class="middt-ui-text-muted">
+                            Alt Bileşenler (@children.Count) — Paletten buraya bileşen sürükleyin
+                        </small>
+                        <select class="middt-wf-input" style="width: 170px; padding: .15rem .35rem; font-size: .75rem"
+                                value=""
+                                @onchange="@(e => { AddChildWidget(node, path, e.Value?.ToString()); })">
+                            <option value="">+ Alt Bileşen Ekle...</option>
+                            @foreach (var p in PaletteItems)
+                            {
+                                <option value="@p.Widget">@p.Icon @p.Title</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (children.Count > 0)
+                    {
+                        <div class="@(node.Widget == "columns" ? "middt-ui-widget-columns-grid" : "middt-ui-form")">
+                            @for (var ci = 0; ci < children.Count; ci++)
+                            {
+                                var childIdx = ci;
+                                var childPath = $"{path}.{childIdx}";
+                                @RenderWidgetNodeCard(children[childIdx], childPath, children, childIdx)
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderInspector() => __builder =>
+    {
+        if (selectedPath is not null && FindNodeByPath(selectedPath) is { } node)
+        {
+            var props = node.Props ??= new JsonObject();
+            <div class="middt-ui-form">
+                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                    <div>
+                        <span class="middt-ui-badge middt-ui-badge-primary">🧩 Bileşen (@node.Widget)</span>
+                        <h3 class="middt-ui-section-title rz-mt-1">@GetWidgetTitle(node.Widget)</h3>
+                    </div>
+                    <RadzenButton Icon="arrow_back" Text="Ekran Ayarları" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                  Click="@(() => SelectNode(null))" />
+                </div>
+
+                <div class="middt-wf-grid-2">
+                    <div class="middt-ui-input">
+                        <label>Bileşen Tipi (widget)</label>
+                        <select class="middt-wf-input" value="@node.Widget"
+                                @onchange="@(e => ChangeWidgetType(node, e.Value?.ToString()))">
+                            @foreach (var p in PaletteItems)
+                            {
+                                <option value="@p.Widget">@p.Icon @p.Title</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Eleman Kimliği (id — opsiyonel)</label>
+                        <input class="middt-wf-input" value="@(node.Id ?? "")" placeholder="ör. kredi-ozet-kart"
+                               @onchange="@(e => { node.Id = NullIfWhiteSpace(e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                </div>
+
+                <div class="middt-ui-input">
+                    <label>Görünürlük Koşulu (visibleWhen — C# İfadesi)</label>
+                    <input class="middt-wf-input" value="@(node.VisibleWhen ?? "")"
+                           placeholder="ör. data.amount > 50000 || instance.state == &quot;stage2-approval&quot;"
+                           @onchange="@(e => { node.VisibleWhen = NullIfWhiteSpace(e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    <small class="middt-ui-text-muted">Boş bırakılırsa her zaman görünür. Koşul yanlışsa bileşen gizlenir.</small>
+                </div>
+
+                <hr class="middt-ui-divider" />
+
+                @if (node.Widget == "heading")
+                {
+                    <div class="middt-ui-input">
+                        <label>Başlık Metni (text — <code>{{ "{{ ... }}" }}</code> destekler)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("text") ?? "")"
+                               placeholder="Merhaba {{ user.Name }}"
+                               @onchange="@(e => SetNodeString(node, "text", e.Value?.ToString()))" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Başlık Seviyesi (level: 1–6)</label>
+                        <select class="middt-wf-input" value="@node.IntProp("level", 2)"
+                                @onchange="@(e => SetNodeInt(node, "level", e.Value?.ToString(), 2))">
+                            <option value="1">H1 (En Büyük)</option>
+                            <option value="2">H2 (Bölüm Başlığı)</option>
+                            <option value="3">H3 (Alt Başlık)</option>
+                            <option value="4">H4</option>
+                            <option value="5">H5</option>
+                            <option value="6">H6</option>
+                        </select>
+                    </div>
+                }
+                else if (node.Widget == "text")
+                {
+                    <div class="middt-ui-input">
+                        <label>Metin İçeriği (text — <code>{{ "{{ ... }}" }}</code> destekler)</label>
+                        <textarea class="middt-wf-input middt-wf-code-box" value="@(node.StringProp("text") ?? "")"
+                                  @onchange="@(e => SetNodeString(node, "text", e.Value?.ToString()))"></textarea>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Metin Stili (style)</label>
+                        <select class="middt-wf-input" value="@(node.StringProp("style") ?? "normal")"
+                                @onchange="@(e => SetNodeString(node, "style", e.Value?.ToString()))">
+                            <option value="normal">normal (Standart)</option>
+                            <option value="muted">muted (Soluk / Açıklama)</option>
+                            <option value="lead">lead (Vurgulu Büyük)</option>
+                            <option value="small">small (Küçük)</option>
+                            <option value="code">code (Kod / Monospace)</option>
+                        </select>
+                    </div>
+                }
+                else if (node.Widget == "alert")
+                {
+                    <div class="middt-ui-input">
+                        <label>Uyarı Mesajı (text — <code>{{ "{{ ... }}" }}</code> destekler)</label>
+                        <textarea class="middt-wf-input middt-wf-code-box" value="@(node.StringProp("text") ?? "")"
+                                  @onchange="@(e => SetNodeString(node, "text", e.Value?.ToString()))"></textarea>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Uyarı Türü (severity)</label>
+                        <select class="middt-wf-input" value="@(node.StringProp("severity") ?? "info")"
+                                @onchange="@(e => SetNodeString(node, "severity", e.Value?.ToString()))">
+                            <option value="info">info (Bilgi — Mavi)</option>
+                            <option value="success">success (Başarılı — Yeşil)</option>
+                            <option value="warning">warning (Uyarı — Sarı)</option>
+                            <option value="danger">danger (Tehlike / Hata — Kırmızı)</option>
+                        </select>
+                    </div>
+                }
+                else if (node.Widget == "badge")
+                {
+                    <div class="middt-ui-input">
+                        <label>Rozet Metni (text — <code>{{ "{{ ... }}" }}</code> destekler)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("text") ?? "")"
+                               @onchange="@(e => SetNodeString(node, "text", e.Value?.ToString()))" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Rozet Rengi (color)</label>
+                        <select class="middt-wf-input" value="@(node.StringProp("color") ?? "primary")"
+                                @onchange="@(e => SetNodeString(node, "color", e.Value?.ToString()))">
+                            <option value="primary">primary (Mavi)</option>
+                            <option value="secondary">secondary (Gri)</option>
+                            <option value="success">success (Yeşil)</option>
+                            <option value="warning">warning (Sarı)</option>
+                            <option value="danger">danger (Kırmızı)</option>
+                            <option value="info">info (Açık Mavi)</option>
+                        </select>
+                    </div>
+                }
+                else if (node.Widget == "section")
+                {
+                    <div class="middt-ui-input">
+                        <label>Kart / Bölüm Başlığı (title — <code>{{ "{{ ... }}" }}</code> destekler)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("title") ?? "")"
+                               placeholder="{{ data.customerName }} — Özet"
+                               @onchange="@(e => SetNodeString(node, "title", e.Value?.ToString()))" />
+                    </div>
+                }
+                else if (node.Widget == "columns")
+                {
+                    <div class="middt-ui-input">
+                        <label>Sütun Genişlik Oranları (widths — virgülle)</label>
+                        <input class="middt-wf-input" value="@GetNodeCsvArray(node, "widths")"
+                               placeholder="2, 1 veya 1, 1"
+                               @onchange="@(e => SetNodeCsvArray(node, "widths", e.Value?.ToString()))" />
+                        <small class="middt-ui-text-muted">Örn: <code>2, 1</code> sol sütunu sağ sütunun 2 katı genişlikte yapar.</small>
+                    </div>
+                }
+                else if (node.Widget == "fields")
+                {
+                    var itemsArr = EnsureNodeArray(node, "items");
+                    <div class="middt-ui-toolbar" style="justify-content: space-between">
+                        <h4 class="middt-ui-section-title">📋 Alan Satırları (items: @itemsArr.Count)</h4>
+                        <RadzenButton Icon="add" Text="Alan Satırı Ekle" Size="ButtonSize.ExtraSmall"
+                                      Click="@(() => AddFieldsRow(itemsArr))" />
+                    </div>
+
+                    @if (workflowFields.Count > 0)
+                    {
+                        <div class="middt-ui-input">
+                            <label>Hızlı İş Akışı Alanı Ekle (@linkedWorkflowKey)</label>
+                            <select class="middt-wf-input" value=""
+                                    @onchange="@(e => AddWorkflowFieldByName(itemsArr, e.Value?.ToString()))">
+                                <option value="">+ Şemadan alan seçin...</option>
+                                @foreach (var wfField in workflowFields)
+                                {
+                                    <option value="@wfField.Field">@wfField.Title (data.@wfField.Field · @wfField.Type)</option>
+                                }
+                            </select>
+                        </div>
+                    }
+
+                    @for (var fi = 0; fi < itemsArr.Count; fi++)
+                    {
+                        var rowIdx = fi;
+                        if (itemsArr[rowIdx] is JsonObject rowObj)
+                        {
+                            <div class="middt-wf-task-card">
+                                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                                    <strong>#@(rowIdx + 1) @(GetJsonString(rowObj, "label") ?? "Alan")</strong>
+                                    <div class="middt-ui-toolbar">
+                                        <RadzenButton Icon="arrow_upward" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                                      Disabled="@(rowIdx <= 0)"
+                                                      Click="@(() => MoveJsonArrayItem(itemsArr, rowIdx, -1))" />
+                                        <RadzenButton Icon="arrow_downward" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light"
+                                                      Disabled="@(rowIdx >= itemsArr.Count - 1)"
+                                                      Click="@(() => MoveJsonArrayItem(itemsArr, rowIdx, 1))" />
+                                        <RadzenButton Icon="delete" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Danger"
+                                                      Click="@(() => { itemsArr.RemoveAt(rowIdx); SyncJsonFromDoc(); })" />
+                                    </div>
+                                </div>
+                                <div class="middt-wf-grid-2">
+                                    <div class="middt-ui-input">
+                                        <label>Etiket (label)</label>
+                                        <input class="middt-wf-input" value="@GetJsonString(rowObj, "label")"
+                                               @onchange="@(e => { SetJsonString(rowObj, "label", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                    </div>
+                                    <div class="middt-ui-input">
+                                        <label>Değer Şablonu (value)</label>
+                                        <input class="middt-wf-input" value="@GetJsonString(rowObj, "value")"
+                                               placeholder="{{ data.amount }}"
+                                               @onchange="@(e => { SetJsonString(rowObj, "value", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                    </div>
+                                    <div class="middt-ui-input">
+                                        <label>Biçim (format)</label>
+                                        <select class="middt-wf-input" value="@(GetJsonString(rowObj, "format") ?? "")"
+                                                @onchange="@(e => { SetJsonString(rowObj, "format", e.Value?.ToString()); SyncJsonFromDoc(); })">
+                                            <option value="">Yok (Metin)</option>
+                                            <option value="N2">N2 (Para / Ondalık: 1.250,00)</option>
+                                            <option value="N0">N0 (Tam Sayı: 1.250)</option>
+                                            <option value="g">g (Tarih + Saat)</option>
+                                            <option value="d">d (Kısa Tarih)</option>
+                                        </select>
+                                    </div>
+                                    <div class="middt-ui-input">
+                                        <label>Görünürlük (visibleWhen)</label>
+                                        <input class="middt-wf-input" value="@GetJsonString(rowObj, "visibleWhen")"
+                                               placeholder="data.amount != null"
+                                               @onchange="@(e => { SetJsonString(rowObj, "visibleWhen", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                }
+                else if (node.Widget == "layout")
+                {
+                    var targetKey = node.StringProp("key") ?? string.Empty;
+                    <div class="middt-ui-input">
+                        <label>Gömülecek Alt Ekran Anahtarı (key)</label>
+                        <div class="middt-ui-picker">
+                            <select class="middt-wf-input" value="@targetKey"
+                                    @onchange="@(e => SetNodeString(node, "key", e.Value?.ToString()))">
+                                <option value="">(Bir görünüm seçiniz)</option>
+                                @foreach (var l in layouts.Where(x => !string.Equals(x.Key, doc.Key, StringComparison.Ordinal)))
+                                {
+                                    <option value="@l.Key">@l.Key (@(l.Title ?? l.Key) · @l.Kind)</option>
+                                }
+                            </select>
+                            @if (!string.IsNullOrWhiteSpace(targetKey))
+                            {
+                                <RadzenButton Icon="open_in_new" Text="Aç" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Info"
+                                              Click="@(() => OpenAsync(targetKey))" />
+                            }
+                        </div>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Veri Alt İfadesi (data — opsiyonel C# İfadesi)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("data") ?? "")"
+                               placeholder="ör. data.customer veya data.riskResult"
+                               @onchange="@(e => SetNodeString(node, "data", e.Value?.ToString()))" />
+                        <small class="middt-ui-text-muted">Alt ekranın içinde <code>data</code> değişkeni bu alt nesneye bağlanır.</small>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Başlık (title — opsiyonel)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("title") ?? "")"
+                               @onchange="@(e => SetNodeString(node, "title", e.Value?.ToString()))" />
+                    </div>
+                }
+                else if (node.Widget == "list")
+                {
+                    <div class="middt-ui-input">
+                        <label>Dizi Kaynağı İfadesi (source — C# İfadesi)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("source") ?? "")"
+                               placeholder="data.payments veya data.items"
+                               @onchange="@(e => SetNodeString(node, "source", e.Value?.ToString()))" />
+                        <small class="middt-ui-text-muted">Alt bileşenlerin içinde her satır <code>row</code> değişkeni ile okunur (ör. <code>{{ "{{ row.amount }}" }}</code>).</small>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Boş Liste Mesajı (empty)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("empty") ?? "")"
+                               placeholder="Henüz kayıt bulunmuyor."
+                               @onchange="@(e => SetNodeString(node, "empty", e.Value?.ToString()))" />
+                    </div>
+                }
+                else if (node.Widget == "link")
+                {
+                    <div class="middt-ui-input">
+                        <label>Bağlantı Metni (text)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("text") ?? "")"
+                               @onchange="@(e => SetNodeString(node, "text", e.Value?.ToString()))" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Hedef Adres (href)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("href") ?? "")"
+                               placeholder="/ui/other-page?id={{ data.id }}"
+                               @onchange="@(e => SetNodeString(node, "href", e.Value?.ToString()))" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Görünüm Stili (style)</label>
+                        <select class="middt-wf-input" value="@(node.StringProp("style") ?? "link")"
+                                @onchange="@(e => SetNodeString(node, "style", e.Value?.ToString()))">
+                            <option value="link">link (Bağlantı)</option>
+                            <option value="button">button (Buton)</option>
+                        </select>
+                    </div>
+                }
+                else if (node.Widget == "record")
+                {
+                    <div class="middt-ui-input">
+                        <label>Varlık / Controller Adı (entity)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("entity") ?? "")"
+                               placeholder="CustomerOnboarding"
+                               @onchange="@(e => SetNodeString(node, "entity", e.Value?.ToString()))" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Kayıt Anahtarı Şablonu (recordId)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("recordId") ?? "")"
+                               placeholder="{{ query.id }}"
+                               @onchange="@(e => SetNodeString(node, "recordId", e.Value?.ToString()))" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Kayıt Bulunamadı Mesajı (notFound)</label>
+                        <input class="middt-wf-input" value="@(node.StringProp("notFound") ?? "")"
+                               @onchange="@(e => SetNodeString(node, "notFound", e.Value?.ToString()))" />
+                    </div>
+                }
+                else if (node.Widget == "grid")
+                {
+                    var colsArr = EnsureNodeArray(node, "columns");
+                    <div class="middt-wf-grid-2">
+                        <div class="middt-ui-input">
+                            <label>Veri Kaynağı / Akış (entity)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("entity") ?? "")"
+                                   placeholder="CreditAllocation"
+                                   @onchange="@(e => SetNodeString(node, "entity", e.Value?.ToString()))" />
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Tablo Başlığı (title)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("title") ?? "")"
+                                   @onchange="@(e => SetNodeString(node, "title", e.Value?.ToString()))" />
+                        </div>
+                    </div>
+
+                    <div class="middt-ui-toolbar" style="justify-content: space-between">
+                        <h4 class="middt-ui-section-title">📊 Tablo Kolonları (columns: @colsArr.Count)</h4>
+                        <RadzenButton Icon="add" Text="Kolon Ekle" Size="ButtonSize.ExtraSmall"
+                                      Click="@(() => AddGridColumn(colsArr))" />
+                    </div>
+                    @for (var ci = 0; ci < colsArr.Count; ci++)
+                    {
+                        var colIdx = ci;
+                        if (colsArr[colIdx] is JsonObject colObj)
+                        {
+                            <div class="middt-ui-picker">
+                                <input class="middt-wf-input" placeholder="alan (field)" value="@GetJsonString(colObj, "field")"
+                                       @onchange="@(e => { SetJsonString(colObj, "field", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                <input class="middt-wf-input" placeholder="Başlık (title)" value="@GetJsonString(colObj, "title")"
+                                       @onchange="@(e => { SetJsonString(colObj, "title", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                <RadzenButton Icon="delete" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Danger"
+                                              Click="@(() => { colsArr.RemoveAt(colIdx); SyncJsonFromDoc(); })" />
+                            </div>
+                        }
+                    }
+                }
+
+                <hr class="middt-ui-divider" />
+                <div class="middt-ui-input">
+                    <label>Gelişmiş Özellikler JSON (props)</label>
+                    <textarea class="middt-wf-input middt-wf-code-box" spellcheck="false"
+                              value="@props.ToJsonString(UiJson.Options)"
+                              @onchange="@(e => ReplaceNodePropsFromJson(node, e.Value?.ToString()))"></textarea>
+                </div>
+            </div>
+            return;
+        }
+
+        @* Default: Root Screen / Layout Settings *@
+        <div class="middt-ui-form">
+            <span class="middt-ui-badge middt-ui-badge-info">🖥️ Ekran / Yerleşim Ayarları</span>
+            <h3 class="middt-ui-section-title">@(doc.Title ?? doc.Key)</h3>
+
+            <div class="middt-ui-input">
+                <label>Ekran Anahtarı (key)</label>
+                <input class="middt-wf-input" value="@doc.Key"
+                       disabled="@(selectedKey is not null)"
+                       @onchange="@(e => { doc.Key = (e.Value?.ToString() ?? "new-layout").Trim(); SyncJsonFromDoc(); })" />
+                <small class="middt-ui-text-muted">
+                    İş akışı durumlarında <code>view.layout</code> alanına bu anahtar yazılır; sayfalarda ise <code>/ui/@doc.Key</code> adresini oluşturur.
+                </small>
+            </div>
+
+            <div class="middt-ui-input">
+                <label>Ekran Başlığı (title)</label>
+                <input class="middt-wf-input" value="@(doc.Title ?? "")"
+                       @onchange="@(e => { doc.Title = NullIfWhiteSpace(e.Value?.ToString()); SyncJsonFromDoc(); })" />
+            </div>
+
+            <div class="middt-ui-input">
+                <label>Açıklama (description)</label>
+                <input class="middt-wf-input" value="@(doc.Description ?? "")"
+                       @onchange="@(e => { doc.Description = NullIfWhiteSpace(e.Value?.ToString()); SyncJsonFromDoc(); })" />
+            </div>
+
+            <div class="middt-wf-grid-2">
+                <div class="middt-ui-input">
+                    <label>Ekran Türü (kind)</label>
+                    <select class="middt-wf-input" value="@doc.Kind"
+                            @onchange="@(e => SetLayoutKind(e.Value?.ToString()))">
+                        <option value="view">view (İş Akışı Durum Ekranı / Gömülü Görünüm)</option>
+                        <option value="page">page (Bağımsız Sayfa & Sol Menü Öğesi)</option>
+                    </select>
+                </div>
+                <div class="middt-ui-input">
+                    <label>Yetkili Roller (roles — virgülle)</label>
+                    <input class="middt-wf-input" value="@string.Join(", ", doc.Roles)"
+                           placeholder="Boşsa tüm giriş yapmış kullanıcılar"
+                           @onchange="@(e => SetLayoutRoles(e.Value?.ToString()))" />
+                </div>
+            </div>
+
+            @if (doc.Kind == UiLayoutKind.Page)
+            {
+                var menu = doc.Menu ??= new UiMenu { Title = doc.Title ?? doc.Key, Icon = "dashboard", Order = 100 };
+                <hr class="middt-ui-divider" />
+                <h4 class="middt-ui-section-title">🧭 Sol Menü Ayarları (menu)</h4>
+                <div class="middt-wf-grid-2">
+                    <div class="middt-ui-input">
+                        <label>Menü Başlığı (menu.title)</label>
+                        <input class="middt-wf-input" value="@(menu.Title ?? "")"
+                               @onchange="@(e => { menu.Title = NullIfWhiteSpace(e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Menü İkonu (menu.icon)</label>
+                        <input class="middt-wf-input" value="@(menu.Icon ?? "")" placeholder="dashboard, assessment..."
+                               @onchange="@(e => { menu.Icon = NullIfWhiteSpace(e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                    </div>
+                    <div class="middt-ui-input">
+                        <label>Menü Sırası (menu.order)</label>
+                        <input type="number" class="middt-wf-input" value="@menu.Order"
+                               @onchange="@(e => { menu.Order = int.TryParse(e.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var o) ? o : 100; SyncJsonFromDoc(); })" />
+                    </div>
+                </div>
+            }
+        </div>
+    };
+
+    private IEnumerable<(string Category, List<WidgetPaletteItem> Items)> GetFilteredPaletteGroups()
+    {
+        var filter = paletteFilter.Trim();
+        var items = string.IsNullOrEmpty(filter)
+            ? PaletteItems
+            : PaletteItems.Where(p =>
+                p.Widget.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                p.Title.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                p.Description.Contains(filter, StringComparison.OrdinalIgnoreCase));
+
+        return items.GroupBy(p => p.Category).Select(g => (g.Key, g.ToList()));
     }
 
     private async Task LoadListAsync()
@@ -172,12 +954,142 @@
         }
     }
 
-    private void NewLayout()
+    private async Task OnSelectLayoutAsync(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            NewLayout(UiLayoutKind.View);
+            return;
+        }
+
+        await OpenAsync(key);
+    }
+
+    private async Task OnSelectWorkflowSchemaAsync(string? wfKey)
+    {
+        await LoadWorkflowSchemaFieldsAsync(wfKey);
+    }
+
+    private async Task LoadWorkflowSchemaFieldsAsync(string? wfKey)
+    {
+        linkedWorkflowKey = NullIfWhiteSpace(wfKey);
+        workflowFields.Clear();
+        if (string.IsNullOrWhiteSpace(linkedWorkflowKey) || Services.GetService<WorkflowApiClient>() is not { } wfClient)
+        {
+            return;
+        }
+
+        var defResp = await wfClient.GetDefinitionJsonAsync(linkedWorkflowKey);
+        if (!defResp.IsSuccess || defResp.Data is null)
+        {
+            return;
+        }
+
+        if (defResp.Data["dataSchema"] is JsonObject schemaObj && schemaObj["properties"] is JsonObject propsObj)
+        {
+            foreach (var (field, node) in propsObj)
+            {
+                if (node is JsonObject fSpec)
+                {
+                    var title = GetJsonString(fSpec, "title") ?? field;
+                    var type = GetJsonString(fSpec, "type") ?? "string";
+                    workflowFields.Add((field, title, type));
+                }
+            }
+        }
+    }
+
+    private void GenerateSectionFromWorkflowSchema()
+    {
+        if (workflowFields.Count == 0)
+        {
+            return;
+        }
+
+        var items = new JsonArray();
+        foreach (var f in workflowFields)
+        {
+            var row = new JsonObject
+            {
+                ["label"] = f.Title,
+                ["value"] = $"{{{{ data.{f.Field} }}}}",
+                ["visibleWhen"] = $"data.{f.Field} != null",
+            };
+            if (f.Type == "number")
+            {
+                row["format"] = "N2";
+            }
+
+            items.Add(row);
+        }
+
+        var sectionNode = new UiNode
+        {
+            Widget = "section",
+            Props = new JsonObject
+            {
+                ["title"] = $"{linkedWorkflowKey} — Kayıt Bilgileri",
+            },
+            Children =
+            [
+                new UiNode
+                {
+                    Widget = "fields",
+                    Props = new JsonObject
+                    {
+                        ["items"] = items,
+                    },
+                },
+            ],
+        };
+
+        doc.Body.Add(sectionNode);
+        selectedPath = $"{doc.Body.Count - 1}.0";
+        SyncJsonFromDoc();
+    }
+
+    private void InsertWorkflowField((string Field, string Title, string Type) wfField)
+    {
+        var row = new JsonObject
+        {
+            ["label"] = wfField.Title,
+            ["value"] = $"{{{{ data.{wfField.Field} }}}}",
+            ["visibleWhen"] = $"data.{wfField.Field} != null",
+        };
+        if (wfField.Type == "number")
+        {
+            row["format"] = "N2";
+        }
+
+        if (selectedPath is not null && FindNodeByPath(selectedPath) is { Widget: "fields" } fieldsNode)
+        {
+            EnsureNodeArray(fieldsNode, "items").Add(row);
+            SyncJsonFromDoc();
+            return;
+        }
+
+        // Otherwise create a fields widget and append it
+        var newFields = new UiNode
+        {
+            Widget = "fields",
+            Props = new JsonObject
+            {
+                ["items"] = new JsonArray(row),
+            },
+        };
+        doc.Body.Add(newFields);
+        selectedPath = (doc.Body.Count - 1).ToString(CultureInfo.InvariantCulture);
+        SyncJsonFromDoc();
+    }
+
+    private void NewLayout(string kind = UiLayoutKind.Page)
     {
         selectedKey = null;
+        selectedPath = null;
         version = 0;
-        json = Template;
+        doc = CreateDefaultDocument(kind);
         revisions = [];
+        SyncJsonFromDoc();
         ResetMessages();
     }
 
@@ -191,8 +1103,10 @@
         }
 
         selectedKey = key;
+        selectedPath = null;
         version = response.Data.Version;
-        json = UiJson.Serialize(response.Data);
+        doc = response.Data;
+        SyncJsonFromDoc();
         ResetMessages();
         var history = await Client.RevisionsAsync(key);
         revisions = history.Data ?? [];
@@ -202,10 +1116,11 @@
     {
         try
         {
-            // Keep the current version as the expected version so saving restores the revision as a new version.
             var document = UiJson.Parse(revision.Content);
             document.Version = version;
-            json = UiJson.Serialize(document);
+            doc = document;
+            selectedPath = null;
+            SyncJsonFromDoc();
             ResetMessages();
         }
         catch (JsonException ex)
@@ -218,8 +1133,24 @@
     {
         if (TryParse() is { } document)
         {
-            json = UiJson.Serialize(document);
+            doc = document;
+            SyncJsonFromDoc();
         }
+    }
+
+    private void OnRawJsonInput(ChangeEventArgs e)
+    {
+        json = e.Value?.ToString() ?? string.Empty;
+        if (TryParse() is { } parsed)
+        {
+            doc = parsed;
+        }
+    }
+
+    private void SyncJsonFromDoc()
+    {
+        json = UiJson.Serialize(doc);
+        validMessage = null;
     }
 
     private UiLayoutDocument? TryParse()
@@ -243,6 +1174,7 @@
             return;
         }
 
+        doc = document;
         var response = await Client.ValidateAsync(document);
         if (!response.IsSuccess)
         {
@@ -251,7 +1183,7 @@
         }
 
         errors = response.Data?.Errors ?? [];
-        validMessage = errors.Count == 0 ? "Yerleşim geçerli." : null;
+        validMessage = errors.Count == 0 ? "✔ Ekran yerleşimi ve tüm ifadeler geçerli." : null;
     }
 
     private async Task Preview()
@@ -261,11 +1193,42 @@
             return;
         }
 
+        doc = document;
         var validation = new UiLayoutValidator(Catalog).Validate(document);
         errors = validation.Errors;
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+
+        var sampleData = new JsonObject
+        {
+            ["title"] = "Örnek Kayıt Başlığı",
+            ["customerName"] = "Anadolu Lojistik A.Ş.",
+            ["customerKey"] = "CUST-2026-001",
+            ["amount"] = 250000,
+            ["termMonths"] = 24,
+            ["status"] = "Active",
+        };
+        foreach (var wfField in workflowFields)
+        {
+            if (!sampleData.ContainsKey(wfField.Field))
+            {
+                sampleData[wfField.Field] = wfField.Type is "number" or "integer" ? 1000 : $"Örnek {wfField.Title}";
+            }
+        }
+
+        var vars = new Dictionary<string, JsonNode?>
+        {
+            [UiExpressions.Query] = new JsonObject(),
+            ["data"] = sampleData,
+            ["instance"] = new JsonObject
+            {
+                ["key"] = "WF-PREVIEW-01",
+                ["state"] = "review",
+                ["status"] = "Active",
+            },
+        };
+
         preview = document;
-        previewContext = new UiRenderContext(Catalog, ExpressionUser.FromPrincipal(state.User), new Dictionary<string, JsonNode?> { [UiExpressions.Query] = new JsonObject() }, interactive: true)
+        previewContext = new UiRenderContext(Catalog, ExpressionUser.FromPrincipal(state.User), vars, interactive: true)
         {
             IdPrefix = "ui-preview",
         };
@@ -298,10 +1261,13 @@
 
             selectedKey = response.Data.Key;
             version = response.Data.Version;
-            json = UiJson.Serialize(response.Data);
-            validMessage = $"Kaydedildi (v{version}).";
+            doc = response.Data;
+            SyncJsonFromDoc();
+            validMessage = $"✔ '{selectedKey}' ekran yerleşimi kaydedildi (v{version}).";
+            Notification.Notify(NotificationSeverity.Success, "Kaydedildi", $"'{selectedKey}' ekranı güncellendi.");
             await LoadListAsync();
             revisions = (await Client.RevisionsAsync(selectedKey)).Data ?? [];
+            await OnSavedKey.InvokeAsync(selectedKey);
             await OnChanged.InvokeAsync();
         }
         finally
@@ -326,10 +1292,568 @@
         }
 
         Notification.Notify(NotificationSeverity.Success, "Silindi", selectedKey);
-        NewLayout();
+        NewLayout(UiLayoutKind.Page);
         await LoadListAsync();
         await OnChanged.InvokeAsync();
     }
+
+    // --- Drag & Drop and Tree Manipulation ---
+
+    private void SelectNode(string? path)
+    {
+        selectedPath = path;
+    }
+
+    private void StartPaletteWidgetDrag(string widget)
+    {
+        dragWidgetType = widget;
+        dragSourcePath = null;
+    }
+
+    private void StartExistingNodeDrag(string path)
+    {
+        dragSourcePath = path;
+        dragWidgetType = null;
+    }
+
+    private void OnDropIntoContainer(string containerPath)
+    {
+        var targetList = string.IsNullOrEmpty(containerPath)
+            ? doc.Body
+            : (FindNodeByPath(containerPath) is { } container && IsContainerWidget(container.Widget)
+                ? (container.Children ??= [])
+                : doc.Body);
+
+        if (!string.IsNullOrEmpty(dragWidgetType))
+        {
+            var created = CreateWidgetNode(dragWidgetType);
+            targetList.Add(created);
+            var newIdx = targetList.Count - 1;
+            selectedPath = string.IsNullOrEmpty(containerPath)
+                ? newIdx.ToString(CultureInfo.InvariantCulture)
+                : $"{containerPath}.{newIdx}";
+            SyncJsonFromDoc();
+        }
+        else if (!string.IsNullOrEmpty(dragSourcePath) &&
+                 !string.Equals(dragSourcePath, containerPath, StringComparison.Ordinal) &&
+                 !containerPath.StartsWith(dragSourcePath + ".", StringComparison.Ordinal))
+        {
+            if (RemoveNodeAtPath(dragSourcePath) is { } moved)
+            {
+                targetList.Add(moved);
+                selectedPath = null;
+                SyncJsonFromDoc();
+            }
+        }
+
+        dragWidgetType = null;
+        dragSourcePath = null;
+    }
+
+    private void QuickAddWidget(string widget)
+    {
+        if (selectedPath is not null && FindNodeByPath(selectedPath) is { } sel && IsContainerWidget(sel.Widget))
+        {
+            var children = sel.Children ??= [];
+            children.Add(CreateWidgetNode(widget));
+            selectedPath = $"{selectedPath}.{children.Count - 1}";
+            SyncJsonFromDoc();
+            return;
+        }
+
+        doc.Body.Add(CreateWidgetNode(widget));
+        selectedPath = (doc.Body.Count - 1).ToString(CultureInfo.InvariantCulture);
+        SyncJsonFromDoc();
+    }
+
+    private void AddChildWidget(UiNode container, string containerPath, string? widget)
+    {
+        if (string.IsNullOrWhiteSpace(widget))
+        {
+            return;
+        }
+
+        var children = container.Children ??= [];
+        children.Add(CreateWidgetNode(widget));
+        selectedPath = $"{containerPath}.{children.Count - 1}";
+        SyncJsonFromDoc();
+    }
+
+    private void MoveNodeInList(List<UiNode> list, int index, int delta)
+    {
+        var next = index + delta;
+        if (next < 0 || next >= list.Count)
+        {
+            return;
+        }
+
+        (list[index], list[next]) = (list[next], list[index]);
+        SyncJsonFromDoc();
+    }
+
+    private void DuplicateNodeInList(List<UiNode> list, int index)
+    {
+        if (index < 0 || index >= list.Count)
+        {
+            return;
+        }
+
+        var jsonClone = JsonSerializer.Serialize(list[index], UiJson.Options);
+        if (JsonSerializer.Deserialize<UiNode>(jsonClone, UiJson.Options) is { } copy)
+        {
+            list.Insert(index + 1, copy);
+            SyncJsonFromDoc();
+        }
+    }
+
+    private void DeleteNodeFromList(List<UiNode> list, int index)
+    {
+        if (index < 0 || index >= list.Count)
+        {
+            return;
+        }
+
+        list.RemoveAt(index);
+        selectedPath = null;
+        SyncJsonFromDoc();
+    }
+
+    private UiNode? FindNodeByPath(string path)
+    {
+        var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        List<UiNode>? currentList = doc.Body;
+        UiNode? current = null;
+
+        foreach (var part in parts)
+        {
+            if (currentList is null || !int.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx) || idx < 0 || idx >= currentList.Count)
+            {
+                return null;
+            }
+
+            current = currentList[idx];
+            currentList = current.Children;
+        }
+
+        return current;
+    }
+
+    private UiNode? RemoveNodeAtPath(string path)
+    {
+        var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return null;
+        }
+
+        List<UiNode>? parentList = doc.Body;
+        for (var i = 0; i < parts.Length - 1; i++)
+        {
+            if (parentList is null || !int.TryParse(parts[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx) || idx < 0 || idx >= parentList.Count)
+            {
+                return null;
+            }
+
+            parentList = parentList[idx].Children;
+        }
+
+        if (parentList is null || !int.TryParse(parts[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var lastIdx) || lastIdx < 0 || lastIdx >= parentList.Count)
+        {
+            return null;
+        }
+
+        var removed = parentList[lastIdx];
+        parentList.RemoveAt(lastIdx);
+        return removed;
+    }
+
+    private void ChangeWidgetType(UiNode node, string? newWidget)
+    {
+        if (string.IsNullOrWhiteSpace(newWidget))
+        {
+            return;
+        }
+
+        var template = CreateWidgetNode(newWidget);
+        node.Widget = template.Widget;
+        node.Props = template.Props;
+        node.Children = template.Children;
+        SyncJsonFromDoc();
+    }
+
+    private static UiNode CreateWidgetNode(string widget) =>
+        widget switch
+        {
+            "section" => new UiNode
+            {
+                Widget = "section",
+                Props = new JsonObject { ["title"] = "Yeni Bölüm" },
+                Children =
+                [
+                    new UiNode
+                    {
+                        Widget = "fields",
+                        Props = new JsonObject
+                        {
+                            ["items"] = new JsonArray(
+                                new JsonObject { ["label"] = "Başlık", ["value"] = "{{ data.title }}" }),
+                        },
+                    },
+                ],
+            },
+            "columns" => new UiNode
+            {
+                Widget = "columns",
+                Props = new JsonObject { ["widths"] = new JsonArray("1", "1") },
+                Children =
+                [
+                    new UiNode
+                    {
+                        Widget = "section",
+                        Props = new JsonObject { ["title"] = "Sol Sütun" },
+                        Children = [new UiNode { Widget = "text", Props = new JsonObject { ["text"] = "Sol sütun içeriği" } }],
+                    },
+                    new UiNode
+                    {
+                        Widget = "section",
+                        Props = new JsonObject { ["title"] = "Sağ Sütun" },
+                        Children = [new UiNode { Widget = "text", Props = new JsonObject { ["text"] = "Sağ sütun içeriği" } }],
+                    },
+                ],
+            },
+            "fields" => new UiNode
+            {
+                Widget = "fields",
+                Props = new JsonObject
+                {
+                    ["items"] = new JsonArray(
+                        new JsonObject { ["label"] = "Müşteri / Başlık", ["value"] = "{{ data.title }}" },
+                        new JsonObject { ["label"] = "Tutar", ["value"] = "{{ data.amount }}", ["format"] = "N2" }),
+                },
+            },
+            "heading" => new UiNode
+            {
+                Widget = "heading",
+                Props = new JsonObject { ["text"] = "Bölüm Başlığı", ["level"] = 2 },
+            },
+            "text" => new UiNode
+            {
+                Widget = "text",
+                Props = new JsonObject { ["text"] = "Açıklama metni...", ["style"] = "normal" },
+            },
+            "alert" => new UiNode
+            {
+                Widget = "alert",
+                Props = new JsonObject { ["severity"] = "info", ["text"] = "Önemli bilgilendirme mesajı." },
+            },
+            "badge" => new UiNode
+            {
+                Widget = "badge",
+                Props = new JsonObject { ["color"] = "info", ["text"] = "{{ instance.state }}" },
+            },
+            "divider" => new UiNode { Widget = "divider" },
+            "link" => new UiNode
+            {
+                Widget = "link",
+                Props = new JsonObject { ["text"] = "Detaya Git", ["href"] = "/ui/home", ["style"] = "button" },
+            },
+            "list" => new UiNode
+            {
+                Widget = "list",
+                Props = new JsonObject { ["source"] = "data.items", ["empty"] = "Kayıt bulunamadı." },
+                Children =
+                [
+                    new UiNode
+                    {
+                        Widget = "fields",
+                        Props = new JsonObject
+                        {
+                            ["items"] = new JsonArray(new JsonObject { ["label"] = "Kalem", ["value"] = "{{ row.title }}" }),
+                        },
+                    },
+                ],
+            },
+            "record" => new UiNode
+            {
+                Widget = "record",
+                Props = new JsonObject { ["entity"] = "CustomerOnboarding", ["recordId"] = "{{ query.id }}" },
+                Children = [new UiNode { Widget = "text", Props = new JsonObject { ["text"] = "{{ record.fullName }}" } }],
+            },
+            "layout" => new UiNode
+            {
+                Widget = "layout",
+                Props = new JsonObject { ["key"] = "workflow-footer" },
+            },
+            "grid" => new UiNode
+            {
+                Widget = "grid",
+                Props = new JsonObject
+                {
+                    ["entity"] = "CustomerOnboarding",
+                    ["title"] = "Kayıt Listesi",
+                    ["columns"] = new JsonArray(
+                        new JsonObject { ["field"] = "key", ["title"] = "Referans" },
+                        new JsonObject { ["field"] = "state", ["title"] = "Durum" }),
+                },
+            },
+            _ => new UiNode { Widget = widget },
+        };
+
+    private static UiLayoutDocument CreateDefaultDocument(string kind, string? customKey = null)
+    {
+        var isView = string.Equals(kind, UiLayoutKind.View, StringComparison.Ordinal);
+        var key = customKey ?? (isView ? "new-workflow-view" : "new-page");
+        return new UiLayoutDocument
+        {
+            Key = key,
+            Title = isView ? "Yeni İş Akışı Ekranı" : "Yeni Sayfa",
+            Kind = kind,
+            Menu = isView ? null : new UiMenu { Title = "Yeni Sayfa", Icon = "dashboard", Order = 100 },
+            Body = isView
+                ?
+                [
+                    new UiNode
+                    {
+                        Widget = "section",
+                        Props = new JsonObject { ["title"] = "Kayıt Özeti" },
+                        Children =
+                        [
+                            new UiNode
+                            {
+                                Widget = "fields",
+                                Props = new JsonObject
+                                {
+                                    ["items"] = new JsonArray(
+                                        new JsonObject { ["label"] = "Başlık", ["value"] = "{{ data.title }}" },
+                                        new JsonObject { ["label"] = "Tutar", ["value"] = "{{ data.amount }}", ["format"] = "N2" }),
+                                },
+                            },
+                        ],
+                    },
+                    new UiNode
+                    {
+                        Widget = "layout",
+                        Props = new JsonObject { ["key"] = "workflow-footer" },
+                    },
+                ]
+                :
+                [
+                    new UiNode { Widget = "heading", Props = new JsonObject { ["text"] = "Merhaba {{ user.Name }}" } },
+                    new UiNode { Widget = "text", Props = new JsonObject { ["text"] = "Bu sayfa çalışma zamanında eklendi." } },
+                ],
+        };
+    }
+
+    // --- Inspector Helpers ---
+
+    private void SetLayoutKind(string? kind)
+    {
+        doc.Kind = kind == UiLayoutKind.View ? UiLayoutKind.View : UiLayoutKind.Page;
+        if (doc.Kind == UiLayoutKind.View)
+        {
+            doc.Menu = null;
+        }
+        else
+        {
+            doc.Menu ??= new UiMenu { Title = doc.Title ?? doc.Key, Icon = "dashboard", Order = 100 };
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void SetLayoutRoles(string? csv)
+    {
+        doc.Roles = (csv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)
+            .ToList();
+        SyncJsonFromDoc();
+    }
+
+    private void SetNodeString(UiNode node, string prop, string? value)
+    {
+        var p = node.Props ??= new JsonObject();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            p.Remove(prop);
+        }
+        else
+        {
+            p[prop] = value;
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void SetNodeInt(UiNode node, string prop, string? raw, int fallback)
+    {
+        var p = node.Props ??= new JsonObject();
+        p[prop] = int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : fallback;
+        SyncJsonFromDoc();
+    }
+
+    private static string GetNodeCsvArray(UiNode node, string prop) =>
+        node.ArrayProp(prop) is { } arr
+            ? string.Join(", ", arr.Select(x => x?.ToString()).Where(s => !string.IsNullOrWhiteSpace(s)))
+            : string.Empty;
+
+    private void SetNodeCsvArray(UiNode node, string prop, string? csv)
+    {
+        var p = node.Props ??= new JsonObject();
+        var items = (csv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)
+            .ToArray();
+        if (items.Length == 0)
+        {
+            p.Remove(prop);
+        }
+        else
+        {
+            p[prop] = new JsonArray(items.Select(s => (JsonNode)JsonValue.Create(s)!).ToArray());
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private static JsonArray EnsureNodeArray(UiNode node, string prop)
+    {
+        var p = node.Props ??= new JsonObject();
+        if (p[prop] is JsonArray arr)
+        {
+            return arr;
+        }
+
+        var created = new JsonArray();
+        p[prop] = created;
+        return created;
+    }
+
+    private void AddFieldsRow(JsonArray itemsArr)
+    {
+        itemsArr.Add(new JsonObject
+        {
+            ["label"] = "Yeni Alan",
+            ["value"] = "{{ data.title }}",
+        });
+        SyncJsonFromDoc();
+    }
+
+    private void AddWorkflowFieldByName(JsonArray itemsArr, string? fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(fieldName))
+        {
+            return;
+        }
+
+        var wfField = workflowFields.FirstOrDefault(f => string.Equals(f.Field, fieldName, StringComparison.Ordinal));
+        var row = new JsonObject
+        {
+            ["label"] = wfField.Title ?? fieldName,
+            ["value"] = $"{{{{ data.{fieldName} }}}}",
+            ["visibleWhen"] = $"data.{fieldName} != null",
+        };
+        if (wfField.Type == "number")
+        {
+            row["format"] = "N2";
+        }
+
+        itemsArr.Add(row);
+        SyncJsonFromDoc();
+    }
+
+    private void AddGridColumn(JsonArray colsArr)
+    {
+        colsArr.Add(new JsonObject
+        {
+            ["field"] = "title",
+            ["title"] = "Başlık",
+        });
+        SyncJsonFromDoc();
+    }
+
+    private void MoveJsonArrayItem(JsonArray arr, int index, int delta)
+    {
+        var next = index + delta;
+        if (next < 0 || next >= arr.Count)
+        {
+            return;
+        }
+
+        var item = arr[index]?.DeepClone();
+        arr.RemoveAt(index);
+        arr.Insert(next, item);
+        SyncJsonFromDoc();
+    }
+
+    private void ReplaceNodePropsFromJson(UiNode node, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            node.Props = new JsonObject();
+            SyncJsonFromDoc();
+            return;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(raw) is JsonObject parsed)
+            {
+                node.Props = parsed;
+                SyncJsonFromDoc();
+            }
+        }
+        catch (JsonException)
+        {
+            // Keep existing props when invalid
+        }
+    }
+
+    private static string? GetJsonString(JsonObject obj, string prop) =>
+        obj[prop] is JsonValue val && val.TryGetValue<string>(out var s) ? s : null;
+
+    private static void SetJsonString(JsonObject obj, string prop, string? val)
+    {
+        if (string.IsNullOrWhiteSpace(val))
+        {
+            obj.Remove(prop);
+        }
+        else
+        {
+            obj[prop] = val;
+        }
+    }
+
+    private static string? NullIfWhiteSpace(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static bool IsContainerWidget(string widget) =>
+        widget is "section" or "columns" or "list" or "record";
+
+    private static string GetWidgetIcon(string widget) =>
+        PaletteItems.FirstOrDefault(p => p.Widget == widget)?.Icon ?? "🧩";
+
+    private static string GetWidgetTitle(string widget) =>
+        PaletteItems.FirstOrDefault(p => p.Widget == widget)?.Title ?? widget;
+
+    private static string GetWidgetSummary(UiNode node) =>
+        node.Widget switch
+        {
+            "section" => node.StringProp("title") ?? "Bölüm Kartı",
+            "columns" => $"Yan Yana Sütunlar ({node.Children?.Count ?? 0} sütun)",
+            "fields" => $"{node.ArrayProp("items")?.Count ?? 0} alan satırı",
+            "heading" => node.StringProp("text") ?? "Başlık",
+            "text" => node.StringProp("text") ?? "Metin",
+            "alert" => $"[{node.StringProp("severity") ?? "info"}] {node.StringProp("text")}",
+            "badge" => $"[{node.StringProp("color") ?? "primary"}] {node.StringProp("text")}",
+            "layout" => $"Alt Ekran: {node.StringProp("key") ?? "(seçilmedi)"}{(node.StringProp("data") is { } d ? $" ({d})" : "")}",
+            "list" => $"Dizi: {node.StringProp("source") ?? "data.items"}",
+            "grid" => $"Tablo: {node.StringProp("entity")} ({node.ArrayProp("columns")?.Count ?? 0} kolon)",
+            "record" => $"Kayıt: {node.StringProp("entity")} ({node.StringProp("recordId")})",
+            "link" => $"{node.StringProp("text")} → {node.StringProp("href")}",
+            "divider" => "Yatay Ayırıcı Çizgi",
+            _ => node.Widget,
+        };
 
     private void ResetMessages()
     {

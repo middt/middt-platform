@@ -56,6 +56,8 @@ public sealed class MiddtWorkflowOptions
 
     internal List<Func<IServiceProvider, IEnumerable<(string Source, string Json)>>> DefinitionSources { get; } = [];
 
+    internal string? DefinitionsDirectory { get; private set; }
+
     internal Dictionary<string, Type> TaskTypes { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public MiddtWorkflowOptions UseDbContext(Action<DbContextOptionsBuilder> configure)
@@ -72,6 +74,7 @@ public sealed class MiddtWorkflowOptions
             var root = Path.IsPathRooted(directory)
                 ? directory
                 : Path.Combine(sp.GetService<IHostEnvironment>()?.ContentRootPath ?? AppContext.BaseDirectory, directory);
+            DefinitionsDirectory = root;
 
             return Directory.Exists(root)
                 ? Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories).Select(f => (f, File.ReadAllText(f)))
