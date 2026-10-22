@@ -6,6 +6,7 @@ place that must change and verifies the result.
 
 | Task | Playbook |
 |---|---|
+| Citizen Developer Rehberi (Zero-Code JSON İş Akışı, AI Ajanı ve Ekran Geliştirme) | [../citizen-developer-guide.md](../citizen-developer-guide.md) |
 | 100% Backend-driven JSON screens, workflows & reusable `"widget": "layout"` | [backend-driven-json-ui.md](backend-driven-json-ui.md) |
 | New CRUD / directory screen or entity (JSON-backed or EF Core) | [add-crud-entity.md](add-crud-entity.md) |
 | New layout widget (spec → .NET → Blazor → Angular → static HTML) | [add-layout-widget.md](add-layout-widget.md) |
