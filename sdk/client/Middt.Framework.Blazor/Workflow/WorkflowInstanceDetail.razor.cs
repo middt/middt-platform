@@ -238,8 +238,8 @@ public partial class WorkflowInstanceDetail
                         ["status"] = instance.Status.ToString(),
                         ["startedBy"] = instance.StartedBy,
                         ["agents"] = instance.Agents.DeepClone(),
-                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.AgentRuns),
-                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ToolCalls),
+                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.AgentRuns, System.Text.Json.JsonSerializerOptions.Web),
+                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ToolCalls, System.Text.Json.JsonSerializerOptions.Web),
                     },
                 };
             }

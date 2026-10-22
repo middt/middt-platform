@@ -49,9 +49,6 @@ public sealed class MiddtWorkflowOptions
     /// </summary>
     public ISet<string> AllowedHttpHosts { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Base URL used when an <c>http</c> task specifies a root-relative path (<c>/api/…</c>) and the HTTP client has no <see cref="HttpClient.BaseAddress"/>.</summary>
-    public Uri? DefaultHttpBaseUrl { get; set; }
-
     /// <summary>Maximum delay of in-request task retries; longer policies are capped.</summary>
     public TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
 

@@ -110,6 +110,8 @@ services:
         condition: service_healthy
       openobserve:
         condition: service_started
+      mockoon:
+        condition: service_started
 
   # Middt Identity (identity/Middt.Identity) – the OAuth 2.0 / OpenID Connect server, configured by
   # identity/Middt.Identity/Seeds/identity.json (clients, demo users, relaxed password policy); secrets come from .env.
@@ -153,6 +155,15 @@ services:
     ports:
       - "127.0.0.1:5180:5080"
       - "127.0.0.1:5181:5081"
+
+  mockoon:
+    image: mockoon/cli:latest
+    command: ["--data", "/data/mockoon-env.json", "--port", "3000"]
+    volumes:
+      - ./demo/mockoon/mockoon-env.json:/data/mockoon-env.json:ro
+    ports:
+      - "127.0.0.1:3080:3000"
+    networks: [backend]
 
   mq:
     image: rabbitmq:4-management

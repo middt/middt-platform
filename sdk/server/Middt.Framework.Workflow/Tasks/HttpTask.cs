@@ -48,15 +48,12 @@ public sealed class HttpTask : IWorkflowTask
             yield break;
         }
 
-        if (!url.StartsWith('/'))
+        var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
+        var authorityEnd = schemeEnd < 0 ? -1 : url.IndexOfAny(['/', '?', '#'], schemeEnd + 3);
+        var authority = schemeEnd < 0 ? url : url[..(authorityEnd < 0 ? url.Length : authorityEnd)];
+        if (schemeEnd < 0 || authority.Contains("{{", StringComparison.Ordinal))
         {
-            var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
-            var authorityEnd = schemeEnd < 0 ? -1 : url.IndexOfAny(['/', '?', '#'], schemeEnd + 3);
-            var authority = schemeEnd < 0 ? url : url[..(authorityEnd < 0 ? url.Length : authorityEnd)];
-            if (schemeEnd < 0 || authority.Contains("{{", StringComparison.Ordinal))
-            {
-                yield return "http: 'url' must be absolute and must not contain placeholders in the scheme or host.";
-            }
+            yield return "http: 'url' must be absolute and must not contain placeholders in the scheme or host.";
         }
 
         foreach (var error in expressions.ValidateTemplate(task.Config["url"])
@@ -76,7 +73,7 @@ public sealed class HttpTask : IWorkflowTask
         var clientName = config["client"]?.GetValue<string>() ?? DefaultClientName;
         var client = context.Services.GetRequiredService<IHttpClientFactory>().CreateClient(clientName);
         var wfOptions = context.Services.GetService<IOptions<MiddtWorkflowOptions>>()?.Value ?? new MiddtWorkflowOptions();
-        var baseUri = RenderUrl(config["url"]!.GetValue<string>(), context, client.BaseAddress ?? wfOptions.DefaultHttpBaseUrl);
+        var baseUri = RenderUrl(config["url"]!.GetValue<string>(), context);
 
         var allowedHosts = wfOptions.AllowedHttpHosts;
         if (allowedHosts.Count > 0 && !allowedHosts.Contains(baseUri.Host))
@@ -272,15 +269,11 @@ public sealed class HttpTask : IWorkflowTask
         return new Uri(sb.ToString(), UriKind.Absolute);
     }
 
-    private static readonly Uri DefaultLocalBaseUri = new("http://127.0.0.1:8180");
-
-    private static Uri RenderUrl(string template, WorkflowTaskContext context, Uri? baseAddress)
+    private static Uri RenderUrl(string template, WorkflowTaskContext context)
     {
         // Each placeholder value is escaped: data cannot inject path segments, query parameters or a different host.
         var rendered = ExpressionEvaluator.PlaceholderRegex().Replace(template, m =>
             Uri.EscapeDataString(Convert.ToString(context.Expressions.Evaluate(m.Groups[1].Value, context.Scope), CultureInfo.InvariantCulture) ?? string.Empty));
-        return rendered.StartsWith('/')
-            ? new Uri(baseAddress ?? DefaultLocalBaseUri, rendered)
-            : new Uri(rendered, UriKind.Absolute);
+        return new Uri(rendered, UriKind.Absolute);
     }
 }

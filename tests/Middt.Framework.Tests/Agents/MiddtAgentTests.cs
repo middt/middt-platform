@@ -434,8 +434,8 @@ public sealed class MiddtAgentTests
                     ["stateTitle"] = audited.StateTitle,
                     ["workflow"] = audited.Workflow,
                     ["agents"] = audited.Agents.DeepClone(),
-                    ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(audited.AgentRuns),
-                    ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(audited.ToolCalls),
+                    ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(audited.AgentRuns, System.Text.Json.JsonSerializerOptions.Web),
+                    ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(audited.ToolCalls, System.Text.Json.JsonSerializerOptions.Web),
                 },
             },
             new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] },
@@ -680,8 +680,8 @@ public sealed class MiddtAgentTests
                         ["stateTitle"] = afterMcpAudit.StateTitle,
                         ["workflow"] = afterMcpAudit.Workflow,
                         ["agents"] = afterMcpAudit.Agents.DeepClone(),
-                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(afterMcpAudit.AgentRuns),
-                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(afterMcpAudit.ToolCalls),
+                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(afterMcpAudit.AgentRuns, System.Text.Json.JsonSerializerOptions.Web),
+                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(afterMcpAudit.ToolCalls, System.Text.Json.JsonSerializerOptions.Web),
                     },
                 },
                 new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] },
@@ -754,8 +754,8 @@ public sealed class MiddtAgentTests
                         ["stateTitle"] = fraudResolved.StateTitle,
                         ["workflow"] = fraudResolved.Workflow,
                         ["agents"] = fraudResolved.Agents.DeepClone(),
-                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(fraudResolved.AgentRuns),
-                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(fraudResolved.ToolCalls),
+                        ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(fraudResolved.AgentRuns, System.Text.Json.JsonSerializerOptions.Web),
+                        ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(fraudResolved.ToolCalls, System.Text.Json.JsonSerializerOptions.Web),
                     },
                 },
                 new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] },
@@ -817,12 +817,14 @@ public sealed class MiddtAgentTests
         var pricingSchema = JsonNode.Parse("""
         {
           "type": "object",
-          "required": ["finalPrice", "discountRate", "segmentTag", "workflowKey"],
+          "required": ["finalPrice", "discountRate", "segmentTag", "workflowKey", "bureauStatus", "externalBureauRef"],
           "properties": {
             "finalPrice": { "type": "number", "default": 0 },
             "discountRate": { "type": "number", "default": 0 },
             "segmentTag": { "type": "string", "default": "STD" },
-            "workflowKey": { "type": "string", "default": "unknown" }
+            "workflowKey": { "type": "string", "default": "unknown" },
+            "bureauStatus": { "type": "string", "default": "Pending" },
+            "externalBureauRef": { "type": "string", "default": "NONE" }
           }
         }
         """)!.AsObject();
@@ -898,10 +900,41 @@ public sealed class MiddtAgentTests
                             """)!.AsObject(),
                         });
 
+                        // 3. Declarative tool using workflow "http" task
+                        a.AddDeclarativeTool(new AgentToolDefinition
+                        {
+                            Name = "verify_order_http_gateway",
+                            Kind = "task",
+                            Task = "http",
+                            Description = "Calls the HTTP gateway endpoint via the workflow http task.",
+                            Parameters = JsonNode.Parse("""
+                            {
+                              "type": "object",
+                              "properties": {
+                                "orderId": { "type": "string" },
+                                "baseAmount": { "type": "number" }
+                              }
+                            }
+                            """)!.AsObject(),
+                            Config = JsonNode.Parse("""
+                            {
+                              "method": "POST",
+                              "url": "http://mockoon:3000/api/v1/PricingGateway/ping",
+                              "headers": {
+                                "X-Pricing-Segment": "{{ data.customerSegment }}"
+                              },
+                              "body": {
+                                "orderId": "{{ args.orderId }}",
+                                "amount": "{{ args.baseAmount }}"
+                              }
+                            }
+                            """)!.AsObject(),
+                        });
+
                         a.AddAgent(
                             name: "pricing-agent",
-                            instructions: "Use compute_segment_pricing and cached_segment_tag to calculate pricing.",
-                            tools: ["compute_segment_pricing", "cached_segment_tag"],
+                            instructions: "Use compute_segment_pricing, cached_segment_tag, and verify_order_http_gateway to calculate pricing.",
+                            tools: ["compute_segment_pricing", "cached_segment_tag", "verify_order_http_gateway"],
                             outputSchema: pricingSchema);
                     });
             });
@@ -921,11 +954,16 @@ public sealed class MiddtAgentTests
         instance.Data["pricingResult"]!["finalPrice"]!.GetValue<double>().Should().Be(800);
         instance.Data["pricingResult"]!["segmentTag"]!.GetValue<string>().Should().Be("SEG-VIP");
         instance.Data["pricingResult"]!["workflowKey"]!.GetValue<string>().Should().Be("ai-task-bridge-flow");
+        instance.Data["pricingResult"]!["bureauStatus"]!.GetValue<string>().Should().Be("Onaylandı (KKB HTTP Gateway)");
+        instance.Data["pricingResult"]!["externalBureauRef"]!.GetValue<string>().Should().StartWith("KKB-HTTP-");
 
         // WriteToWorkflowData = true persisted both into path and mutated workflow data fields back to instance.Data
         instance.Data["auditTrailTag"]!.GetValue<string>().Should().Be("ORD-900:VIP");
         instance.Data["pricingBreakdown"]!["finalPrice"]!.GetValue<double>().Should().Be(800);
-        instance.Data["pricingMeta"]!["toolCallCount"]!.GetValue<int>().Should().Be(2);
+        instance.Data["pricingMeta"]!["toolCallCount"]!.GetValue<int>().Should().Be(3);
+        instance.ToolCalls.Should().Contain(tc =>
+            tc.Name == "verify_order_http_gateway" &&
+            tc.Result!["gateway"]!.GetValue<string>() == "PricingGateway");
     }
 
     private sealed class ToolTestingChatClient(string modelId) : IChatClient

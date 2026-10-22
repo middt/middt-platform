@@ -157,12 +157,76 @@ public sealed class WorkflowTestHost : IAsyncDisposable
         builder.Services.AddAuthentication(TestAuthHandler.SchemeName)
             .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, null);
         builder.Services.AddAuthorization();
+        builder.Services.AddHttpClient(HttpTask.DefaultClientName)
+            .ConfigurePrimaryHttpMessageHandler(sp =>
+            {
+                var server = sp.GetService<Microsoft.AspNetCore.Hosting.Server.IServer>() as TestServer;
+                return server is not null
+                    ? new TestServerFallbackHandler(server.CreateHandler(), new SocketsHttpHandler { AllowAutoRedirect = false })
+                    : new SocketsHttpHandler { AllowAutoRedirect = false };
+            });
         services?.Invoke(builder.Services);
 
         var app = builder.Build();
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapMiddtWorkflows("api/workflows");
+        app.MapPost("api/v1/credit-bureau/check", async (Microsoft.AspNetCore.Http.HttpContext http) =>
+        {
+            JsonObject? payload = null;
+            if (http.Request.ContentLength is > 0 || http.Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                using var reader = new StreamReader(http.Request.Body);
+                var bodyText = await reader.ReadToEndAsync(http.RequestAborted);
+                if (!string.IsNullOrWhiteSpace(bodyText))
+                {
+                    payload = JsonNode.Parse(bodyText) as JsonObject;
+                }
+            }
+
+            var amount = payload?["amount"]?.GetValue<decimal>() ?? 0m;
+            var isOverLimit = amount > 5_000_000m;
+            return Microsoft.AspNetCore.Http.Results.Ok(new
+            {
+                status = "Approved",
+                gateway = "TCMB-KKB-Mockoon",
+                verified = true,
+                referenceCode = $"GW-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}",
+                bureauStatus = isOverLimit ? "Limit Aşımı Uyarı Kaydı (KKB HTTP Gateway)" : "Onaylandı (KKB HTTP Gateway)",
+                centralBankRecord = isOverLimit ? "Yüksek Risk / Limit Aşımı (TCMB Memzuç)" : "Temiz (TCMB Memzuç Kaydı Uygun)",
+                externalBureauRef = $"KKB-HTTP-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}",
+                processedAt = DateTimeOffset.UtcNow,
+                echo = payload,
+            });
+        }).AllowAnonymous();
+        app.MapMethods("api/v1/{entity}/ping", ["GET", "POST"], async (string entity, Microsoft.AspNetCore.Http.HttpContext http) =>
+        {
+            JsonObject? payload = null;
+            if (http.Request.ContentLength is > 0 || http.Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                using var reader = new StreamReader(http.Request.Body);
+                var bodyText = await reader.ReadToEndAsync(http.RequestAborted);
+                if (!string.IsNullOrWhiteSpace(bodyText))
+                {
+                    payload = JsonNode.Parse(bodyText) as JsonObject;
+                }
+            }
+
+            var amount = payload?["amount"]?.GetValue<decimal>() ?? 0m;
+            var isOverLimit = amount > 5_000_000m;
+            return Microsoft.AspNetCore.Http.Results.Ok(new
+            {
+                status = "Approved",
+                gateway = entity,
+                verified = true,
+                referenceCode = $"GW-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}",
+                bureauStatus = isOverLimit ? "Limit Aşımı Uyarı Kaydı (KKB HTTP Gateway)" : "Onaylandı (KKB HTTP Gateway)",
+                centralBankRecord = isOverLimit ? "Yüksek Risk / Limit Aşımı (TCMB Memzuç)" : "Temiz (TCMB Memzuç Kaydı Uygun)",
+                externalBureauRef = $"KKB-HTTP-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}",
+                processedAt = DateTimeOffset.UtcNow,
+                echo = payload,
+            });
+        }).AllowAnonymous();
 
         try
         {
@@ -458,5 +522,33 @@ public sealed class FakeHttpHandler : HttpMessageHandler
 
         Requests.Enqueue((request.Method, request.RequestUri!, body, headers));
         return new HttpResponseMessage(StatusCode) { Content = new StringContent(ResponseBody) };
+    }
+}
+
+internal sealed class TestServerFallbackHandler(HttpMessageHandler testServerHandler, HttpMessageHandler externalHandler) : HttpMessageHandler
+{
+    private readonly HttpMessageInvoker testServerInvoker = new(testServerHandler, disposeHandler: true);
+    private readonly HttpMessageInvoker externalInvoker = new(externalHandler, disposeHandler: true);
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var uri = request.RequestUri;
+        var useTestServer = uri is not null &&
+            (string.Equals(uri.Host, "mockoon", StringComparison.OrdinalIgnoreCase) ||
+             uri.AbsolutePath.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase) ||
+             uri.AbsolutePath.StartsWith("/api/workflows", StringComparison.OrdinalIgnoreCase));
+
+        return (useTestServer ? testServerInvoker : externalInvoker).SendAsync(request, cancellationToken);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            testServerInvoker.Dispose();
+            externalInvoker.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }

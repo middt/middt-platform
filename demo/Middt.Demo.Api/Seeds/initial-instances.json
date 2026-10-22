@@ -56,5 +56,23 @@
       "category": "Yetkisiz İşlem",
       "reason": "Gece yarısı bilgim dışında yüksek tutarlı yurt dışı harcaması yapılmış."
     }
+  },
+  {
+    "workflow": "risk-limit-eval",
+    "data": {
+      "customerKey": "CUST-12345678901",
+      "amount": 250000,
+      "checkType": "Kredi Limit Analizi",
+      "requireUnderwriting": false
+    }
+  },
+  {
+    "workflow": "risk-limit-eval",
+    "data": {
+      "customerKey": "CUST-98765432109",
+      "amount": 850000,
+      "checkType": "Kurumsal Ticari Limit Analizi",
+      "requireUnderwriting": true
+    }
   }
 ]

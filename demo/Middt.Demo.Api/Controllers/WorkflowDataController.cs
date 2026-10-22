@@ -35,19 +35,4 @@ public sealed class WorkflowDataController(WorkflowInstanceDataQuery query) : Co
         [FromQuery] string id,
         CancellationToken cancellationToken) =>
         query.GetByIdAsync(entity, id, User, cancellationToken);
-
-    /// <summary>Local gateway simulation endpoint used by <c>http</c> workflow tasks.</summary>
-    [AllowAnonymous]
-    [HttpGet("ping")]
-    [HttpPost("ping")]
-    public IActionResult Ping(string entity, [FromBody] JsonObject? payload = null) =>
-        Ok(new
-        {
-            status = "Approved",
-            gateway = entity,
-            verified = true,
-            referenceCode = $"GW-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}",
-            processedAt = DateTimeOffset.UtcNow,
-            echo = payload,
-        });
 }

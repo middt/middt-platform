@@ -47,6 +47,9 @@
             { "label": "Mevcut Limit Kullanım Oranı", "value": "%{{ instance.agents.riskLimitUnderwriter.limitUtilizationRate }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.limitUtilizationRate != null" },
             { "label": "Teminat Karşılama Durumu", "value": "{{ instance.agents.riskLimitUnderwriter.collateralCoverageStatus }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.collateralCoverageStatus != null" },
             { "label": "MASAK / Yaptırım Taraması", "value": "{{ instance.agents.riskLimitUnderwriter.sanctionCheckStatus }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.sanctionCheckStatus != null" },
+            { "label": "TCMB Memzuç Kaydı (HTTP Tool)", "value": "{{ instance.agents.riskLimitUnderwriter.centralBankRecord }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.centralBankRecord != null" },
+            { "label": "KKB HTTP Gateway Durumu", "value": "{{ instance.agents.riskLimitUnderwriter.bureauStatus }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.bureauStatus != null" },
+            { "label": "Dış Büro Referans No", "value": "{{ instance.agents.riskLimitUnderwriter.externalBureauRef }}", "visibleWhen": "instance.agents.riskLimitUnderwriter.externalBureauRef != null" },
             { "label": "AI Analiz Özeti", "value": "{{ instance.agents.riskLimitUnderwriter.summary }}" },
             { "label": "AI Aksiyon Önerisi", "value": "{{ instance.agents.riskLimitUnderwriter.recommendation }}" },
             { "label": "Tahsis Ajanı", "value": "{{ instance.agents.riskLimitUnderwriter.agent }}" },
@@ -73,6 +76,7 @@
                 { "label": "KKB Skoru", "value": "{{ row.result.riskScore }} ({{ row.result.creditGrade }})", "visibleWhen": "row.result != null && row.result.creditGrade != null" },
                 { "label": "Ödeme Performansı", "value": "%{{ row.result.onTimePaymentRate }} — {{ row.result.paymentBehavior }}", "visibleWhen": "row.result != null && row.result.paymentBehavior != null" },
                 { "label": "Sektör & Teminat", "value": "{{ row.result.sectorRiskIndex }} — {{ row.result.collateralCoverageStatus }}", "visibleWhen": "row.result != null && row.result.sectorRiskIndex != null" },
+                { "label": "HTTP Büro Yanıtı", "value": "{{ row.result.bureauStatus }} ({{ row.result.externalBureauRef }})", "visibleWhen": "row.result != null && row.result.externalBureauRef != null" },
                 { "label": "Yönlendirme Kararı", "value": "{{ row.result.nextTransition }}", "visibleWhen": "row.result != null && row.result.nextTransition != null" }
               ]
             }

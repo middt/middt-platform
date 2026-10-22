@@ -358,7 +358,7 @@
           },
           "config": {
             "method": "POST",
-            "url": "/api/v1/InvoiceCollection/ping",
+            "url": "http://mockoon:3000/api/v1/InvoiceCollection/ping",
             "body": {
               "invoiceNo": "{{ data.invoiceNo }}",
               "amount": "{{ data.payment.amount }}",

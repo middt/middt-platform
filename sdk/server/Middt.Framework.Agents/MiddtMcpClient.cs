@@ -331,6 +331,19 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
             config["body"] = tool.Body.DeepClone();
         }
 
+        if (taskImpl is HttpTask)
+        {
+            if (string.IsNullOrWhiteSpace(config["url"]?.GetValue<string>()))
+            {
+                throw new InvalidOperationException($"HTTP tool '{tool.Name}' requires 'url'.");
+            }
+
+            if (config["method"] is null && config["body"] is not null)
+            {
+                config["method"] = "POST";
+            }
+        }
+
         if (taskImpl is SetTask && config["values"] is null && tool.Output is JsonObject outputValues)
         {
             config["values"] = outputValues.DeepClone();
@@ -545,36 +558,8 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         AgentToolDefinition tool,
         JsonObject args,
         IServiceProvider services,
-        CancellationToken cancellationToken)
-    {
-        var urlTemplate = tool.Url ?? tool.Config?["url"]?.GetValue<string>();
-        if (string.IsNullOrWhiteSpace(urlTemplate))
-        {
-            throw new InvalidOperationException($"HTTP tool '{tool.Name}' requires 'url'.");
-        }
-
-        var httpTool = new AgentToolDefinition
-        {
-            Name = tool.Name,
-            Description = tool.Description,
-            Kind = "task",
-            Task = "http",
-            Url = urlTemplate,
-            Method = tool.Method ?? (tool.Body is not null ? "POST" : "GET"),
-            Headers = tool.Headers,
-            QueryParams = tool.QueryParams,
-            Body = tool.Body,
-            Config = tool.Config?.DeepClone() as JsonObject ?? [],
-            Into = tool.Into,
-            WriteToWorkflowData = tool.WriteToWorkflowData,
-        };
-        if (httpTool.Config["client"] is null)
-        {
-            httpTool.Config["client"] = DefaultHttpClientName;
-        }
-
-        return ExecuteWorkflowTaskToolAsync(httpTool, "http", args, services, cancellationToken);
-    }
+        CancellationToken cancellationToken) =>
+        ExecuteWorkflowTaskToolAsync(tool, "http", args, services, cancellationToken);
 
     private async Task<JsonNode?> SendJsonRpcAsync(
         McpServerDefinition server,

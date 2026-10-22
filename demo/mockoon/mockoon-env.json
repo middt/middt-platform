@@ -1,0 +1,159 @@
+{
+  "uuid": "c8eb1f10-9e4d-4b2a-8f11-409182736455",
+  "lastMigration": 32,
+  "name": "Middt External Gateway & Bureau Mocks",
+  "endpointPrefix": "",
+  "latency": 0,
+  "port": 3000,
+  "hostname": "0.0.0.0",
+  "folders": [],
+  "routes": [
+    {
+      "uuid": "11111111-2222-4333-8444-555555555501",
+      "type": "http",
+      "documentation": "TCMB Risk Merkezi (Memzuç) & KKB HTTP Gateway mock endpoint for AI Agent HTTP tools",
+      "method": "post",
+      "endpoint": "api/v1/credit-bureau/check",
+      "responses": [
+        {
+          "uuid": "11111111-2222-4333-8444-555555555502",
+          "body": "{\n  \"status\": \"Approved\",\n  \"gateway\": \"TCMB-KKB-Mockoon\",\n  \"verified\": true,\n  \"referenceCode\": \"GW-{{faker 'string.alphanumeric' length=8 casing='upper'}}\",\n  \"bureauStatus\": \"{{#if (gt (bodyRaw 'amount' 0) 5000000)}}Limit Aşımı Uyarı Kaydı (KKB HTTP Gateway){{else}}Onaylandı (KKB HTTP Gateway){{/if}}\",\n  \"centralBankRecord\": \"{{#if (gt (bodyRaw 'amount' 0) 5000000)}}Yüksek Risk / Limit Aşımı (TCMB Memzuç){{else}}Temiz (TCMB Memzuç Kaydı Uygun){{/if}}\",\n  \"externalBureauRef\": \"KKB-HTTP-{{faker 'string.alphanumeric' length=6 casing='upper'}}\",\n  \"processedAt\": \"{{now}}\",\n  \"echo\": {\n    \"customerKey\": \"{{body 'customerKey' 'CUST-GENEL'}}\",\n    \"amount\": {{bodyRaw 'amount' 0}},\n    \"checkType\": \"{{body 'checkType' 'Kredi Limit Analizi'}}\"\n  }\n}",
+          "latency": 0,
+          "statusCode": 200,
+          "label": "KKB & TCMB Bureau Response",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            },
+            {
+              "key": "X-Mock-Provider",
+              "value": "Mockoon"
+            }
+          ],
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "rules": [],
+          "rulesOperator": "OR",
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null
+    },
+    {
+      "uuid": "11111111-2222-4333-8444-555555555503",
+      "type": "http",
+      "documentation": "Generic POST gateway simulation endpoint used by workflow http tasks (OrderPaymentOrchestration, InvoiceCollection, etc.)",
+      "method": "post",
+      "endpoint": "api/v1/:entity/ping",
+      "responses": [
+        {
+          "uuid": "11111111-2222-4333-8444-555555555504",
+          "body": "{\n  \"status\": \"Approved\",\n  \"gateway\": \"{{urlParam 'entity'}}\",\n  \"verified\": true,\n  \"referenceCode\": \"GW-{{faker 'string.alphanumeric' length=8 casing='upper'}}\",\n  \"processedAt\": \"{{now}}\",\n  \"echo\": {{{bodyRaw}}}\n}",
+          "latency": 0,
+          "statusCode": 200,
+          "label": "Gateway Approved",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            },
+            {
+              "key": "X-Mock-Provider",
+              "value": "Mockoon"
+            }
+          ],
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "rules": [],
+          "rulesOperator": "OR",
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null
+    },
+    {
+      "uuid": "11111111-2222-4333-8444-555555555505",
+      "type": "http",
+      "documentation": "Generic GET gateway simulation endpoint",
+      "method": "get",
+      "endpoint": "api/v1/:entity/ping",
+      "responses": [
+        {
+          "uuid": "11111111-2222-4333-8444-555555555506",
+          "body": "{\n  \"status\": \"Approved\",\n  \"gateway\": \"{{urlParam 'entity'}}\",\n  \"verified\": true,\n  \"referenceCode\": \"GW-{{faker 'string.alphanumeric' length=8 casing='upper'}}\",\n  \"processedAt\": \"{{now}}\"\n}",
+          "latency": 0,
+          "statusCode": 200,
+          "label": "Gateway Approved (GET)",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ],
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "rules": [],
+          "rulesOperator": "OR",
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null
+    }
+  ],
+  "rootChildren": [
+    {
+      "type": "route",
+      "uuid": "11111111-2222-4333-8444-555555555501"
+    },
+    {
+      "type": "route",
+      "uuid": "11111111-2222-4333-8444-555555555503"
+    },
+    {
+      "type": "route",
+      "uuid": "11111111-2222-4333-8444-555555555505"
+    }
+  ],
+  "proxyMode": false,
+  "proxyHost": "",
+  "proxyRemovePrefix": false,
+  "tlsOptions": {
+    "enabled": false,
+    "type": "CERT",
+    "pfxPath": "",
+    "certPath": "",
+    "keyPath": "",
+    "caPath": "",
+    "passphrase": ""
+  },
+  "cors": true,
+  "headers": [
+    {
+      "key": "Content-Type",
+      "value": "application/json; charset=utf-8"
+    }
+  ],
+  "proxyReqHeaders": [],
+  "proxyResHeaders": [],
+  "data": [],
+  "callbacks": []
+}

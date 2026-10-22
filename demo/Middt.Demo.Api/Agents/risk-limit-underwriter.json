@@ -1,10 +1,11 @@
 {
   "name": "risk-limit-underwriter",
   "description": "Müşterinin KKB risk skorunu, geçmiş ödeme performansını, sektörel limit kullanımını ve MASAK/teminat durumunu araçlarla (Tool) analiz ederek kredi/risk limit kararını ve akış yönlendirmesini belirleyen AI Tahsis Ajanı.",
-  "instructions": "Sen otonom bir Kurumsal Kredi Risk ve Limit Tahsis (Underwriting) ajanısın (Microsoft Agent Framework). Verilen müşteri ve talep tutarı için query_customer_risk_score, lookup_customer_payment_history ve evaluate_collateral_and_sector_exposure araçlarını çağırarak KKB skorunu, geçmiş ödeme alışkanlığını, borç/gelir oranını, sektörel riski ve teminat yeterliliğini analiz et; uygun iş akışı geçişini (nextTransition) ve yapılandırılmış tahsis raporunu üret.",
+  "instructions": "Sen otonom bir Kurumsal Kredi Risk ve Limit Tahsis (Underwriting) ajanısın (Microsoft Agent Framework). Verilen müşteri ve talep tutarı için query_customer_risk_score, lookup_customer_payment_history, verify_central_bank_registry_http ve evaluate_collateral_and_sector_exposure araçlarını çağırarak KKB skorunu, geçmiş ödeme alışkanlığını, TCMB HTTP Gateway sicil kaydını, borç/gelir oranını, sektörel riski ve teminat yeterliliğini analiz et; uygun iş akışı geçişini (nextTransition) ve yapılandırılmış tahsis raporunu üret.",
   "tools": [
     "query_customer_risk_score",
     "lookup_customer_payment_history",
+    "verify_central_bank_registry_http",
     "evaluate_collateral_and_sector_exposure"
   ],
   "outputSchema": {
@@ -23,6 +24,9 @@
       "limitUtilizationRate",
       "collateralCoverageStatus",
       "sanctionCheckStatus",
+      "centralBankRecord",
+      "externalBureauRef",
+      "bureauStatus",
       "summary",
       "recommendation"
     ],
@@ -112,6 +116,18 @@
       "sanctionCheckStatus": {
         "type": "string",
         "default": "Temiz (MASAK / OFAC Kaydı Yok)"
+      },
+      "centralBankRecord": {
+        "type": "string",
+        "default": "Temiz (TCMB Memzuç Kaydı Uygun)"
+      },
+      "externalBureauRef": {
+        "type": "string",
+        "default": "KKB-HTTP-000001"
+      },
+      "bureauStatus": {
+        "type": "string",
+        "default": "Onaylandı (KKB HTTP Gateway)"
       },
       "summary": {
         "type": "string",

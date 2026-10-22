@@ -666,11 +666,24 @@ public sealed class SampleJsonWorkflowTests
         aiUnderwriter["onTimePaymentRate"]!.GetValue<double>().Should().Be(98);
         aiUnderwriter["paymentBehavior"]!.GetValue<string>().Should().Contain("Kusursuz");
         aiUnderwriter["sanctionCheckStatus"]!.GetValue<string>().Should().Contain("MASAK");
+        aiUnderwriter["centralBankRecord"]!.GetValue<string>().Should().Contain("TCMB Memzuç");
+        aiUnderwriter["bureauStatus"]!.GetValue<string>().Should().Contain("KKB HTTP Gateway");
+        aiUnderwriter["externalBureauRef"]!.GetValue<string>().Should().StartWith("KKB-HTTP-");
         approved.ToolCalls.Select(t => t.Name).Should().Contain([
             "query_customer_risk_score",
             "lookup_customer_payment_history",
+            "verify_central_bank_registry_http",
             "evaluate_collateral_and_sector_exposure",
         ]);
+
+        var httpToolCall = approved.ToolCalls.First(t => t.Name == "verify_central_bank_registry_http");
+        httpToolCall.Result!["gateway"]!.GetValue<string>().Should().Be("TCMB-KKB-Mockoon");
+        httpToolCall.Result["verified"]!.GetValue<bool>().Should().BeTrue();
+        httpToolCall.Result["bureauStatus"]!.GetValue<string>().Should().Be("Onaylandı (KKB HTTP Gateway)");
+        httpToolCall.Result["centralBankRecord"]!.GetValue<string>().Should().Be("Temiz (TCMB Memzuç Kaydı Uygun)");
+        httpToolCall.Result["externalBureauRef"]!.GetValue<string>().Should().StartWith("KKB-HTTP-");
+        httpToolCall.Result["echo"]!["customerKey"]!.GetValue<string>().Should().Be("CUST-12345678901");
+        httpToolCall.Result["echo"]!["amount"]!.GetValue<decimal>().Should().Be(200000m);
 
         // 2. High amount (> 500,000) with requireUnderwriting=true pauses in manual-underwriting, supports AI recheck, and supports rejection
         var underwriting = await host.StartInstanceAsync(

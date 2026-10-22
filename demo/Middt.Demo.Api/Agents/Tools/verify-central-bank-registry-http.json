@@ -1,0 +1,27 @@
+{
+  "name": "verify_central_bank_registry_http",
+  "kind": "task",
+  "task": "http",
+  "description": "TCMB Risk Merkezi (Memzuç) ve KKB HTTP Gateway servisine HTTP POST çağrısı yaparak müşterinin dış sistem kredi sicilini ve büro referans kodunu sorgular.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "customerKey": { "type": "string", "description": "Müşteri anahtarı" },
+      "amount": { "type": "number", "description": "Talep edilen limit/tutar" },
+      "checkType": { "type": "string", "description": "Kontrol tipi" }
+    }
+  },
+  "config": {
+    "method": "POST",
+    "url": "http://mockoon:3000/api/v1/credit-bureau/check",
+    "headers": {
+      "X-Bureau-Channel": "TCMB-KKB-Gateway-v1",
+      "X-Workflow-Check": "{{ args.checkType ?? data.checkType ?? \"Kredi Limit Analizi\" }}"
+    },
+    "body": {
+      "customerKey": "{{ args.customerKey ?? data.customerKey ?? \"CUST-GENEL\" }}",
+      "amount": "{{ args.amount ?? data.amount ?? 0 }}",
+      "checkType": "{{ args.checkType ?? data.checkType ?? \"Kredi Limit Analizi\" }}"
+    }
+  }
+}
