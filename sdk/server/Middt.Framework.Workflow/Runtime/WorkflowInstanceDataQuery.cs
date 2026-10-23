@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Middt.Framework.Common.Model.Data;
 using Middt.Framework.Expressions;
 using Middt.Framework.Model.Enumerations;
+using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow.Definitions;
 using Middt.Framework.Workflow.Diagnostics;
 using Middt.Framework.Workflow.Expressions;
@@ -73,14 +74,16 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
         var pageSize = Math.Clamp(searchRequest?["requestItemSize"]?.GetValue<int>() ?? 20, 1, 100);
         var filter = searchRequest?["requestModel"] as JsonObject;
         var hasActiveFilter = HasNonEmptyFilter(filter);
-        var sortProperty = searchRequest?["sortProperty"]?.GetValue<string>();
+        var sortProperty = searchRequest?["sortProperty"]?.GetValue<string>()?.Trim();
         var ascending = searchRequest?["sortReverse"]?.GetValue<bool>() ?? false;
         var defaultSort = string.IsNullOrWhiteSpace(sortProperty) || string.Equals(sortProperty, "createdAt", StringComparison.OrdinalIgnoreCase);
 
         if (!hasActiveFilter && defaultSort)
         {
             var total = await query.IgnoreAutoIncludes().CountAsync(cancellationToken);
-            var ordered = ascending ? query.OrderBy(i => i.CreatedAt) : query.OrderByDescending(i => i.CreatedAt);
+            var ordered = ascending
+                ? query.OrderBy(i => i.CreatedAt).ThenBy(i => i.Id)
+                : query.OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id);
             var rows = await ordered
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -96,7 +99,7 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
 
         var workflowKey = ResolveWorkflowKey(entity);
         var rawDataFilters = new Dictionary<string, string?>(StringComparer.Ordinal);
-        var metaFilters = new List<WorkflowPartitionManager.InMemoryDataCondition>();
+        var unsupportedFilters = new List<string>();
 
         if (filter is not null)
         {
@@ -113,97 +116,145 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
                     continue;
                 }
 
-                if (string.Equals(k, "key", StringComparison.OrdinalIgnoreCase) || string.Equals(k, "businessKey", StringComparison.OrdinalIgnoreCase))
+#pragma warning disable CA1304, CA1311, CA1862
+                if (string.Equals(k, "id", StringComparison.OrdinalIgnoreCase))
                 {
-                    metaFilters.Add(new WorkflowPartitionManager.InMemoryDataCondition("key", WorkflowPartitionManager.DataFilterOp.Default, text, ExactString: false));
+                    if (Guid.TryParse(text, out var idGuid))
+                    {
+                        query = query.Where(i => i.Id == idGuid);
+                    }
+                    else
+                    {
+                        var lower = text.ToLowerInvariant();
+                        query = query.Where(i => i.Id.ToString().ToLower().Contains(lower));
+                    }
+                }
+                else if (string.Equals(k, "key", StringComparison.OrdinalIgnoreCase) || string.Equals(k, "businessKey", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lower = text.ToLowerInvariant();
+                    query = query.Where(i => (i.BusinessKey != null && i.BusinessKey.ToLower().Contains(lower)) || i.Id.ToString().ToLower().Contains(lower));
                 }
                 else if (string.Equals(k, "state", StringComparison.OrdinalIgnoreCase))
                 {
-                    metaFilters.Add(new WorkflowPartitionManager.InMemoryDataCondition("state", WorkflowPartitionManager.DataFilterOp.Default, text, ExactString: false));
+                    var lower = text.ToLowerInvariant();
+                    query = query.Where(i => i.State.ToLower().Contains(lower));
                 }
                 else if (string.Equals(k, "status", StringComparison.OrdinalIgnoreCase))
                 {
-                    metaFilters.Add(new WorkflowPartitionManager.InMemoryDataCondition("status", WorkflowPartitionManager.DataFilterOp.Default, text, ExactString: true));
+                    if (Enum.TryParse<WorkflowInstanceStatus>(text, ignoreCase: true, out var statusEnum))
+                    {
+                        query = query.Where(i => i.Status == statusEnum);
+                    }
+                    else
+                    {
+                        unsupportedFilters.Add(k);
+                    }
+                }
+                else if (string.Equals(k, "workflow", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lower = text.ToLowerInvariant();
+                    query = query.Where(i => i.WorkflowKey.ToLower().Contains(lower));
+                }
+                else if (string.Equals(k, "version", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ver))
+                    {
+                        query = query.Where(i => i.WorkflowVersion == ver);
+                    }
+                    else
+                    {
+                        unsupportedFilters.Add(k);
+                    }
+                }
+                else if (string.Equals(k, "startedBy", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lower = text.ToLowerInvariant();
+                    query = query.Where(i => i.StartedBy != null && i.StartedBy.ToLower().Contains(lower));
+                }
+                else if (string.Equals(k, "lastExecutedBy", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lower = text.ToLowerInvariant();
+                    query = query.Where(i => i.LastExecutedBy != null && i.LastExecutedBy.ToLower().Contains(lower));
                 }
                 else
                 {
                     rawDataFilters[k] = text;
                 }
+#pragma warning restore CA1304, CA1311, CA1862
             }
         }
 
-        List<WorkflowPartitionManager.InMemoryDataCondition> remainingDataFilters = [];
-        if (workflowKey is not null && rawDataFilters.Count > 0)
+        JsonObject? rawSchema = null;
+        JsonObject? projectedSchema = null;
+        if (workflowKey is not null)
         {
             var versions = TryGetVersions(workflowKey);
-            var projectedSchema = versions.Count > 0
-                ? JsonSchemaValidator.ProjectSchema(versions[^1].DataSchema, ExpressionUser.FromPrincipal(user))
-                : null;
-            var (sqlConditions, remaining, createdFromUtc, createdToUtc) = WorkflowPartitionManager.ClassifyDataFilters(rawDataFilters, projectedSchema);
+            if (versions.Count > 0)
+            {
+                rawSchema = versions[^1].DataSchema;
+                projectedSchema = JsonSchemaValidator.ProjectSchema(rawSchema, ExpressionUser.FromPrincipal(user));
+            }
+        }
+
+        if (rawDataFilters.Count > 0)
+        {
+            var (sqlConditions, unsupportedData, createdFromUtc, createdToUtc) = WorkflowPartitionManager.ClassifyDataFilters(rawDataFilters, projectedSchema, rawSchema);
+            unsupportedFilters.AddRange(unsupportedData);
             if (sqlConditions.Count > 0 || createdFromUtc is not null || createdToUtc is not null)
             {
                 query = WorkflowPartitionManager.ApplySqlDataFilters(query, db, options?.Value.Schema, workflowKey, sqlConditions, createdFromUtc, createdToUtc);
             }
-
-            remainingDataFilters = remaining;
-        }
-        else if (rawDataFilters.Count > 0)
-        {
-            var (_, remaining, createdFromUtc, createdToUtc) = WorkflowPartitionManager.ClassifyDataFilters(rawDataFilters, null);
-            if (createdFromUtc is { } fromUtc)
-            {
-                query = query.Where(i => i.CreatedAt >= fromUtc);
-            }
-
-            if (createdToUtc is { } toUtc)
-            {
-                query = query.Where(i => i.CreatedAt <= toUtc);
-            }
-
-            remainingDataFilters = remaining;
         }
 
-        var allRemainingFilters = new List<WorkflowPartitionManager.InMemoryDataCondition>(metaFilters.Count + remainingDataFilters.Count);
-        allRemainingFilters.AddRange(metaFilters);
-        allRemainingFilters.AddRange(remainingDataFilters);
-
-        if (allRemainingFilters.Count == 0 && defaultSort)
+        if (unsupportedFilters.Count > 0)
         {
-            var total = await query.IgnoreAutoIncludes().CountAsync(cancellationToken);
-            var ordered = ascending ? query.OrderBy(i => i.CreatedAt) : query.OrderByDescending(i => i.CreatedAt);
-            var rows = await ordered
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync(cancellationToken);
-
             return new BaseResponseDataModel<List<JsonObject>>
             {
-                Result = ResultEnum.Success,
-                Count = total,
-                Data = ProjectRows(rows, user),
+                Result = ResultEnum.Error,
+                Count = 0,
+                Data = [],
+                MessageList = [$"Desteklenmeyen veya geçersiz filtre alanı: {string.Join(", ", unsupportedFilters)}."],
             };
         }
 
-        var candidateRows = await query
-            .OrderByDescending(i => i.CreatedAt)
-            .Take(1000)
+        IQueryable<WorkflowInstance> sortedQuery;
+        if (defaultSort)
+        {
+            sortedQuery = ascending
+                ? query.OrderBy(i => i.CreatedAt).ThenBy(i => i.Id)
+                : query.OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id);
+        }
+        else if (TryApplyInstanceSort(query, sortProperty!, ascending, out var instanceSorted))
+        {
+            sortedQuery = instanceSorted;
+        }
+        else
+        {
+            if (!WorkflowPartitionManager.IsPropertySortableAndUnmasked(sortProperty!, projectedSchema, rawSchema))
+            {
+                return new BaseResponseDataModel<List<JsonObject>>
+                {
+                    Result = ResultEnum.Error,
+                    Count = 0,
+                    Data = [],
+                    MessageList = [$"Desteklenmeyen veya maskeli sıralama alanı: {sortProperty}."],
+                };
+            }
+
+            sortedQuery = WorkflowPartitionManager.OrderBySqlDataProperty(query, db, options?.Value.Schema, workflowKey, sortProperty!, ascending);
+        }
+
+        var filteredTotal = await query.IgnoreAutoIncludes().CountAsync(cancellationToken);
+        var pagedRows = await sortedQuery
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync(cancellationToken);
 
-        var items = ProjectRows(candidateRows, user);
-        if (allRemainingFilters.Count > 0)
+        var paged = ProjectRows(pagedRows, user);
+        if (!defaultSort && !string.IsNullOrWhiteSpace(sortProperty))
         {
-            items = [.. items.Where(item => WorkflowPartitionManager.MatchesDataFilters(item, allRemainingFilters))];
+            paged.Sort((left, right) => CompareItems(left, right, sortProperty, ascending));
         }
-
-        if (!string.IsNullOrWhiteSpace(sortProperty))
-        {
-            items = ascending
-                ? [.. items.OrderBy(i => SortKey(i, sortProperty), StringComparer.OrdinalIgnoreCase)]
-                : [.. items.OrderByDescending(i => SortKey(i, sortProperty), StringComparer.OrdinalIgnoreCase)];
-        }
-
-        var filteredTotal = items.Count;
-        var paged = items.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
         return new BaseResponseDataModel<List<JsonObject>>
         {
@@ -398,13 +449,131 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
         return flat;
     }
 
-    private static string SortKey(JsonObject item, string property) =>
-        GetCaseInsensitive(item, property) switch
+    private static bool TryApplyInstanceSort(
+        IQueryable<WorkflowInstance> query,
+        string sortProperty,
+        bool ascending,
+        out IQueryable<WorkflowInstance> ordered)
+    {
+        switch (sortProperty.ToLowerInvariant())
         {
-            JsonValue v when v.TryGetValue<decimal>(out var d) => d.ToString("000000000000000.0000", CultureInfo.InvariantCulture),
-            JsonNode n => n.ToString(),
-            null => string.Empty,
-        };
+            case "createdat":
+                ordered = ascending
+                    ? query.OrderBy(i => i.CreatedAt).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id);
+                return true;
+            case "updatedat":
+                ordered = ascending
+                    ? query.OrderBy(i => i.UpdatedAt).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.UpdatedAt).ThenByDescending(i => i.Id);
+                return true;
+            case "id":
+                ordered = ascending
+                    ? query.OrderBy(i => i.Id)
+                    : query.OrderByDescending(i => i.Id);
+                return true;
+            case "key":
+            case "businesskey":
+                ordered = ascending
+                    ? query.OrderBy(i => i.BusinessKey).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.BusinessKey).ThenByDescending(i => i.Id);
+                return true;
+            case "state":
+                ordered = ascending
+                    ? query.OrderBy(i => i.State).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.State).ThenByDescending(i => i.Id);
+                return true;
+            case "status":
+                ordered = ascending
+                    ? query.OrderBy(i => i.Status).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.Status).ThenByDescending(i => i.Id);
+                return true;
+            case "workflow":
+                ordered = ascending
+                    ? query.OrderBy(i => i.WorkflowKey).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.WorkflowKey).ThenByDescending(i => i.Id);
+                return true;
+            case "version":
+                ordered = ascending
+                    ? query.OrderBy(i => i.WorkflowVersion).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.WorkflowVersion).ThenByDescending(i => i.Id);
+                return true;
+            case "startedby":
+                ordered = ascending
+                    ? query.OrderBy(i => i.StartedBy).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.StartedBy).ThenByDescending(i => i.Id);
+                return true;
+            case "lastexecutedby":
+                ordered = ascending
+                    ? query.OrderBy(i => i.LastExecutedBy).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.LastExecutedBy).ThenByDescending(i => i.Id);
+                return true;
+            default:
+                ordered = query;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Compares two projected instance objects by <paramref name="property"/> using true numeric comparison for numbers
+    /// (preserving sign and full <see cref="decimal"/> precision), chronological comparison for dates, and a deterministic
+    /// secondary tie-breaker (<c>id</c>).
+    /// </summary>
+    internal static int CompareItems(JsonObject left, JsonObject right, string property, bool ascending)
+    {
+        var leftNode = GetCaseInsensitive(left, property);
+        var rightNode = GetCaseInsensitive(right, property);
+
+        int cmp;
+        if (leftNode is null && rightNode is null)
+        {
+            cmp = 0;
+        }
+        else if (leftNode is null)
+        {
+            return 1;
+        }
+        else if (rightNode is null)
+        {
+            return -1;
+        }
+        else if (WorkflowPartitionManager.TryGetNodeDecimal(leftNode, out var leftDec) &&
+                 WorkflowPartitionManager.TryGetNodeDecimal(rightNode, out var rightDec))
+        {
+            cmp = decimal.Compare(leftDec, rightDec);
+        }
+        else if (leftNode is JsonValue lvBool && lvBool.GetValueKind() is JsonValueKind.True or JsonValueKind.False &&
+                 rightNode is JsonValue rvBool && rvBool.GetValueKind() is JsonValueKind.True or JsonValueKind.False)
+        {
+            cmp = lvBool.GetValue<bool>().CompareTo(rvBool.GetValue<bool>());
+        }
+        else
+        {
+            var leftText = leftNode is JsonValue lvStr && lvStr.GetValueKind() == JsonValueKind.String ? lvStr.GetValue<string>() : leftNode.ToString();
+            var rightText = rightNode is JsonValue rvStr && rvStr.GetValueKind() == JsonValueKind.String ? rvStr.GetValue<string>() : rightNode.ToString();
+            if (DateTimeOffset.TryParse(leftText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var leftDto) &&
+                DateTimeOffset.TryParse(rightText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var rightDto))
+            {
+                cmp = DateTimeOffset.Compare(leftDto, rightDto);
+            }
+            else
+            {
+                cmp = StringComparer.OrdinalIgnoreCase.Compare(
+                    WorkflowPartitionManager.FoldTurkishLower(leftText),
+                    WorkflowPartitionManager.FoldTurkishLower(rightText));
+            }
+        }
+
+        if (cmp != 0)
+        {
+            return ascending ? cmp : -cmp;
+        }
+
+        var leftId = left["id"]?.ToString() ?? string.Empty;
+        var rightId = right["id"]?.ToString() ?? string.Empty;
+        var idCmp = StringComparer.OrdinalIgnoreCase.Compare(leftId, rightId);
+        return ascending ? idCmp : -idCmp;
+    }
 
     private static JsonNode? GetCaseInsensitive(JsonObject item, string property)
     {

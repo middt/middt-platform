@@ -9,6 +9,8 @@ using Middt.Framework.Workflow.Persistence;
 using OpenIddict.Abstractions;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
+#pragma warning disable CA1304, CA1311, CA1862 // EF Core LINQ expression trees translate string.ToLower() to SQL LOWER().
+
 namespace Middt.Identity;
 
 internal static class OpenIddictStoreJson
@@ -156,26 +158,53 @@ internal sealed class WorkflowOpenIddictApplicationStore(WorkflowDbContext db) :
         if (instance is not null)
         {
             db.Instances.Remove(instance);
+            await db.SaveChangesAsync(cancellationToken);
         }
 
-        // Cascade delete authorizations and tokens belonging to this application.
-        var authorizations = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowOpenIddictAuthorizationStore.WorkflowKey && x.PendingTransition == application.Id)
-            .ToListAsync(cancellationToken);
-        db.Instances.RemoveRange(authorizations);
-
-        var tokens = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowOpenIddictTokenStore.WorkflowKey)
-            .ToListAsync(cancellationToken);
-        foreach (var tokenInstance in tokens)
+        // Cascade delete authorizations and tokens belonging to this application in bounded batches.
+        while (true)
         {
-            if (JsonSerializer.Deserialize<WorkflowOpenIddictToken>(tokenInstance.Data, OpenIddictStoreJson.Options)?.ApplicationId == application.Id)
+            var authorizations = await db.Instances
+                .Where(x => x.WorkflowKey == WorkflowOpenIddictAuthorizationStore.WorkflowKey && x.PendingTransition == application.Id)
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Take(200)
+                .ToListAsync(cancellationToken);
+            if (authorizations.Count == 0)
             {
-                db.Instances.Remove(tokenInstance);
+                break;
+            }
+
+            db.Instances.RemoveRange(authorizations);
+            await db.SaveChangesAsync(cancellationToken);
+            db.ChangeTracker.Clear();
+            if (authorizations.Count < 200)
+            {
+                break;
             }
         }
 
-        await db.SaveChangesAsync(cancellationToken);
+        while (true)
+        {
+            var tokens = await db.Instances
+                .Where(x => x.WorkflowKey == WorkflowOpenIddictTokenStore.WorkflowKey && x.LastExecutedBy == application.Id)
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Take(200)
+                .ToListAsync(cancellationToken);
+            if (tokens.Count == 0)
+            {
+                break;
+            }
+
+            db.Instances.RemoveRange(tokens);
+            await db.SaveChangesAsync(cancellationToken);
+            db.ChangeTracker.Clear();
+            if (tokens.Count < 200)
+            {
+                break;
+            }
+        }
     }
 
     public async ValueTask<WorkflowOpenIddictApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
@@ -183,13 +212,7 @@ internal sealed class WorkflowOpenIddictApplicationStore(WorkflowDbContext db) :
         ArgumentException.ThrowIfNullOrEmpty(identifier);
         var instance = await db.Instances.AsNoTracking()
             .FirstOrDefaultAsync(x => x.WorkflowKey == WorkflowKey && x.BusinessKey == identifier, cancellationToken);
-        if (instance is not null)
-        {
-            return Deserialize(instance);
-        }
-
-        var all = await LoadAllAsync(cancellationToken);
-        return all.FirstOrDefault(a => string.Equals(a.ClientId, identifier, StringComparison.Ordinal));
+        return instance is null ? null : Deserialize(instance);
     }
 
     public async ValueTask<WorkflowOpenIddictApplication?> FindByIdAsync(string identifier, CancellationToken cancellationToken)
@@ -515,26 +538,25 @@ internal sealed class WorkflowOpenIddictScopeStore(WorkflowDbContext db) : IOpen
         ArgumentException.ThrowIfNullOrEmpty(name);
         var instance = await db.Instances.AsNoTracking()
             .FirstOrDefaultAsync(x => x.WorkflowKey == WorkflowKey && x.BusinessKey == name, cancellationToken);
-        if (instance is not null)
-        {
-            return Deserialize(instance);
-        }
-
-        var all = await LoadAllAsync(cancellationToken);
-        return all.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.Ordinal));
+        return instance is null ? null : Deserialize(instance);
     }
 
     public async IAsyncEnumerable<WorkflowOpenIddictScope> FindByNamesAsync(
         ImmutableArray<string> names,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var set = names.ToHashSet(StringComparer.Ordinal);
-        foreach (var scope in await LoadAllAsync(cancellationToken))
+        var list = names.Where(n => !string.IsNullOrEmpty(n)).Distinct(StringComparer.Ordinal).ToList();
+        if (list.Count == 0)
         {
-            if (scope.Name is not null && set.Contains(scope.Name))
-            {
-                yield return scope;
-            }
+            yield break;
+        }
+
+        var instances = await db.Instances.AsNoTracking()
+            .Where(x => x.WorkflowKey == WorkflowKey && x.BusinessKey != null && list.Contains(x.BusinessKey))
+            .ToListAsync(cancellationToken);
+        foreach (var instance in instances)
+        {
+            yield return Deserialize(instance);
         }
     }
 
@@ -717,6 +739,7 @@ internal sealed class WorkflowOpenIddictScopeStore(WorkflowDbContext db) : IOpen
 internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db) : IOpenIddictAuthorizationStore<WorkflowOpenIddictAuthorization>
 {
     internal const string WorkflowKey = "oauth-authorization";
+    private const int BatchSize = 200;
 
     public async ValueTask<long> CountAsync(CancellationToken cancellationToken) =>
         await db.Instances.AsNoTracking().LongCountAsync(x => x.WorkflowKey == WorkflowKey, cancellationToken);
@@ -749,6 +772,7 @@ internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db)
                 : WorkflowInstanceStatus.Active,
             StartedBy = authorization.Subject,
             PendingTransition = authorization.ApplicationId,
+            LastExecutedBy = authorization.Type,
             Data = JsonSerializer.Serialize(authorization, OpenIddictStoreJson.Options),
             Revision = 1,
             CreatedAt = now.UtcDateTime,
@@ -765,14 +789,30 @@ internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db)
         if (instance is not null)
         {
             db.Instances.Remove(instance);
+            await db.SaveChangesAsync(cancellationToken);
         }
 
-        var tokens = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowOpenIddictTokenStore.WorkflowKey && x.PendingTransition == authorization.Id)
-            .ToListAsync(cancellationToken);
-        db.Instances.RemoveRange(tokens);
+        while (true)
+        {
+            var tokens = await db.Instances
+                .Where(x => x.WorkflowKey == WorkflowOpenIddictTokenStore.WorkflowKey && x.PendingTransition == authorization.Id)
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Take(BatchSize)
+                .ToListAsync(cancellationToken);
+            if (tokens.Count == 0)
+            {
+                break;
+            }
 
-        await db.SaveChangesAsync(cancellationToken);
+            db.Instances.RemoveRange(tokens);
+            await db.SaveChangesAsync(cancellationToken);
+            db.ChangeTracker.Clear();
+            if (tokens.Count < BatchSize)
+            {
+                break;
+            }
+        }
     }
 
     public async IAsyncEnumerable<WorkflowOpenIddictAuthorization> FindAsync(
@@ -794,24 +834,21 @@ internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db)
             query = query.Where(x => x.PendingTransition == client);
         }
 
+        if (!string.IsNullOrEmpty(status))
+        {
+            var normalizedStatus = status.ToLowerInvariant();
+            query = query.Where(x => x.State.ToLower() == normalizedStatus);
+        }
+
+        if (!string.IsNullOrEmpty(type))
+        {
+            var normalizedType = type.ToLowerInvariant();
+            query = query.Where(x => x.LastExecutedBy == null || x.LastExecutedBy.ToLower() == normalizedType);
+        }
+
         foreach (var instance in await query.ToListAsync(cancellationToken))
         {
             var auth = Deserialize(instance);
-            if (!string.IsNullOrEmpty(subject) && !string.Equals(auth.Subject, subject, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(client) && !string.Equals(auth.ApplicationId, client, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(status) && !string.Equals(auth.Status, status, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             if (!string.IsNullOrEmpty(type) && !string.Equals(auth.Type, type, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -938,24 +975,49 @@ internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db)
     public async ValueTask<long> PruneAsync(DateTimeOffset threshold, CancellationToken cancellationToken)
     {
         var cutoff = threshold.UtcDateTime;
-        var instances = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowKey && x.CreatedAt < cutoff)
-            .ToListAsync(cancellationToken);
+        var query = db.Instances.Where(x => x.WorkflowKey == WorkflowKey && x.CreatedAt < cutoff);
         long pruned = 0;
-        foreach (var instance in instances)
+        var skipped = 0;
+        while (true)
         {
-            var auth = Deserialize(instance);
-            if (!string.Equals(auth.Status, Statuses.Valid, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(auth.Type, AuthorizationTypes.AdHoc, StringComparison.OrdinalIgnoreCase))
+            var batch = await query
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Skip(skipped)
+                .Take(BatchSize)
+                .ToListAsync(cancellationToken);
+            if (batch.Count == 0)
             {
-                db.Instances.Remove(instance);
-                pruned++;
+                break;
             }
-        }
 
-        if (pruned > 0)
-        {
-            await db.SaveChangesAsync(cancellationToken);
+            var batchPruned = 0;
+            foreach (var instance in batch)
+            {
+                var auth = Deserialize(instance);
+                if (!string.Equals(auth.Status, Statuses.Valid, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(auth.Type, AuthorizationTypes.AdHoc, StringComparison.OrdinalIgnoreCase))
+                {
+                    db.Instances.Remove(instance);
+                    batchPruned++;
+                    pruned++;
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+
+            if (batchPruned > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            db.ChangeTracker.Clear();
+            if (batch.Count < BatchSize)
+            {
+                break;
+            }
         }
 
         return pruned;
@@ -968,44 +1030,70 @@ internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db)
         string? type,
         CancellationToken cancellationToken)
     {
-        var instances = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowKey)
-            .ToListAsync(cancellationToken);
-        long count = 0;
-        foreach (var instance in instances)
+        var query = db.Instances.Where(x => x.WorkflowKey == WorkflowKey && x.State != Statuses.Revoked);
+        if (!string.IsNullOrEmpty(subject))
         {
-            var auth = Deserialize(instance);
-            if (!string.IsNullOrEmpty(subject) && !string.Equals(auth.Subject, subject, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(client) && !string.Equals(auth.ApplicationId, client, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(status) && !string.Equals(auth.Status, status, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(type) && !string.Equals(auth.Type, type, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (!string.Equals(auth.Status, Statuses.Revoked, StringComparison.OrdinalIgnoreCase))
-            {
-                auth.Status = Statuses.Revoked;
-                ApplyToInstance(instance, auth);
-                count++;
-            }
+            query = query.Where(x => x.StartedBy == subject);
         }
 
-        if (count > 0)
+        if (!string.IsNullOrEmpty(client))
         {
-            await db.SaveChangesAsync(cancellationToken);
+            query = query.Where(x => x.PendingTransition == client);
+        }
+
+        if (!string.IsNullOrEmpty(status))
+        {
+            var normalizedStatus = status.ToLowerInvariant();
+            query = query.Where(x => x.State.ToLower() == normalizedStatus);
+        }
+
+        if (!string.IsNullOrEmpty(type))
+        {
+            var normalizedType = type.ToLowerInvariant();
+            query = query.Where(x => x.LastExecutedBy == null || x.LastExecutedBy.ToLower() == normalizedType);
+        }
+
+        long count = 0;
+        var skipped = 0;
+        while (true)
+        {
+            var batch = await query
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Skip(skipped)
+                .Take(BatchSize)
+                .ToListAsync(cancellationToken);
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var batchUpdated = 0;
+            foreach (var instance in batch)
+            {
+                var auth = Deserialize(instance);
+                if (!string.IsNullOrEmpty(type) && !string.Equals(auth.Type, type, StringComparison.OrdinalIgnoreCase))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                auth.Status = Statuses.Revoked;
+                ApplyToInstance(instance, auth);
+                batchUpdated++;
+                count++;
+            }
+
+            if (batchUpdated > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            db.ChangeTracker.Clear();
+            if (batch.Count < BatchSize)
+            {
+                break;
+            }
         }
 
         return count;
@@ -1074,6 +1162,7 @@ internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db)
         instance.BusinessKey = authorization.Id;
         instance.StartedBy = authorization.Subject;
         instance.PendingTransition = authorization.ApplicationId;
+        instance.LastExecutedBy = authorization.Type;
         instance.State = authorization.Status ?? Statuses.Valid;
         instance.Status = string.Equals(authorization.Status, Statuses.Revoked, StringComparison.OrdinalIgnoreCase)
             ? WorkflowInstanceStatus.Completed
@@ -1118,6 +1207,7 @@ internal sealed class WorkflowOpenIddictAuthorizationStore(WorkflowDbContext db)
 internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpenIddictTokenStore<WorkflowOpenIddictToken>
 {
     internal const string WorkflowKey = "oauth-token";
+    private const int BatchSize = 200;
 
     public async ValueTask<long> CountAsync(CancellationToken cancellationToken) =>
         await db.Instances.AsNoTracking().LongCountAsync(x => x.WorkflowKey == WorkflowKey, cancellationToken);
@@ -1150,6 +1240,7 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
                 : WorkflowInstanceStatus.Completed,
             StartedBy = token.Subject,
             PendingTransition = token.AuthorizationId,
+            LastExecutedBy = token.ApplicationId,
             Data = JsonSerializer.Serialize(token, OpenIddictStoreJson.Options),
             Revision = 1,
             CreatedAt = now.UtcDateTime,
@@ -1183,24 +1274,20 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
             query = query.Where(x => x.StartedBy == subject);
         }
 
+        if (!string.IsNullOrEmpty(client))
+        {
+            query = query.Where(x => x.LastExecutedBy == client);
+        }
+
+        if (!string.IsNullOrEmpty(status))
+        {
+            var normalizedStatus = status.ToLowerInvariant();
+            query = query.Where(x => x.State.ToLower() == normalizedStatus);
+        }
+
         foreach (var instance in await query.ToListAsync(cancellationToken))
         {
             var token = Deserialize(instance);
-            if (!string.IsNullOrEmpty(subject) && !string.Equals(token.Subject, subject, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(client) && !string.Equals(token.ApplicationId, client, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(status) && !string.Equals(token.Status, status, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             if (!string.IsNullOrEmpty(type) && !string.Equals(token.Type, type, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -1215,12 +1302,12 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier);
-        foreach (var token in await LoadAllAsync(cancellationToken))
+        var instances = await db.Instances.AsNoTracking()
+            .Where(x => x.WorkflowKey == WorkflowKey && x.LastExecutedBy == identifier)
+            .ToListAsync(cancellationToken);
+        foreach (var instance in instances)
         {
-            if (string.Equals(token.ApplicationId, identifier, StringComparison.Ordinal))
-            {
-                yield return token;
-            }
+            yield return Deserialize(instance);
         }
     }
 
@@ -1250,13 +1337,7 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
         ArgumentException.ThrowIfNullOrEmpty(identifier);
         var instance = await db.Instances.AsNoTracking()
             .FirstOrDefaultAsync(x => x.WorkflowKey == WorkflowKey && x.BusinessKey == identifier, cancellationToken);
-        if (instance is not null)
-        {
-            return Deserialize(instance);
-        }
-
-        var all = await LoadAllAsync(cancellationToken);
-        return all.FirstOrDefault(t => string.Equals(t.ReferenceId, identifier, StringComparison.Ordinal));
+        return instance is null ? null : Deserialize(instance);
     }
 
     public async IAsyncEnumerable<WorkflowOpenIddictToken> FindBySubjectAsync(
@@ -1363,24 +1444,49 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
     {
         var now = DateTimeOffset.UtcNow;
         var cutoff = threshold.UtcDateTime;
-        var instances = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowKey && x.CreatedAt < cutoff)
-            .ToListAsync(cancellationToken);
+        var query = db.Instances.Where(x => x.WorkflowKey == WorkflowKey && x.CreatedAt < cutoff);
         long pruned = 0;
-        foreach (var instance in instances)
+        var skipped = 0;
+        while (true)
         {
-            var token = Deserialize(instance);
-            if (!string.Equals(token.Status, Statuses.Valid, StringComparison.OrdinalIgnoreCase) ||
-                (token.ExpirationDate is { } exp && exp < now))
+            var batch = await query
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Skip(skipped)
+                .Take(BatchSize)
+                .ToListAsync(cancellationToken);
+            if (batch.Count == 0)
             {
-                db.Instances.Remove(instance);
-                pruned++;
+                break;
             }
-        }
 
-        if (pruned > 0)
-        {
-            await db.SaveChangesAsync(cancellationToken);
+            var batchPruned = 0;
+            foreach (var instance in batch)
+            {
+                var token = Deserialize(instance);
+                if (!string.Equals(token.Status, Statuses.Valid, StringComparison.OrdinalIgnoreCase) ||
+                    (token.ExpirationDate is { } exp && exp < now))
+                {
+                    db.Instances.Remove(instance);
+                    batchPruned++;
+                    pruned++;
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+
+            if (batchPruned > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            db.ChangeTracker.Clear();
+            if (batch.Count < BatchSize)
+            {
+                break;
+            }
         }
 
         return pruned;
@@ -1393,44 +1499,64 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
         string? type,
         CancellationToken cancellationToken)
     {
-        var instances = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowKey)
-            .ToListAsync(cancellationToken);
-        long count = 0;
-        foreach (var instance in instances)
+        var query = db.Instances.Where(x => x.WorkflowKey == WorkflowKey && x.State != Statuses.Revoked);
+        if (!string.IsNullOrEmpty(subject))
         {
-            var token = Deserialize(instance);
-            if (!string.IsNullOrEmpty(subject) && !string.Equals(token.Subject, subject, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(client) && !string.Equals(token.ApplicationId, client, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(status) && !string.Equals(token.Status, status, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(type) && !string.Equals(token.Type, type, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (!string.Equals(token.Status, Statuses.Revoked, StringComparison.OrdinalIgnoreCase))
-            {
-                token.Status = Statuses.Revoked;
-                ApplyToInstance(instance, token);
-                count++;
-            }
+            query = query.Where(x => x.StartedBy == subject);
         }
 
-        if (count > 0)
+        if (!string.IsNullOrEmpty(client))
         {
-            await db.SaveChangesAsync(cancellationToken);
+            query = query.Where(x => x.LastExecutedBy == client);
+        }
+
+        if (!string.IsNullOrEmpty(status))
+        {
+            var normalizedStatus = status.ToLowerInvariant();
+            query = query.Where(x => x.State.ToLower() == normalizedStatus);
+        }
+
+        long count = 0;
+        var skipped = 0;
+        while (true)
+        {
+            var batch = await query
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Skip(skipped)
+                .Take(BatchSize)
+                .ToListAsync(cancellationToken);
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var batchUpdated = 0;
+            foreach (var instance in batch)
+            {
+                var token = Deserialize(instance);
+                if (!string.IsNullOrEmpty(type) && !string.Equals(token.Type, type, StringComparison.OrdinalIgnoreCase))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                token.Status = Statuses.Revoked;
+                ApplyToInstance(instance, token);
+                batchUpdated++;
+                count++;
+            }
+
+            if (batchUpdated > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            db.ChangeTracker.Clear();
+            if (batch.Count < BatchSize)
+            {
+                break;
+            }
         }
 
         return count;
@@ -1441,24 +1567,34 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
 
     public async ValueTask<long> RevokeByAuthorizationIdAsync(string identifier, CancellationToken cancellationToken)
     {
-        var instances = await db.Instances
-            .Where(x => x.WorkflowKey == WorkflowKey && x.PendingTransition == identifier)
-            .ToListAsync(cancellationToken);
+        var query = db.Instances.Where(x => x.WorkflowKey == WorkflowKey && x.PendingTransition == identifier && x.State != Statuses.Revoked);
         long count = 0;
-        foreach (var instance in instances)
+        while (true)
         {
-            var token = Deserialize(instance);
-            if (!string.Equals(token.Status, Statuses.Revoked, StringComparison.OrdinalIgnoreCase))
+            var batch = await query
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .Take(BatchSize)
+                .ToListAsync(cancellationToken);
+            if (batch.Count == 0)
             {
+                break;
+            }
+
+            foreach (var instance in batch)
+            {
+                var token = Deserialize(instance);
                 token.Status = Statuses.Revoked;
                 ApplyToInstance(instance, token);
                 count++;
             }
-        }
 
-        if (count > 0)
-        {
             await db.SaveChangesAsync(cancellationToken);
+            db.ChangeTracker.Clear();
+            if (batch.Count < BatchSize)
+            {
+                break;
+            }
         }
 
         return count;
@@ -1548,6 +1684,7 @@ internal sealed class WorkflowOpenIddictTokenStore(WorkflowDbContext db) : IOpen
         instance.BusinessKey = token.ReferenceId ?? token.Id;
         instance.StartedBy = token.Subject;
         instance.PendingTransition = token.AuthorizationId;
+        instance.LastExecutedBy = token.ApplicationId;
         instance.State = token.Status ?? Statuses.Valid;
         instance.Status = string.Equals(token.Status, Statuses.Valid, StringComparison.OrdinalIgnoreCase)
             ? WorkflowInstanceStatus.Active

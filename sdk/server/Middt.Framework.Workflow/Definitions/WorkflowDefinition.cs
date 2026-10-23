@@ -16,8 +16,15 @@ public sealed class WorkflowDefinition
 
     public string? Title { get; set; }
 
+    /// <summary>Optional description of the workflow's business purpose.</summary>
+    public string? Description { get; set; }
+
     /// <summary>Optional Material icon name for navigation menus and workflow lists.</summary>
     public string? Icon { get; set; }
+
+    /// <summary>Optional 2D visual designer node coordinates (<c>x-layout</c>).</summary>
+    [JsonPropertyName("x-layout")]
+    public JsonObject? Layout { get; set; }
 
     /// <summary>Roles allowed to start, list and read instances. Empty = any authenticated user.</summary>
     public List<string> Roles { get; set; } = [];

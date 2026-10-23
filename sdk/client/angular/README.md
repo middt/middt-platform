@@ -40,11 +40,12 @@ providers: [
 // routes
 { path: 'ui/:key', component: MiddtLayoutPageComponent, canActivate: [middtAuthGuard] },
 { path: 'ui-admin', component: MiddtLayoutEditorComponent, canActivate: [middtRoleGuard('ui-admin')] },
+{ path: 'workflow-admin', component: MiddtWorkflowDesignerComponent, canActivate: [middtRoleGuard('ui-admin')] },
 ```
 
 - **Layouts**: `<middt-layout-host layoutKey="order-escalated" [variables]="{ data, instance }" />` embeds a layout;
   widgets map by name (`MIDDT_UI_WIDGETS`); expressions, templates and formats come from `@middt/ui-core` and behave
   exactly like the .NET side (shared conformance suite).
-- **Workflows**: `<middt-workflow-instance-list>` + `<middt-workflow-instance-detail>`; state views render their JSON layout (`view.layout`).
+- **Workflows**: `<middt-workflow-instance-list>` + `<middt-workflow-instance-detail>`; state views render their JSON layout (`view.layout`), and `<middt-workflow-designer>` + `<middt-layout-editor>` provide visual drag-and-drop authoring for workflows and screens.
 - **Custom widgets** must also be known by the API (`MiddtUiOptions.AddWidget`).
 

@@ -84,52 +84,55 @@
 
     @if (activeTab == "visual")
     {
-        <div class="middt-wf-studio-body">
+        <div class="@GetStudioBodyClass()">
             @* 1. Left Drag & Drop Palette *@
-            <aside class="middt-wf-palette" aria-label="Sürükle bırak bileşen paleti">
-                <div class="middt-wf-palette-group">
-                    <div class="middt-wf-palette-group-title">📍 Durumlar (Tuvale Sürükle)</div>
-                    @foreach (var stTpl in StateTemplates)
-                    {
-                        <div class="middt-wf-palette-chip"
-                             draggable="true"
-                             title="Tuvale sürükleyip bırakın veya çift tıklayın"
-                             @ondragstart="@(e => StartPaletteStateDrag(e, stTpl.Type, stTpl.SubType, stTpl.DefaultTitle))"
-                             @ondblclick="@(() => AddStateAtDefaultPos(stTpl.Type, stTpl.SubType, stTpl.DefaultTitle))">
-                            <span class="middt-wf-palette-chip-icon">@stTpl.Icon</span>
-                            <div class="middt-wf-palette-chip-text">
-                                <strong>@stTpl.Label</strong>
-                                <small>@stTpl.Type / @stTpl.SubType</small>
-                            </div>
-                        </div>
-                    }
-                </div>
-
-                <hr class="middt-ui-divider" />
-
-                <div class="middt-wf-palette-group">
-                    <div class="middt-wf-palette-group-title">⚡ Görevler (Durum / Oka Sürükle)</div>
-                    <input class="middt-wf-input" placeholder="Görev ara (set, http, agent...)" @bind="paletteFilter" @bind:event="oninput" />
-                    @foreach (var grp in FilteredTaskGroups())
-                    {
-                        <div class="middt-wf-palette-group-title">@grp.Key</div>
-                        @foreach (var spec in grp)
+            @if (showPalette)
+            {
+                <aside class="middt-wf-palette" aria-label="Sürükle bırak bileşen paleti">
+                    <div class="middt-wf-palette-group">
+                        <div class="middt-wf-palette-group-title">📍 Durumlar (Tuvale Sürükle)</div>
+                        @foreach (var stTpl in StateTemplates)
                         {
                             <div class="middt-wf-palette-chip"
                                  draggable="true"
-                                 title="@spec.Description — Bir durumun veya geçiş okunun üzerine sürükleyin"
-                                 @ondragstart="@(e => StartPaletteTaskDrag(e, spec.Name))"
-                                 @ondblclick="@(() => QuickAddTaskToSelection(spec.Name))">
-                                <span class="middt-wf-palette-chip-icon">⚡</span>
+                                 title="Tuvale sürükleyip bırakın veya çift tıklayın"
+                                 @ondragstart="@(e => StartPaletteStateDrag(e, stTpl.Type, stTpl.SubType, stTpl.DefaultTitle))"
+                                 @ondblclick="@(() => AddStateAtDefaultPos(stTpl.Type, stTpl.SubType, stTpl.DefaultTitle))">
+                                <span class="middt-wf-palette-chip-icon">@stTpl.Icon</span>
                                 <div class="middt-wf-palette-chip-text">
-                                    <strong>@spec.Title</strong>
-                                    <small>@spec.Name</small>
+                                    <strong>@stTpl.Label</strong>
+                                    <small>@stTpl.Type / @stTpl.SubType</small>
                                 </div>
                             </div>
                         }
-                    }
-                </div>
-            </aside>
+                    </div>
+
+                    <hr class="middt-ui-divider" />
+
+                    <div class="middt-wf-palette-group">
+                        <div class="middt-wf-palette-group-title">⚡ Görevler (Durum / Oka Sürükle)</div>
+                        <input class="middt-wf-input" placeholder="Görev ara (set, http, agent...)" @bind="paletteFilter" @bind:event="oninput" />
+                        @foreach (var grp in FilteredTaskGroups())
+                        {
+                            <div class="middt-wf-palette-group-title">@grp.Key</div>
+                            @foreach (var spec in grp)
+                            {
+                                <div class="middt-wf-palette-chip"
+                                     draggable="true"
+                                     title="@spec.Description — Bir durumun veya geçiş okunun üzerine sürükleyin"
+                                     @ondragstart="@(e => StartPaletteTaskDrag(e, spec.Name))"
+                                     @ondblclick="@(() => QuickAddTaskToSelection(spec.Name))">
+                                    <span class="middt-wf-palette-chip-icon">⚡</span>
+                                    <div class="middt-wf-palette-chip-text">
+                                        <strong>@spec.Title</strong>
+                                        <small>@spec.Name</small>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </aside>
+            }
 
             @* 2. Center 2D Interactive SVG + Nodes Board *@
             <div class="@GetViewportClass()"
@@ -141,8 +144,14 @@
                  @onpointerup="OnBoardPointerUp"
                  @onkeydown="OnCanvasKeyDown">
 
-                @* Floating Tool Mode Dock (Pointer/Select vs Hand/Pan) *@
+                @* Floating Tool Mode Dock (Pointer/Select vs Hand/Pan + Panel Toggles) *@
                 <div class="middt-wf-tool-dock" @onpointerdown:stopPropagation="true">
+                    <button type="button"
+                            class="middt-wf-tool-btn"
+                            title="@(showPalette ? "Sol bileşen paletini gizle (Tuvali genişlet)" : "Sol bileşen paletini göster")"
+                            @onclick="@(() => showPalette = !showPalette)">
+                        @(showPalette ? "◀ Palet" : "▶ Palet")
+                    </button>
                     <button type="button"
                             class="@(toolMode == "select" ? "middt-wf-tool-btn middt-wf-tool-btn-active" : "middt-wf-tool-btn")"
                             title="İmleç / Seçim Modu: Nesnelere odaklanın, boş alanda basılı tutup kutu çizerek çoklu seçin veya nesneleri taşıyın"
@@ -160,6 +169,12 @@
                             title="Görünümü ve yakınlaştırmayı merkeze sıfırla"
                             @onclick="ResetViewport">
                         🎯 Merkeze Al
+                    </button>
+                    <button type="button"
+                            class="middt-wf-tool-btn"
+                            title="@(showInspector ? "Sağ özellikler panelini gizle (Tuvali genişlet)" : "Sağ özellikler panelini göster")"
+                            @onclick="@(() => showInspector = !showInspector)">
+                        @(showInspector ? "Özellikler ▶" : "◀ Özellikler")
                     </button>
                 </div>
 
@@ -531,9 +546,12 @@
             </div>
 
             @* 3. Right Context-Sensitive Inspector *@
-            <aside class="middt-wf-inspector" aria-label="Seçili öğe özellikleri">
-                @RenderInspector()
-            </aside>
+            @if (showInspector)
+            {
+                <aside class="middt-wf-inspector" aria-label="Seçili öğe özellikleri">
+                    @RenderInspector()
+                </aside>
+            }
         </div>
     }
     else if (activeTab == "schema")
@@ -714,6 +732,8 @@
     private double panX;
     private double panY;
     private string toolMode = "select"; // "select" | "pan"
+    private bool showPalette = true;
+    private bool showInspector = true;
     private bool busy;
 
     // Inline Screen / Layout Designer Modal state
@@ -949,6 +969,15 @@
     }
 
     // --- Mouse / Pointer Canvas Interactions (Pan, Move Group, Draw Arrow, Marquee Lasso) ---
+
+    private string GetStudioBodyClass() =>
+        (showPalette, showInspector) switch
+        {
+            (true, true) => "middt-wf-studio-body",
+            (false, true) => "middt-wf-studio-body middt-wf-studio-body-no-left",
+            (true, false) => "middt-wf-studio-body middt-wf-studio-body-no-right",
+            (false, false) => "middt-wf-studio-body middt-wf-studio-body-full",
+        };
 
     private string GetViewportClass()
     {
@@ -1568,7 +1597,7 @@
             var spec = taskSpecs.FirstOrDefault(s => string.Equals(s.Name, taskType, StringComparison.OrdinalIgnoreCase));
             var cfg = EnsureObject(taskObj, "config");
             var errObj = taskObj["onError"] as JsonObject;
-            var errAction = errObj is not null ? (GetString(errObj, "action") ?? "Fail") : "Fail";
+            var errAction = errObj is not null ? (GetString(errObj, "action") ?? "Fault") : "Fault";
 
             <div class="middt-ui-form">
                 <div class="middt-ui-toolbar" style="justify-content: space-between">
@@ -1630,25 +1659,22 @@
                         <label>Hata Politikası (onError.action)</label>
                         <select class="middt-wf-input" value="@errAction"
                                 @onchange="@(e => SetErrorAction(taskObj, e.Value?.ToString()))">
-                            <option value="Fail">Fail (Faulted Durumuna Geç)</option>
-                            <option value="Continue">Continue (Hatayı Yut ve Devam Et)</option>
-                            <option value="Retry">Retry (Yeniden Dene)</option>
+                            <option value="Fault">Fault (Faulted Durumuna Geç / Varsayılan)</option>
+                            <option value="Continue">Continue (Hatayı Kaydet ve Devam Et)</option>
                             <option value="Transition">Transition (Hata Geçişine Yönlendir)</option>
                         </select>
                     </div>
-                    @if (errAction == "Retry" && errObj is not null)
-                    {
-                        <div class="middt-ui-input">
-                            <label>Tekrar Sayısı / Bekleme (maxRetries / delay)</label>
-                            <div class="middt-ui-picker">
-                                <input type="number" class="middt-wf-input" style="width: 70px" value="@GetInt(errObj, "maxRetries", 3)"
-                                       @onchange="@(e => { SetInt(errObj, "maxRetries", e.Value?.ToString(), 3); SyncJsonFromDoc(); })" />
-                                <input class="middt-wf-input" value="@(GetString(errObj, "delay") ?? "00:00:05")"
-                                       @onchange="@(e => { SetString(errObj, "delay", e.Value?.ToString()); SyncJsonFromDoc(); })" />
-                            </div>
+                    <div class="middt-ui-input">
+                        <label>Deneme Sayısı / Bekleme (maxAttempts / delay)</label>
+                        <div class="middt-ui-picker">
+                            <input type="number" class="middt-wf-input" style="width: 70px" min="1"
+                                   value="@(errObj is not null ? GetInt(errObj, "maxAttempts", 1) : 1)"
+                                   @onchange="@(e => SetErrorAttempts(taskObj, e.Value?.ToString()))" />
+                            <input class="middt-wf-input" value="@(errObj is not null ? (GetString(errObj, "delay") ?? "00:00:01") : "00:00:01")"
+                                   @onchange="@(e => SetErrorDelay(taskObj, e.Value?.ToString()))" />
                         </div>
-                    }
-                    else if (errAction == "Transition" && errObj is not null)
+                    </div>
+                    @if (errAction == "Transition" && errObj is not null)
                     {
                         <div class="middt-ui-input">
                             <label>Hata Geçiş Anahtarı (onError.transition)</label>
@@ -2543,7 +2569,7 @@
     private void ComputeDagAutoLayout(List<JsonObject> states)
     {
         nodePositions.Clear();
-        SetNodePos(StartNodeKey, 40, 220);
+        SetNodePos(StartNodeKey, 48, 96);
 
         var startTarget = GetNestedString(doc, "start", "target");
         var layers = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -2588,13 +2614,30 @@
         {
             var col = grp.Key;
             var keys = grp.Select(kv => kv.Key).ToList();
+            var x = 352 + (col * 496);
+            var curY = 80.0;
             for (var row = 0; row < keys.Count; row++)
             {
-                var x = 340 + (col * 350);
-                var y = 80 + (row * 260);
-                SetNodePos(keys[row], x, y);
+                var stKey = keys[row];
+                SetNodePos(stKey, x, curY);
+                var stObj = FindState(stKey);
+                curY += EstimateStateNodeHeight(stObj) + 48.0;
             }
         }
+    }
+
+    private static double EstimateStateNodeHeight(JsonObject? stateObj)
+    {
+        if (stateObj is null)
+        {
+            return 220.0;
+        }
+
+        var onEntryCount = (stateObj["onEntry"] as JsonArray)?.Count ?? 0;
+        var isFinish = string.Equals(GetString(stateObj, "type"), "Finish", StringComparison.Ordinal);
+        var onExitCount = isFinish ? 0 : ((stateObj["onExit"] as JsonArray)?.Count ?? 0);
+        var h = 150.0 + (Math.Max(1, onEntryCount) * 32.0) + (isFinish ? 0.0 : 52.0 + (Math.Max(1, onExitCount) * 32.0));
+        return Math.Max(210.0, h);
     }
 
     private NodePoint GetNodePos(string nodeKey) =>
@@ -2666,7 +2709,7 @@
                 pairSeen[pair] = idxInPair + 1;
                 var totalInPair = pairCounts[pair];
 
-                var geom = ComputeEdgeGeometry(fromKey, resolvedTarget, idxInPair, totalInPair);
+                var geom = ComputeEdgeGeometry(fromKey, resolvedTarget, idxInPair, totalInPair, i, trs.Count);
                 var tKey = GetString(tr, "key") ?? $"t-{i + 1}";
                 var tLabel = GetString(tr, "title") ?? tKey;
                 var tTrigger = GetString(tr, "trigger") ?? "Manual";
@@ -2679,7 +2722,7 @@
         return list;
     }
 
-    private EdgeGeometry ComputeEdgeGeometry(string fromKey, string targetKey, int parallelIndex, int parallelTotal)
+    private EdgeGeometry ComputeEdgeGeometry(string fromKey, string targetKey, int parallelIndex, int parallelTotal, int outIndex = 0, int outTotal = 1)
     {
         var fromPos = GetNodePos(fromKey);
         var fromWidth = fromKey == StartNodeKey ? StartNodeWidth : StateNodeWidth;
@@ -2701,7 +2744,7 @@
         var x2 = toPos.X;
         var y2 = toPos.Y + PortOffsetY;
 
-        var spread = (parallelIndex - ((parallelTotal - 1) / 2.0)) * 34.0;
+        var spread = (parallelIndex - ((parallelTotal - 1) / 2.0)) * 38.0;
         var dx = Math.Max(90.0, Math.Abs(x2 - x1) * 0.45);
         var cx1 = x1 + dx;
         var cy1 = y1 + spread;
@@ -2709,8 +2752,10 @@
         var cy2 = y2 + spread;
 
         var bezier = FormattableString.Invariant($"M {x1:0.#} {y1:0.#} C {cx1:0.#} {cy1:0.#}, {cx2:0.#} {cy2:0.#}, {x2:0.#} {y2:0.#}");
-        var midX = (0.125 * x1) + (0.375 * cx1) + (0.375 * cx2) + (0.125 * x2);
-        var midY = (0.125 * y1) + (0.375 * cy1) + (0.375 * cy2) + (0.125 * y2);
+        var t = outTotal <= 1 ? 0.5 : 0.34 + ((outIndex / (double)(outTotal - 1)) * 0.32);
+        var u = 1.0 - t;
+        var midX = (u * u * u * x1) + (3 * u * u * t * cx1) + (3 * u * t * t * cx2) + (t * t * t * x2);
+        var midY = (u * u * u * y1) + (3 * u * u * t * cy1) + (3 * u * t * t * cy2) + (t * t * t * y2);
         return new EdgeGeometry(bezier, midX, midY);
     }
 
@@ -3008,21 +3053,57 @@
 
     private void SetErrorAction(JsonObject taskObj, string? action)
     {
-        if (string.IsNullOrWhiteSpace(action) || action == "Fail")
+        if (string.IsNullOrWhiteSpace(action) || action is "Fault" or "Fail")
+        {
+            if (taskObj["onError"] is JsonObject existing)
+            {
+                existing.Remove("action");
+                existing.Remove("transition");
+                if (existing.Count == 0 || (GetInt(existing, "maxAttempts", 1) <= 1))
+                {
+                    taskObj.Remove("onError");
+                }
+            }
+        }
+        else
+        {
+            var err = EnsureObject(taskObj, "onError");
+            err["action"] = action;
+            if (action != "Transition")
+            {
+                err.Remove("transition");
+            }
+        }
+
+        SyncJsonFromDoc();
+    }
+
+    private void SetErrorAttempts(JsonObject taskObj, string? raw)
+    {
+        var attempts = int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Max(1, parsed)
+            : 1;
+        if (attempts <= 1 && (taskObj["onError"] is not JsonObject existing || (GetString(existing, "action") ?? "Fault") == "Fault"))
         {
             taskObj.Remove("onError");
         }
         else
         {
             var err = EnsureObject(taskObj, "onError");
-            err["action"] = action;
-            if (action == "Retry" && err["maxRetries"] is null)
+            err["maxAttempts"] = attempts;
+            if (err["delay"] is null)
             {
-                err["maxRetries"] = 3;
                 err["delay"] = "00:00:05";
             }
         }
 
+        SyncJsonFromDoc();
+    }
+
+    private void SetErrorDelay(JsonObject taskObj, string? delay)
+    {
+        var err = EnsureObject(taskObj, "onError");
+        SetString(err, "delay", delay ?? "00:00:01");
         SyncJsonFromDoc();
     }
 

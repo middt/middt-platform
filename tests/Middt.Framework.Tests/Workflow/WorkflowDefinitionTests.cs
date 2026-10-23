@@ -153,6 +153,42 @@ public sealed class WorkflowDefinitionTests
         Errors(Valid).Should().BeEmpty();
     }
 
+    [Fact]
+    public void Definition_with_designer_x_layout_and_description_is_valid()
+    {
+        const string json = """
+            {
+              "key": "designer-flow",
+              "version": 1,
+              "title": "Designer Flow",
+              "description": "Created from the visual workflow studio",
+              "start": { "key": "start", "target": "triage" },
+              "states": [
+                {
+                  "key": "triage",
+                  "type": "Intermediate",
+                  "transitions": [
+                    { "key": "approve", "target": "done", "trigger": "Manual" }
+                  ]
+                },
+                { "key": "done", "type": "Finish", "subType": "Success" }
+              ],
+              "x-layout": {
+                "__start__": { "x": 48, "y": 96 },
+                "triage": { "x": 352, "y": 80 },
+                "done": { "x": 848, "y": 80 }
+              }
+            }
+            """;
+
+        var (registry, errors) = Load(json);
+        errors.Should().BeEmpty();
+        var def = registry!.GetLatest("designer-flow");
+        def.Description.Should().Be("Created from the visual workflow studio");
+        def.Layout.Should().NotBeNull();
+        def.Layout!["triage"]!["x"]!.GetValue<int>().Should().Be(352);
+    }
+
     public static TheoryData<string, string> InvalidDefinitions => new()
     {
         // unknown JSON property (typo) is rejected instead of being silently ignored

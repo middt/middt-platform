@@ -841,4 +841,118 @@ public sealed class SampleJsonWorkflowTests
         directoryFiltered.Count.Should().Be(1);
         directoryFiltered.Data.Should().ContainSingle().Which["fullName"]!.GetValue<string>().Should().Be("İbrahim Öztürk Ticaret");
     }
+
+    [Fact]
+    public async Task DataQuery_and_ListAsync_push_filters_and_numeric_sorting_to_sql_beyond_1000_records()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var host = await CreateHostAsync();
+
+        var baseTime = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var oldestId = Guid.CreateVersion7(new DateTimeOffset(baseTime));
+        var negTwoId = Guid.CreateVersion7(new DateTimeOffset(baseTime.AddSeconds(1)));
+        var decOneId = Guid.CreateVersion7(new DateTimeOffset(baseTime.AddSeconds(2)));
+        var decTwoId = Guid.CreateVersion7(new DateTimeOffset(baseTime.AddSeconds(3)));
+
+        await host.WithDbAsync(async db =>
+        {
+            void AddCustomerRow(Guid id, int index, string fullName, string monthlyIncomeJson, DateTime createdAt)
+            {
+                var key = $"CUST-{index:D6}";
+                var dataJson = $$"""{"fullName":"{{fullName}}","identityNumber":"1000000{{index:D4}}","email":"c{{index}}@test.com","phone":"05320000000","segment":"Bireysel","riskLevel":"Düşük","monthlyIncome":{{monthlyIncomeJson}}}""";
+                db.Instances.Add(new Middt.Framework.Workflow.Persistence.WorkflowInstance
+                {
+                    Id = id,
+                    WorkflowKey = "customer-onboarding",
+                    WorkflowVersion = 1,
+                    BusinessKey = key,
+                    State = "active",
+                    Status = WorkflowInstanceStatus.Active,
+                    StartedBy = "alice",
+                    LastExecutedBy = "alice",
+                    CreatedAt = createdAt,
+                    UpdatedAt = createdAt,
+                    InstanceData = new Middt.Framework.Workflow.Persistence.WorkflowInstanceData
+                    {
+                        InstanceId = id,
+                        WorkflowKey = "customer-onboarding",
+                        Data = dataJson,
+                        DataVersion = 1,
+                        DataHash = $"h-{index}",
+                        ETag = $"e-{index}",
+                        UpdatedAt = createdAt,
+                    },
+                });
+            }
+
+            AddCustomerRow(oldestId, 1, "Eski Müşteri Zeynep", "-100.5", baseTime);
+            AddCustomerRow(negTwoId, 2, "Negatif Bakiye İki", "-5.25", baseTime.AddSeconds(1));
+            AddCustomerRow(decOneId, 3, "Hassas Ondalık Bir", "1.00001", baseTime.AddSeconds(2));
+            AddCustomerRow(decTwoId, 4, "Hassas Ondalık İki", "1.00009", baseTime.AddSeconds(3));
+
+            for (var i = 5; i <= 1005; i++)
+            {
+                var t = baseTime.AddSeconds(i);
+                AddCustomerRow(Guid.CreateVersion7(new DateTimeOffset(t)), i, $"Yeni Kayıt {i}", "500", t);
+            }
+
+            return await db.SaveChangesAsync(ct);
+        });
+
+        // 1. Finding 1: Oldest record beyond the newest 1,000 rows is found via SQL filter pushdown
+        var (engineItems, engineCount) = await host.WithEngineAsync(e =>
+            e.ListAsync("customer-onboarding", Alice, null, null, null, 1, 20, new Dictionary<string, string?> { ["fullName"] = "zeynep" }, ct));
+        engineCount.Should().Be(1);
+        engineItems.Should().ContainSingle().Which.Id.Should().Be(oldestId);
+
+        await using var scope = host.Services.CreateAsyncScope();
+        var dataQuery = scope.ServiceProvider.GetRequiredService<WorkflowInstanceDataQuery>();
+
+        var queryOldest = await dataQuery.GetItemsAsync(
+            "CustomerOnboarding",
+            new System.Text.Json.Nodes.JsonObject
+            {
+                ["currentPage"] = 1,
+                ["requestItemSize"] = 10,
+                ["requestModel"] = new System.Text.Json.Nodes.JsonObject { ["fullName"] = "zeynep" },
+            },
+            ManagerPrincipal,
+            ct);
+        queryOldest.Result.Should().Be(ResultEnum.Success);
+        queryOldest.Count.Should().Be(1);
+        queryOldest.Data.Should().ContainSingle().Which["id"]!.GetValue<string>().Should().Be(oldestId.ToString());
+
+        // Unsupported / masked filter returns an explicit error instead of silently returning truncated rows
+        var maskedFilterResult = await dataQuery.GetItemsAsync(
+            "CustomerOnboarding",
+            new System.Text.Json.Nodes.JsonObject
+            {
+                ["currentPage"] = 1,
+                ["requestItemSize"] = 10,
+                ["requestModel"] = new System.Text.Json.Nodes.JsonObject { ["identityNumber"] = "1000" },
+            },
+            OwnerPrincipal,
+            ct);
+        maskedFilterResult.Result.Should().Be(ResultEnum.Error);
+
+        // 2. Finding 6: Numeric sort orders negative numbers (-100.5 < -5.25) and >4 decimal places (1.00001 < 1.00009) accurately
+        var sortedAsc = await dataQuery.GetItemsAsync(
+            "CustomerOnboarding",
+            new System.Text.Json.Nodes.JsonObject
+            {
+                ["currentPage"] = 1,
+                ["requestItemSize"] = 6,
+                ["sortProperty"] = "monthlyIncome",
+                ["sortReverse"] = true,
+            },
+            ManagerPrincipal,
+            ct);
+        sortedAsc.Result.Should().Be(ResultEnum.Success);
+        sortedAsc.Count.Should().Be(1005);
+        sortedAsc.Data!.Take(4).Select(r => r["id"]!.GetValue<string>()).Should().Equal(
+            oldestId.ToString(),
+            negTwoId.ToString(),
+            decOneId.ToString(),
+            decTwoId.ToString());
+    }
 }

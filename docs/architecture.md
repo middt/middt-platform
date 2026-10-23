@@ -68,7 +68,7 @@ widgets can also be defined in pure JSON (`kind: "view"`) and embedded via `{ "w
 2. **Authentication**: the SPA is served by a BFF host (`demo/Middt.Demo.Angular`: `AddMiddtSpaBff()` +
    `UseMiddtSpaBff()`). It owns the cookie session and the tokens, serves the server rendered login/logout pages,
    `GET /bff/user`, and proxies `/api/**` (YARP) to the API with the session's
-   access token, refreshing it before it expires. CSRF: API calls carry an `X-CSRF` header, WebSocket upgrades must be
+   access token, refreshing it before it expires (coordinated across threads and multiple BFF instances via distributed refresh leases `TryAcquireRefreshLeaseAsync` and optimistic session version checks `CompareAndSetAsync` / `RemoveIfMatchAsync`). CSRF: API calls carry an `X-CSRF` header, WebSocket upgrades must be
    same-origin. The API is unchanged.
 3. **Layouts**: `UiLayoutViewComponent` / `MiddtLayoutHostComponent` loads layouts and maps widget names to Angular
    components (`MIDDT_UI_WIDGETS`); `@middt/ui-core` evaluates `visibleWhen`, templates and
@@ -77,20 +77,20 @@ widgets can also be defined in pure JSON (`kind: "view"`) and embedded via `{ "w
    an aggregate for compatibility.
 4. **Workflows**: `WorkflowApiClient` (ui-core) + list/detail/wizard components; all workflow states use `view.layout`
    JSON layouts (`kyc-review`, `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`) rendered by
-   the layout host in both frontends.
+   the layout host in both frontends (`SubFlow` states delegate rendering to the active child workflow state automatically or use an optional fallback `view.layout`).
    Transition input schemas are rendered as forms; a property with `x-lookup` (`entity`, `valueField`, `textField`)
    becomes a select loaded dynamically from the endpoint – the engine only checks the hint's shape.
-5. **Editor**: the layout API is frontend independent; both frontends ship an editor (`/ui-admin`).
+5. **Visual Designers**: both frontends ship a visual drag-and-drop **Screen Designer** (`/ui-admin`, `UiLayoutEditor` / `MiddtLayoutEditorComponent`) and a visual drag-and-drop **Workflow Designer** (`/workflow-admin`, `WorkflowDesigner` / `MiddtWorkflowDesignerComponent`) with bi-directional integration to create or edit state `view.layout` screens directly from workflow states.
 
 For a third frontend (e.g. React) repeat 1–4: reuse `@middt/ui-core` and a BFF host built with `AddMiddtSpaBff()`.
 
 ## Workflow execution and recovery
 
-Workflow JSON uses the framework's general task types (`set`, `setKey`, `log`, `http`, `publish`, `startWorkflow`,
-`loadWorkflow`, `fanOut`, `cache`, `agent`, `mcp`). The `operation` task delegates named domain actions to an
+Workflow JSON uses the framework's general task types (`set`, `setKey`, `log`, `http`, `publish`, `rabbitmq`, `startWorkflow`,
+`loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `fanOut`, `cache`, `agent`, `mcp`). The `operation` task delegates named domain actions to an
 explicitly registered `IWorkflowOperationDispatcher`; identity allowlists its password, MFA and OIDC operations there.
 The demo's flows store and query all domain data as JSON inside PostgreSQL-partitioned workflow tables (`WorkflowInstances` +
-`WorkflowInstanceData`) and expose dynamic CRUD query endpoints via `WorkflowInstanceDataQuery`. Task definitions remain independent of
+`WorkflowInstanceData`) and expose dynamic CRUD query endpoints via `WorkflowInstanceDataQuery` (pushing scalar filters and numeric/text sorting with a deterministic `id` tie-breaker down to SQL before pagination, clamped to `getitems` ≤ 100 and `getall` ≤ 200). Task definitions remain independent of
 application-specific `IWorkflowTask` implementations.
 
 The engine claims an instance with a conditional `Active`/`Faulted` → `Busy` update and, for transition commands, stores
@@ -107,7 +107,7 @@ jobs with leases that a running job renews; on PostgreSQL the claim is `FOR UPDA
 or race over the same row, and a node that writes jobs sends `NOTIFY` so the `WorkflowJobListener` of every other node
 wakes its processor immediately instead of after `JobPollingInterval`. Child cancellation waits while the child is Busy;
 event handlers may receive duplicates and must be idempotent. A failed job is retried with backoff and, after 20
-attempts, removed with an incident. Task data is copied for each in-process attempt; external side effects
+attempts, atomically removed and recorded as a `WorkflowIncident` in a single database transaction. Task data is copied for each in-process attempt; external side effects
 need an idempotency key. The built-in HTTP task sends `WorkflowTaskContext.IdempotencyKey` as `Idempotency-Key` unless
 the definition supplies that header. An explicit retry is a new command and can use a different key.
 

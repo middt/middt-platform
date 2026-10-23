@@ -5,8 +5,8 @@ This is a **security boundary** – treat every change as security relevant and 
 
 - Session: HttpOnly cookie (`MiddtBffOptions.CookieName`, unique per app on a host) → server side
   `IServerTokenStore` (Data Protection encrypted, `IDistributedCache`). Tokens must never be sent to the browser.
-- `BffTokenAccessor`: one store read per request (memoised in `HttpContext.Items`), refresh before expiry, single
-  flight per session, failed refresh ends the session.
+- `BffTokenAccessor` (registered as a singleton): one store read per request (memoised in `HttpContext.Items`), refresh before expiry, single
+  flight per session in-process plus distributed refresh lease (`IServerTokenStore.TryAcquireRefreshLeaseAsync` / `ReleaseRefreshLeaseAsync`) across BFF instances, optimistic session `Version` compare-and-set (`CompareAndSetAsync`), and version-checked removal (`RemoveIfMatchAsync`) on terminal refresh failure.
 - Proxy (`Proxy/BffApiProxy.cs`, YARP): `/api/**` → `ApiSettings:URL`. Requires `X-CSRF` on non-WebSocket
   requests, same-origin `Origin` for WebSockets, strips cookies, injects the bearer token, blocks
   `ProxyDeniedPaths` (default `token`). Do not add routes that bypass these checks.

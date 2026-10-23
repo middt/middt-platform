@@ -174,6 +174,81 @@ public sealed class ServerTokenStoreTests
 
         (await store.GetAsync("s1", touch: false, Ct)).Should().BeNull();
     }
+
+    [Fact]
+    public async Task Concurrent_refresh_across_two_bff_nodes_rotates_once_and_stale_failure_does_not_remove_session()
+    {
+        var sharedProtection = new EphemeralDataProtectionProvider();
+        var settings = Options.Create(new GeneralSettings { SessionTimeoutInMinute = 10, SessionAbsoluteTimeoutInMinute = 60 });
+        var node1Store = new DistributedServerTokenStore(cache, sharedProtection, settings, time);
+        var node2Store = new DistributedServerTokenStore(cache, sharedProtection, settings, time);
+
+        var generator = new Middt.Framework.Api.Security.JwtTokenGenerator(
+            Options.Create(new Middt.Framework.Api.Configuration.Model.JwtSettings
+            {
+                Secret = Middt.Framework.Tests.Api.TestApiHost.Secret,
+                Issuer = Middt.Framework.Tests.Api.TestApiHost.Issuer,
+                Audience = Middt.Framework.Tests.Api.TestApiHost.Audience,
+                Expires = 30, // Within RefreshBefore (60s), so both BFF nodes will attempt to refresh
+            }),
+            time);
+        var initialJwt = generator.CreateToken([new Claim(ClaimTypes.Name, "alice")]).access_token;
+        var rotatedJwt = generator.CreateToken([new Claim(ClaimTypes.Name, "alice"), new Claim("rot", "2")]).access_token;
+
+        await node1Store.SetAsync("s-multi", new SaveTokenResponseModel
+        {
+            access_token = initialJwt,
+            refresh_token = "rt-v1",
+            expires_in = 30,
+            expire_datetime = time.GetUtcNow().AddMinutes(60),
+        }, Ct);
+
+        var refreshCount = 0;
+        var tokenService = new Middt.Framework.Tests.Client.FakeTokenService(async (req, ct) =>
+        {
+            await Task.Delay(60, ct);
+            if (Interlocked.Increment(ref refreshCount) == 1 && req.refresh_token == "rt-v1")
+            {
+                return new TokenResponseModel
+                {
+                    Result = Middt.Framework.Model.Enumerations.ResultEnum.Success,
+                    access_token = rotatedJwt,
+                    refresh_token = "rt-v2",
+                    expires_in = 600,
+                };
+            }
+
+            return new TokenResponseModel
+            {
+                Result = Middt.Framework.Model.Enumerations.ResultEnum.Error,
+                MessageList = ["invalid_grant"],
+            };
+        });
+
+        var accessor1 = new BffTokenAccessor(node1Store, tokenService, time, Microsoft.Extensions.Logging.Abstractions.NullLogger<BffTokenAccessor>.Instance);
+        var accessor2 = new BffTokenAccessor(node2Store, tokenService, time, Microsoft.Extensions.Logging.Abstractions.NullLogger<BffTokenAccessor>.Instance);
+
+        static Microsoft.AspNetCore.Http.DefaultHttpContext CreateHttpContext(string sessionId)
+        {
+            var identity = new ClaimsIdentity([new Claim(MiddtClaimTypes.SessionId, sessionId)], "cookie");
+            return new Microsoft.AspNetCore.Http.DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(identity),
+            };
+        }
+
+        var results = await Task.WhenAll(
+            accessor1.GetAccessTokenAsync(CreateHttpContext("s-multi"), Ct),
+            accessor2.GetAccessTokenAsync(CreateHttpContext("s-multi"), Ct));
+
+        results.Should().AllBe(rotatedJwt);
+        refreshCount.Should().Be(1);
+        (await node1Store.GetAsync("s-multi", touch: false, Ct))!.refresh_token.Should().Be("rt-v2");
+
+        // Stale RemoveIfMatchAsync must not remove a session whose refresh token was already rotated
+        (await node2Store.RemoveIfMatchAsync("s-multi", "rt-v1", Ct)).Should().BeFalse();
+        (await node1Store.GetAsync("s-multi", touch: false, Ct)).Should().NotBeNull();
+    }
 }
 
 public sealed class ServerSessionStateTests

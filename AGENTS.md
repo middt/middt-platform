@@ -9,13 +9,13 @@ of the folder you work in. Task playbooks: [`docs/ai/`](docs/ai/README.md).
 
 A .NET 10 framework for line-of-business apps with **two interchangeable frontends** over one backend:
 
-- **Backend**: REST API (controllers + dynamic `WorkflowInstanceDataQuery`), JSON-defined
+- **Backend**: REST API (controllers + dynamic `WorkflowInstanceDataQuery` with SQL filter & numeric/text sort pushdown before pagination), JSON-defined
   **workflow engine** (partitioned by workflow key in PostgreSQL; message-driven `Event` transitions, background tasks,
-  history modes, multi-node jobs with `SKIP LOCKED` + `LISTEN`/`NOTIFY`), **Microsoft Agent Framework AI & MCP** (`Middt.Framework.Agents`: `agent` and `mcp` tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing via `allowedTransitions` / `transitionInto`, multi-agent `sequential` / `concurrent` / `handoff`), **100% server-driven JSON UI** (menus, list columns,
-  forms, state views, and reusable nested `"widget": "layout"` blocks stored in DB and editable at runtime; see
+  history modes, multi-node jobs with `SKIP LOCKED` + `LISTEN`/`NOTIFY`, atomic job abandonment + incident recording), **Microsoft Agent Framework AI & MCP** (`Middt.Framework.Agents`: `agent` and `mcp` tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing via `allowedTransitions` / `transitionInto`, multi-agent `sequential` / `concurrent` / `handoff`), **100% server-driven JSON UI** (menus, list columns,
+  forms, state views, and reusable nested `"widget": "layout"` blocks stored in DB and editable at runtime via the visual drag-and-drop Screen Designer `/ui-admin` and Workflow Designer `/workflow-admin`; see
   [`docs/ai/backend-driven-json-ui.md`](docs/ai/backend-driven-json-ui.md)).
 - **Frontends**: **Blazor Server** (Radzen) and **Angular 22** (Material). Both sit behind a **BFF** (cookie session,
-  server side tokens, `/api` proxy). The browser never holds an API token. Neither demo frontend contains
+  server side tokens with multi-instance distributed refresh leases + optimistic session versioning, `/api` proxy). The browser never holds an API token. Neither demo frontend contains
   hardcoded domain views.
 - **Identity** (`identity/`, a service, not part of the SDK): OAuth 2.0 / OIDC server (OpenIddict) whose
   sign-in/registration/reset/MFA flows are workflow journeys, with a Blazor UI + admin console. The demos' BFFs sign in

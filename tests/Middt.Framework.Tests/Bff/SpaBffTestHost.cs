@@ -199,6 +199,27 @@ public sealed class SpaBffTestHost : IAsyncDisposable
 
         public Task RemoveAsync(string sessionId, CancellationToken cancellationToken = default) =>
             inner.RemoveAsync(sessionId, cancellationToken);
+
+        public Task<bool> TryAcquireRefreshLeaseAsync(
+            string sessionId,
+            string expectedRefreshToken,
+            string leaseOwnerId,
+            TimeSpan leaseDuration,
+            CancellationToken cancellationToken = default) =>
+            inner.TryAcquireRefreshLeaseAsync(sessionId, expectedRefreshToken, leaseOwnerId, leaseDuration, cancellationToken);
+
+        public Task ReleaseRefreshLeaseAsync(string sessionId, string leaseOwnerId, CancellationToken cancellationToken = default) =>
+            inner.ReleaseRefreshLeaseAsync(sessionId, leaseOwnerId, cancellationToken);
+
+        public Task<SaveTokenResponseModel?> CompareAndSetAsync(
+            string sessionId,
+            string expectedRefreshToken,
+            SaveTokenResponseModel newTokens,
+            CancellationToken cancellationToken = default) =>
+            inner.CompareAndSetAsync(sessionId, expectedRefreshToken, newTokens, cancellationToken);
+
+        public Task<bool> RemoveIfMatchAsync(string sessionId, string expectedRefreshToken, CancellationToken cancellationToken = default) =>
+            inner.RemoveIfMatchAsync(sessionId, expectedRefreshToken, cancellationToken);
     }
 
     private sealed class FakeForwarderHttpClientFactory(HttpMessageHandler handler) : IForwarderHttpClientFactory

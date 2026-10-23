@@ -181,6 +181,34 @@ public sealed class WorkflowReliabilityTests
         (await host.JobsAsync(instance.Id)).Select(j => j.Id).Should().Contain(pending);
     }
 
+    [Fact]
+    public async Task Abandoned_job_deletes_job_and_creates_incident_atomically_with_workflow_key()
+    {
+        const string definition = """
+            { "key": "event-abandon", "start": { "key": "start", "target": "open" },
+              "states": [ { "key": "open" } ] }
+            """;
+        await using var host = await WorkflowTestHost.StartAsync([definition],
+            services: s => s.AddSingleton<IWorkflowEventHandler, AlwaysFailEventHandler>());
+        var instance = await host.StartInstanceAsync("event-abandon");
+
+        await host.WithDbAsync(db => db.Jobs
+            .Where(j => j.InstanceId == instance.Id && j.Kind == WorkflowJobKind.Event)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Attempts, 19)
+                .SetProperty(j => j.DueAt, host.Time.GetUtcNow().UtcDateTime.AddSeconds(-1))
+                .SetProperty(j => j.LockedUntil, (DateTime?)null), Ct));
+
+        await host.Processor.RunOnceAsync(Ct);
+
+        (await host.JobsAsync(instance.Id)).Should().BeEmpty();
+        var incidentRows = await host.WithDbAsync(db => db.Incidents.Where(i => i.InstanceId == instance.Id).ToListAsync(Ct));
+        incidentRows.Should().NotBeEmpty().And.OnlyContain(i =>
+            i.WorkflowKey == "event-abandon" &&
+            i.Attempts == 20 &&
+            i.Error.Contains("Event job abandoned after 20 attempts", StringComparison.Ordinal));
+    }
+
     public sealed class AttemptProbe
     {
         public int Calls { get; set; }

@@ -117,7 +117,7 @@ public static class MiddtBffExtensions
         services.AddDistributedMemoryCache();
         services.TryAddSingleton<IServerTokenStore, DistributedServerTokenStore>();
         services.AddScoped<CookieSignInService>();
-        services.AddScoped<BffTokenAccessor>();
+        services.TryAddSingleton<BffTokenAccessor>();
         services.TryAddSingleton<LoginAttemptLimiter>();
 
         // No "Server: Kestrel" response header (fingerprinting).

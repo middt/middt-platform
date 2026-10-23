@@ -43,7 +43,8 @@ Common · Api · Workflow · Ui.Server · Rebus · Agents. **Must not reference 
 - Access: definition `roles`, transition `roles`, `instanceAccess` (owner mode + supervisor roles). Every instance-level
   entry point must go through `EnsureCanAccess`; list filtering uses each instance's stored definition version.
 - Static view HTML: `IWorkflowViewRenderer` implementations (e.g. `WorkflowLayoutRenderer` using `UiHtmlRenderer`).
-- Persistence & Querying: `WorkflowDbContext` (schema `wf`, PostgreSQL declarative partitioning per workflow key, `jsonb` columns, functional B-Tree indexes from `dataSchema`), `WorkflowInstanceDataQuery` (exposes `/api/v1/{workflow}/getitems|getall|getbyid|insert|update|delete` over workflow JSON instances); ids use UUIDv7 (`Guid.CreateVersion7()`).
+- Persistence & Querying: `WorkflowDbContext` (schema `wf`, PostgreSQL declarative partitioning per workflow key, `jsonb` columns, functional B-Tree indexes from `dataSchema`), `WorkflowInstanceDataQuery` (exposes `/api/v1/{workflow}/getitems|getall|getbyid|insert|update|delete` over workflow JSON instances; clamps `getitems` ≤ 100 and `getall` ≤ 200; pushes scalar filters and numeric/text sorting with deterministic `InstanceId` tie-breaker down to SQL before pagination, rejecting masked or non-pushable fields); ids use UUIDv7 (`Guid.CreateVersion7()`).
+- Abandoned jobs: when a job reaches `MaxJobAttempts` (20), `WorkflowJobProcessor` atomically removes the job and writes the `WorkflowIncident` inside a single database transaction.
 
 ## Agents (`Middt.Framework.Agents`)
 - Built on Microsoft Agent Framework (`Microsoft.Agents.AI`, `Microsoft.Agents.AI.OpenAI`, `Microsoft.Agents.AI.Workflows`) and `Microsoft.Extensions.AI`.

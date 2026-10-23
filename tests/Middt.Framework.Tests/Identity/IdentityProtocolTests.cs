@@ -561,4 +561,47 @@ public sealed class IdentityProtocolTests
             return true;
         });
     }
+
+    [Fact]
+    public async Task OpenIddict_token_store_filters_by_application_in_sql_and_batches_revoke_and_prune()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var host = await IdentityTestHost.StartAsync();
+
+        await host.WithServiceAsync<OpenIddict.Abstractions.IOpenIddictTokenStore<WorkflowOpenIddictToken>, bool>(async tokenStore =>
+        {
+            var oldTime = DateTimeOffset.UtcNow.AddDays(-5);
+            for (var i = 0; i < 230; i++)
+            {
+                var token = await tokenStore.InstantiateAsync(ct);
+                token.ApplicationId = i < 210 ? "app-batch-1" : "app-batch-2";
+                token.Subject = "alice";
+                token.Status = OpenIddict.Abstractions.OpenIddictConstants.Statuses.Valid;
+                token.Type = OpenIddict.Abstractions.OpenIddictConstants.TokenTypeIdentifiers.RefreshToken;
+                token.ReferenceId = $"ref-{i:D4}";
+                token.CreationDate = oldTime.AddSeconds(i);
+                token.ExpirationDate = oldTime.AddHours(1);
+                await tokenStore.CreateAsync(token, ct);
+            }
+
+            var app1Tokens = new List<WorkflowOpenIddictToken>();
+            await foreach (var item in tokenStore.FindByApplicationIdAsync("app-batch-1", ct))
+            {
+                app1Tokens.Add(item);
+            }
+
+            app1Tokens.Should().HaveCount(210);
+
+            var byRef = await tokenStore.FindByReferenceIdAsync("ref-0205", ct);
+            byRef.Should().NotBeNull();
+            byRef!.ApplicationId.Should().Be("app-batch-1");
+
+            var revoked = await tokenStore.RevokeByApplicationIdAsync("app-batch-1", ct);
+            revoked.Should().Be(210);
+
+            var pruned = await tokenStore.PruneAsync(DateTimeOffset.UtcNow.AddDays(-1), ct);
+            pruned.Should().BeGreaterThanOrEqualTo(230);
+            return true;
+        });
+    }
 }

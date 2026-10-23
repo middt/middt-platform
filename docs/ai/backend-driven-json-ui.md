@@ -17,6 +17,8 @@ Both **Blazor Server** and **Angular** render these JSON definitions identically
 | **Workflow State Detail Screen** (`/workflow/{key}/{id}`) | `Workflows/*.json` (`states[].view.layout`) $\rightarrow$ `Layouts/*.json` (`kind: "view"`) | `WorkflowInstanceDetail` + `UiLayoutHost` / `WorkflowInstanceDetailComponent` + `MiddtLayoutHostComponent` |
 | **Reusable Nested Widgets** | `Layouts/*.json` (`kind: "view"`) embedded via `{ "widget": "layout", "key": "...", "data": "..." }` | `UiLayoutWidget` / `UiLayoutWidgetComponent` |
 | **Directory / CRUD / Overview Pages** (`/ui/{key}`) | `Layouts/*.json` (`kind: "page"`) | `UiPageHost` / `MiddtLayoutPageComponent` |
+| **Visual Screen Designer** (`/ui-admin`) | `Layouts/*.json` (`GET/PUT /api/ui/layouts/{key}`) | `UiLayoutEditor` / `MiddtLayoutEditorComponent` |
+| **Visual Workflow Designer** (`/workflow-admin`) | `Workflows/*.json` (`GET/PUT /api/workflows/{key}/definition`) | `WorkflowDesigner` / `MiddtWorkflowDesignerComponent` |
 
 > **Rule**: Never create hardcoded `.razor` or Angular `.ts` view components for business workflows or screens unless you are building a brand-new SDK primitive widget (`sdk/client/...`). All domain screens belong in `Layouts/*.json` and `Workflows/*.json`.
 

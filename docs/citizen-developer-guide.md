@@ -1207,39 +1207,60 @@ Tüm ekranlar `demo/Middt.Demo.Api/Layouts/*.json` altında tanımlanır ve `spe
 }
 ```
 
-### 6.2. Canlı Ekran Tasarımı Editörü (`/ui-admin`)
+### 6.2. Görsel Sürükle-Bırak Ekran Tasarımcısı (`/ui-admin`) ve Akış Bağlantısı
 
-Sol menüdeki **Ekran Tasarımı** (`/ui-admin`) sayfasından:
-- Sistemdeki tüm `Layouts/*.json` ekranlarını görüntüleyebilir,
-- JSON ağacını veya bileşen özelliklerini tarayıcıda düzenleyip **"Kaydet"** diyerek hem Blazor (`:8080/ui-admin`) hem Angular (`:8081/ui-admin`) üzerinde **konteyner yeniden başlatmadan** anında devreye alabilirsiniz.
+Sol menüdeki **Ekran Tasarımı** (`/ui-admin`) sayfası, Citizen Developer'ların JSON kodu yazmadan hem bağımsız sayfaları (`kind: "page"`) hem de iş akışı durum ekranlarını (`kind: "view"`) **sürükle-bırak (drag-and-drop)** yöntemiyle tasarlayabildiği 3 sütunlu görsel stüdyodur:
+
+1. **Sol Sürükle-Bırak Bileşen Paleti (`middt-ui-editor-palette`)**:
+   - **Yerleşim & Kapsayıcılar**: `📦 Bölüm / Kart (section)`, `🏛️ Yan Yana Sütunlar (columns)`, `🔁 Tekrarlı Liste (list)`, `🧩 Gömülü Alt Ekran (layout)`.
+   - **Veri & Etkileşimli Bileşenler**: `📋 Etiket–Değer Alanları (fields)`, `📊 Veri Tablosu / CRUD (grid)`, `🗂️ Tekil Kayıt Yükleyici (record)`.
+   - **Görsel & Metin Bileşenleri**: `🔤 Başlık (heading)`, `📝 Metin / Paragraf (text)`, `⚠️ Uyarı / Bilgi Kutusu (alert)`, `🏷️ Durum Rozeti (badge)`, `➖ Ayırıcı Çizgi (divider)`, `🔗 Bağlantı / Buton (link)`.
+   - Palet üzerindeki bileşenleri sürükleyip ortadaki görsel tuvale (veya `section`, `columns`, `list`, `record` kapsayıcılarının iç bırakma alanlarına) bırakabilir ya da `+` butonuyla seçili kapsayıcıya tek tıkla ekleyebilirsiniz.
+2. **Orta Görsel Tuval, Canlı Önizleme ve JSON Sekmeleri**:
+   - **`🎨 Görsel Tasarım (Sürükle & Bırak)`**: Bileşen ağacını kartlar halinde gösterir; her bileşeni seçebilir, yukarı/aşağı (`↑`/`↓`) sıralayabilir, çoğaltabilir (`📑`), silebilir (`🗑️`) veya kapsayıcılar arasında sürükleyebilirsiniz.
+   - **`👁️ Canlı Önizleme`**: Düzenlenen ekranı örnek `data` ve `instance` verileriyle gerçek zamanlı olarak render eder.
+   - **`{ } JSON Kodu`**: Görsel tuvalle çift yönlü senkronize tam JSON editörü.
+3. **Sağ Bağlama Duyarlı Özellikler Denetçisi (`middt-ui-editor-inspector`)**:
+   - Seçili bileşenin `id`, `visibleWhen` ve tipe özel tüm ayarlarını form kontrolleriyle düzenler:
+     - **`fields` (`Etiket–Değer Listesi`)**: Satır ekleme/silme/sıralama, `label`, `value` (`{{ data.* }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`) ve `visibleWhen` görsel tablosu.
+     - **`grid` (`Veri Tablosu`)**: `entity` (iş akışı seçimi), `pageSize`, görsel **Sütunlar (`columns`)** editörü, **Arama Filtreleri (`search`)** editörü ve **Form Alanları (`form`)** editörü.
+     - **`columns` (`Yan Yana Sütunlar`)**: Sütun oranları (`widths`, ör. `2, 1`) ve otomatik sütun senkronizasyonu.
+     - **`layout` (`Gömülü Alt Ekran`)**: Sistemdeki `kind: "view"` ekranlarından açılır kutuyla seçim (`key`) ve alt veri kapsamı (`data`).
+   - Üst kısımda ekranın genel ayarları (`title`, `kind`, `roles`, `kind: "page"` için sol menü `menu.title`, `menu.icon`, `menu.group`, `menu.order`) ve **Sürüm Geçmişi (`Sürümler`)** yer alır.
+4. **İş Akışı Tasarımcısı (`/workflow-admin`) ile Çift Yönlü Entegrasyon**:
+   - `/workflow-admin` içinde herhangi bir durumun (`Human` veya `Finish`) sağ denetçisindeki **"Durum Ekranı (`view.layout`)"** bölümünden:
+     - Mevcut bir `view` ekranını açılır listeden seçebilir ve **"🎨 Ekranı Tasarla"** butonuyla doğrudan o ekranı `/ui-admin` içinde açabilirsiniz.
+     - Veya **"+ Yeni Ekran Oluştur & Tasarla"** butonuna tıklayarak akışın `dataSchema` alanlarını otomatik içeren yeni bir ekran oluşturup `/ui-admin`'e geçebilir, tasarımınızı kaydedip üstteki **"← Akış Tasarımcısına Dön"** butonuyla kaldığınız duruma geri dönebilirsiniz.
 
 ### 6.3. Görsel İş Akışı ve Görev Tasarımcısı (`/workflow-admin`)
 
 Sol menüdeki **Akış Tasarımı** (`/workflow-admin`) sayfası, Citizen Developer'ların JSON ezberlemeden iş akışlarını ve 16 yerleşik görevi (`set`, `setKey`, `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `startWorkflow`, `http`, `publish`, `rabbitmq`, `operation`, `fanOut`, `cache`, `agent`, `mcp`, `log`) **sürükle-bırak (drag-and-drop)** yöntemiyle 2B tuval üzerinde çizip yapılandırmasını sağlayan 3 sütunlu bir stüdyodur:
 
 1. **Sol Sürükle-Bırak Bileşen Paleti (`middt-wf-palette`)**:
-   - **Durum Şablonları (Tuvale Sürükle)**: `👤 İnsan Görevi Durumu`, `⚙️ Otomatik Sistem Durumu`, `🔀 Alt İş Akışı Durumu`, `✅ Başarılı Bitiş Durumu`, `❌ Red / Hata Bitişi`, `🚫 İptal Bitiş Durumu` kartlarını sürükleyip 2B tuvalin istediğiniz `(x, y)` noktasına bırakarak yeni durum düğümü oluşturabilirsiniz.
+   - **Durum Şablonları (Tuvale Sürükle)**: `👤 İnsan Görevi Durumu`, `⚙️ Otomatik Sistem Durumu`, `🔀 Alt İş Akışı Durumu`, `✅ Başarılı Bitiş Durumu`, `❌ Red / Hata Bitişi`, `🚫 İptal Bitiş Durumu` kartlarını sürükleyip 2B tuvalin istediğiniz `(x, y)` noktasına bırakarak yeni durum düğümü oluşturabilirsiniz (`Finish` tipindeki bitiş durumlarında yalnızca `onEntry` yer alır; akış sonlandığı için `onExit` veya çıkış oku bulunmaz).
    - **16 Görev Bloğu (Durum veya Geçiş Üzerine Sürükle)**: Kategorilere ayrılmış ve aranabilir 16 yerleşik görevi paletten sürükleyerek:
-     - Herhangi bir durumun **`onEntry`** veya **`onExit`** bırakma alanına (dropzone),
+     - Herhangi bir durumun **`onEntry`** veya (bitiş durumu değilse) **`onExit`** bırakma alanına (dropzone),
      - **`Başlangıç (start)`** düğümünün **`onExecute`** alanına,
      - Tuval üzerindeki herhangi bir **SVG geçiş (transition) etiketinin** üzerine,
      - Veya doğrudan **boş tuval alanına** (otomatik olarak o görevi içeren yeni bir sistem durumu oluşturur) bırakabilirsiniz.
      - Mevcut görev haplarını da durumlar ve kancalar (`onEntry`, `onExit`, `onExecute`) arasında sürükleyip taşıyabilirsiniz.
-2. **Orta 2B Sürükle-Bırak Tuvali, Canlı Ok Çizimi ve Grup Seçimi (`middt-wf-board`)**:
+2. **Orta 2B Sürükle-Bırak Tuvali, El (Pan) / Seçim Modları, Canlı Ok Çizimi ve Grup Seçimi (`middt-wf-board`)**:
+   - **Seç / Taşı (`🖱️`) ve Kaydır / El (`✋`) Araçları**: Üst araç çubuğundan **`🖱️ Seç / Taşı`** modunda kutu seçimi (lasso) yapabilir ve nesneleri taşıyabilirsiniz; **`✋ Kaydır (Pan)`** modunda (veya `Space` tuşuna basılı tutarak / orta fare tuşuyla) tuvali istediğiniz yöne serbestçe kaydırabilirsiniz.
    - **Canlı Fare İle Ok Çizimi (`pointerdown` → `pointermove` → `pointerup`)**: Bir durumun sağındaki **çıkış noktasından (`●`)** fareyle basılı tutup sürüklediğinizde imlecinizi takip eden **canlı önizleme oku (SVG Bezier)** çizilir; hedef durumun üzerine bıraktığınızda ilişki (`transition`) anında kurulur.
    - **Okları Seçme ve Tek Tıkla Silme**: Doğrudan SVG ok eğrisinin kendisine veya üzerindeki etikete tıklayarak oku seçebilirsiniz (`Shift/Ctrl/Cmd + Tık` ile birden fazla oku seçebilirsiniz). Her ok etiketinin sağındaki **`✕`** butonuyla veya klavyeden **`Delete` / `Backspace`** tuşuyla seçili okları silebilirsiniz.
    - **Kutu Seçimi (Rubber-Band / Marquee Lasso) ve Gruplama**: Tuvalin boş bir alanına tıklayıp fareyi sürükleyerek **seçim dikdörtgeni (`middt-wf-lasso`)** çizebilir, kutunun içine giren tüm durumları ve geçiş oklarını tek seferde gruplayarak seçebilirsiniz (veya üst araç çubuğundaki **"Tümünü Seç"** butonunu kullanabilirsiniz).
    - **Grup Taşıma, Hizalama, Çoğaltma ve Toplu Silme (`middt-wf-selection-bar`)**:
      - Birden fazla durum seçiliyken herhangi birinin başlığından tutup sürüklediğinizde **tüm grup birlikte gerçek zamanlı olarak taşınır** ve bağlı tüm oklar canlı güncellenir.
      - Çoklu seçim yapıldığında tuvalin üst kısmında yüzen **Grup İşlem Çubuğu** belirir: **`📐 Yatay Hizala`**, **`📐 Dikey Hizala`**, **`📑 Çoğalt`** (seçili durumları kopyalar) ve **`🗑️ Seçilenleri Sil`** (seçili tüm durumları, okları ve yetim kalan bağlantıları tek tıkla veya `Delete` tuşuyla siler).
+   - **Alt Akış (`SubFlow`) Rozeti ve Gezinme**: `SubFlow` tipindeki durum kartlarının üzerinde çağrılan hedef alt akışın anahtarı (`🔀 Alt Akış: risk-limit-eval ↗`) rozet olarak gösterilir; üzerine tıkladığınızda tasarımcıda doğrudan o alt akış açılır. Çalışma zamanında da `SubFlow` durumları kendi ekranı yerine otomatik olarak aktif alt akışın ekranını (`view.layout`) ve geçiş butonlarını gösterir.
    - **Otomatik Hizalama & Yakınlaştırma**: **"Otomatik Hizala"** (`Auto-Layout`) butonu tüm düğümleri topolojik katmanlarına göre otomatik dizer; `Zoom (+/-)` ile tuvali yakınlaştırıp uzaklaştırabilirsiniz.
 3. **Sağ Bağlama Duyarlı Özellikler Denetçisi (`middt-wf-inspector`)**:
    - Tuvalde bir **Göreve** tıkladığınızda: Görevin ortak ayarları (`key`, `when`, `background`, `onError.action`, `maxRetries`, `delay`, `transition`), sıra değiştirme (`↑`/`↓`) ve `GET /api/workflows/tasks` kataloğundan gelen tipe özel parametre kontrolleri açılır.
    - Bir **Geçişe (Transition)** tıkladığınızda: `key`, `title`, `target`, `trigger` (`Manual`, `Automatic`, `Scheduled`, `Event`), `rule`, `description`, buton stili/rolleri, `default`, `after`, `event` ve `onExecute` görev listesi açılır.
-   - Bir **Duruma (State)** tıkladığınızda: `key` (değiştirildiğinde tüm geçiş referanslarını otomatik günceller), `title`, `type`, `subType`, `step`, `view.layout` ve çıkan geçişler açılır.
-4. **Veri Şeması (`dataSchema`) ve Çift Yönlü JSON Editörü**:
+   - Bir **Duruma (State)** tıkladığınızda: `key` (değiştirildiğinde tüm geçiş referanslarını otomatik günceller), `title`, `type`, `subType`, `step` (ekranın üstündeki aşama çubuğunda `1 -> 2 -> 3` sırasını belirleyen **Aşama Sıra No**), `view.layout` (**"🎨 Ekranı Tasarla"** ve **"+ Yeni Ekran Oluştur & Tasarla"** kısayollarıyla) ve çıkan geçişler açılır.
+4. **Veri Şeması (`dataSchema`), Kalıcı Kayıt ve Otomatik Sol Menü**:
    - **`🗂️ Veri Şeması (dataSchema)`** sekmesinden akış alanlarını (`string`, `number`, `integer`, `boolean`, `array`, `object`), maskeleme kuralını (`x-mask`), zorunluluğu (`required`), liste kolonunu (`x-list`) ve otomatik PostgreSQL indeks + arama filtresini (`x-search`) yönetebilirsiniz.
-   - **`{ } JSON Kodu`** sekmesi 2B tuvalle çift yönlü senkronizedir. **"Doğrula"** (`POST /api/workflows/validate`) tüm ifadeleri kontrol eder; **"Kaydet"** (`PUT /api/workflows/{workflow}/definition`) akışı bellekteki `WorkflowRegistry`'ye canlı yükler ve PostgreSQL bölüm/indekslerini otomatik oluşturur.
+   - **`{ } JSON Kodu`** sekmesi 2B tuvalle çift yönlü senkronizedir. **"Doğrula"** (`POST /api/workflows/validate`) tüm ifadeleri kontrol eder; **"Kaydet"** (`PUT /api/workflows/{workflow}/definition`) akışı hem `Workflows/{key}.json` dosyasına yazar hem de `WorkflowRegistry` + PostgreSQL bölüm/indekslerine canlı yükler ve sol menüdeki **İş Akışları** altına otomatik olarak ekler.
 
 ---
 

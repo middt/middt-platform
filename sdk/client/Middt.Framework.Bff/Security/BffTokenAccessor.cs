@@ -19,10 +19,12 @@ public sealed partial class BffTokenAccessor(IServerTokenStore store, ITokenServ
     /// <summary>Tokens closer than this to expiry are refreshed before forwarding a request.</summary>
     public static readonly TimeSpan RefreshBefore = TimeSpan.FromSeconds(60);
 
-    private static readonly ConcurrentDictionary<string, Lazy<Task<SaveTokenResponseModel?>>> Refreshes = new(StringComparer.Ordinal);
-
+    private static readonly TimeSpan RefreshLeaseDuration = TimeSpan.FromSeconds(15);
     private static readonly object SessionItem = new();
     private static readonly object AccessTokenItem = new();
+
+    private readonly ConcurrentDictionary<string, Lazy<Task<SaveTokenResponseModel?>>> refreshes = new(StringComparer.Ordinal);
+    private readonly string instanceId = Guid.NewGuid().ToString("N");
 
     /// <summary>Keeps the session entry read while validating the cookie for the rest of the request.</summary>
     public static void RememberSession(HttpContext httpContext, string sessionId, SaveTokenResponseModel tokens)
@@ -65,7 +67,7 @@ public sealed partial class BffTokenAccessor(IServerTokenStore store, ITokenServ
             return accessToken;
         }
 
-        var refresh = Refreshes.GetOrAdd(sessionId, id =>
+        var refresh = refreshes.GetOrAdd(sessionId, id =>
         {
             Lazy<Task<SaveTokenResponseModel?>>? lazy = null;
             lazy = new Lazy<Task<SaveTokenResponseModel?>>(async () =>
@@ -78,7 +80,7 @@ public sealed partial class BffTokenAccessor(IServerTokenStore store, ITokenServ
                 {
                     if (lazy is not null)
                     {
-                        Refreshes.TryRemove(new KeyValuePair<string, Lazy<Task<SaveTokenResponseModel?>>>(id, lazy));
+                        refreshes.TryRemove(new KeyValuePair<string, Lazy<Task<SaveTokenResponseModel?>>>(id, lazy));
                     }
                 }
             });
@@ -102,33 +104,89 @@ public sealed partial class BffTokenAccessor(IServerTokenStore store, ITokenServ
 
     private async Task<SaveTokenResponseModel?> RefreshAsync(string sessionId, SaveTokenResponseModel tokens)
     {
+        var expectedRefreshToken = tokens.refresh_token ?? string.Empty;
+
         // A concurrent request may have refreshed already (and rotated the refresh token): use the stored result.
-        if (await store.GetAsync(sessionId, touch: false) is { } current && current.refresh_token != tokens.refresh_token)
+        if (await store.GetAsync(sessionId, touch: false) is { } current && current.refresh_token != expectedRefreshToken)
         {
             return current;
         }
 
-        var result = await tokenService.RefreshTokenAsync(
-            new TokenRefreshRequestModel { token = tokens.access_token, refresh_token = tokens.refresh_token },
-            CancellationToken.None);
-
-        if (!result.IsSuccess || string.IsNullOrEmpty(result.access_token))
+        var leaseOwner = $"{instanceId}:{Guid.NewGuid():N}";
+        var acquired = await store.TryAcquireRefreshLeaseAsync(sessionId, expectedRefreshToken, leaseOwner, RefreshLeaseDuration);
+        if (!acquired)
         {
-            LogRefreshFailed(logger, sessionId[..8], result.ErrorText);
-            await store.RemoveAsync(sessionId);
-            return null;
+            for (var attempt = 0; attempt < 25; attempt++)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(40));
+                var updated = await store.GetAsync(sessionId, touch: false);
+                if (updated is null)
+                {
+                    return null;
+                }
+
+                if (updated.refresh_token != expectedRefreshToken)
+                {
+                    return updated;
+                }
+
+                if (await store.TryAcquireRefreshLeaseAsync(sessionId, expectedRefreshToken, leaseOwner, RefreshLeaseDuration))
+                {
+                    acquired = true;
+                    break;
+                }
+            }
+
+            if (!acquired)
+            {
+                var latest = await store.GetAsync(sessionId, touch: false);
+                return latest is not null && latest.refresh_token != expectedRefreshToken ? latest : null;
+            }
         }
 
-        // Keep the absolute session expiry: refreshing tokens must not extend the session.
-        var refreshed = new SaveTokenResponseModel(result) { expire_datetime = tokens.expire_datetime };
-        // OIDC: providers may omit the identity token on refresh; keep the previous one for the logout id_token_hint.
-        if (Oidc.OidcTokens.GetIdToken(refreshed) is null && Oidc.OidcTokens.GetIdToken(tokens) is { } idToken)
+        try
         {
-            Oidc.OidcTokens.SetIdToken(refreshed, idToken);
-        }
+            var afterLease = await store.GetAsync(sessionId, touch: false);
+            if (afterLease is null)
+            {
+                return null;
+            }
 
-        await store.SetAsync(sessionId, refreshed);
-        return refreshed;
+            if (afterLease.refresh_token != expectedRefreshToken)
+            {
+                return afterLease;
+            }
+
+            var result = await tokenService.RefreshTokenAsync(
+                new TokenRefreshRequestModel { token = tokens.access_token, refresh_token = expectedRefreshToken },
+                CancellationToken.None);
+
+            if (!result.IsSuccess || string.IsNullOrEmpty(result.access_token))
+            {
+                if (await store.GetAsync(sessionId, touch: false) is { } rotated && rotated.refresh_token != expectedRefreshToken)
+                {
+                    return rotated;
+                }
+
+                LogRefreshFailed(logger, sessionId[..Math.Min(8, sessionId.Length)], result.ErrorText);
+                await store.RemoveIfMatchAsync(sessionId, expectedRefreshToken);
+                return null;
+            }
+
+            // Keep the absolute session expiry: refreshing tokens must not extend the session.
+            var refreshed = new SaveTokenResponseModel(result) { expire_datetime = tokens.expire_datetime };
+            // OIDC: providers may omit the identity token on refresh; keep the previous one for the logout id_token_hint.
+            if (Oidc.OidcTokens.GetIdToken(refreshed) is null && Oidc.OidcTokens.GetIdToken(tokens) is { } idToken)
+            {
+                Oidc.OidcTokens.SetIdToken(refreshed, idToken);
+            }
+
+            return await store.CompareAndSetAsync(sessionId, expectedRefreshToken, refreshed) ?? refreshed;
+        }
+        finally
+        {
+            await store.ReleaseRefreshLeaseAsync(sessionId, leaseOwner);
+        }
     }
 
     private sealed record RequestSession(string SessionId, SaveTokenResponseModel Tokens);

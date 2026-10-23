@@ -20,8 +20,10 @@ else
 
 @code {
     private readonly CancellationTokenSource cancellation = new();
+    private CancellationTokenSource? requestCancellation;
     private JsonObject? record;
-    private string? loadedId;
+    private (string Entity, string Id)? loadedKey;
+    private int requestVersion;
     private string? error;
     private bool loading = true;
     private (UiRenderContext Parent, JsonObject Record, UiRenderContext Context)? recordContext;
@@ -31,13 +33,20 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        var entity = Node.StringProp("entity") ?? string.Empty;
         var id = Text("recordId");
-        if (id == loadedId)
+        var key = (entity, id);
+        if (loadedKey == key)
         {
             return;
         }
 
-        loadedId = id;
+        loadedKey = key;
+        var currentRequest = ++requestVersion;
+        requestCancellation?.Cancel();
+        requestCancellation?.Dispose();
+        requestCancellation = null;
+
         record = null;
         error = null;
         if (string.IsNullOrWhiteSpace(id))
@@ -46,19 +55,27 @@ else
             return;
         }
 
+        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+        requestCancellation = linkedCts;
         loading = true;
         try
         {
-            var response = await DataClient.GetByIdAsync(Node.StringProp("entity") ?? string.Empty, id, cancellation.Token);
-            record = response.IsSuccess ? response.Data : null;
-            error = response.IsSuccess ? null : response.ErrorText;
+            var response = await DataClient.GetByIdAsync(entity, id, linkedCts.Token);
+            if (currentRequest == requestVersion)
+            {
+                record = response.IsSuccess ? response.Data : null;
+                error = response.IsSuccess ? null : response.ErrorText;
+            }
         }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
         }
         finally
         {
-            loading = false;
+            if (currentRequest == requestVersion)
+            {
+                loading = false;
+            }
         }
     }
 
@@ -75,6 +92,8 @@ else
 
     public void Dispose()
     {
+        requestCancellation?.Cancel();
+        requestCancellation?.Dispose();
         cancellation.Cancel();
         cancellation.Dispose();
     }

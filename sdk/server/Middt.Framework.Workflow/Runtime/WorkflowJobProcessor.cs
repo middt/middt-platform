@@ -230,22 +230,38 @@ public sealed partial class WorkflowJobProcessor(
         }
 
         db.ChangeTracker.Clear();
-        if (done || job.Attempts >= MaxAttempts)
+        if (done)
         {
             await db.Jobs.Where(j => j.Id == jobId).ExecuteDeleteAsync(cancellationToken);
-            if (!done)
-            {
-                db.Incidents.Add(new WorkflowIncident
-                {
-                    InstanceId = job.InstanceId,
-                    TransitionKey = job.TransitionKey,
-                    Error = $"{job.Kind} job abandoned after {job.Attempts} attempts: {error ?? "instance stayed busy"}",
-                    Attempts = job.Attempts,
-                    CreatedAt = time.GetUtcNow().UtcDateTime,
-                });
-                await db.SaveChangesAsync(cancellationToken);
-            }
+            return;
+        }
 
+        if (job.Attempts >= MaxAttempts)
+        {
+            var incidentCreatedAt = time.GetUtcNow().UtcDateTime;
+            var incidentError = $"{job.Kind} job abandoned after {job.Attempts} attempts: {error ?? "instance stayed busy"}";
+            await db.Database.CreateExecutionStrategy().ExecuteAsync(async ct =>
+            {
+                db.ChangeTracker.Clear();
+                await using var tx = await db.Database.BeginTransactionAsync(ct);
+                var deleted = await db.Jobs.Where(j => j.Id == jobId).ExecuteDeleteAsync(ct);
+                if (deleted > 0)
+                {
+                    db.Incidents.Add(new WorkflowIncident
+                    {
+                        InstanceId = job.InstanceId,
+                        WorkflowKey = job.WorkflowKey,
+                        State = job.State,
+                        TransitionKey = job.TransitionKey,
+                        Error = incidentError,
+                        Attempts = job.Attempts,
+                        CreatedAt = incidentCreatedAt,
+                    });
+                    await db.SaveChangesAsync(ct);
+                }
+
+                await tx.CommitAsync(ct);
+            }, cancellationToken);
             return;
         }
 
@@ -262,7 +278,7 @@ public sealed partial class WorkflowJobProcessor(
         var threshold = now - options.Value.BusyTimeout;
         var candidates = await db.Instances.AsNoTracking()
             .Where(i => i.Status == WorkflowInstanceStatus.Busy && i.BusySince < threshold)
-            .Select(i => new { i.Id, i.State, i.PendingTransition })
+            .Select(i => new { i.Id, i.WorkflowKey, i.State, i.PendingTransition })
             .ToListAsync(cancellationToken);
         if (candidates.Count == 0)
         {
@@ -271,33 +287,46 @@ public sealed partial class WorkflowJobProcessor(
 
         const string message = "Execution was interrupted (process stopped while the instance was busy).";
         var recovered = 0;
-        foreach (var candidate in candidates)
+        await db.Database.CreateExecutionStrategy().ExecuteAsync(async ct =>
         {
-            var changed = await db.Instances
-                .Where(i => i.Id == candidate.Id && i.Status == WorkflowInstanceStatus.Busy && i.BusySince < threshold)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(i => i.Status, WorkflowInstanceStatus.Faulted)
-                    .SetProperty(i => i.BusySince, (DateTime?)null)
-                    .SetProperty(i => i.Revision, i => i.Revision + 1)
-                    .SetProperty(i => i.Error, message), cancellationToken);
-            if (changed == 1)
+            db.ChangeTracker.Clear();
+            recovered = 0;
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            foreach (var candidate in candidates)
             {
-                recovered++;
-                db.Incidents.Add(new WorkflowIncident
+                var changed = await db.Instances
+                    .Where(i => i.Id == candidate.Id && i.Status == WorkflowInstanceStatus.Busy && i.BusySince < threshold)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(i => i.Status, WorkflowInstanceStatus.Faulted)
+                        .SetProperty(i => i.BusySince, (DateTime?)null)
+                        .SetProperty(i => i.Revision, i => i.Revision + 1)
+                        .SetProperty(i => i.Error, message), ct);
+                if (changed == 1)
                 {
-                    InstanceId = candidate.Id,
-                    State = candidate.State,
-                    TransitionKey = candidate.PendingTransition,
-                    Error = message,
-                    Attempts = 1,
-                    CreatedAt = now,
-                });
+                    recovered++;
+                    db.Incidents.Add(new WorkflowIncident
+                    {
+                        InstanceId = candidate.Id,
+                        WorkflowKey = candidate.WorkflowKey,
+                        State = candidate.State,
+                        TransitionKey = candidate.PendingTransition,
+                        Error = message,
+                        Attempts = 1,
+                        CreatedAt = now,
+                    });
+                }
             }
-        }
+
+            if (recovered > 0)
+            {
+                await db.SaveChangesAsync(ct);
+            }
+
+            await tx.CommitAsync(ct);
+        }, cancellationToken);
 
         if (recovered > 0)
         {
-            await db.SaveChangesAsync(cancellationToken);
             LogRecovered(logger, recovered);
         }
     }

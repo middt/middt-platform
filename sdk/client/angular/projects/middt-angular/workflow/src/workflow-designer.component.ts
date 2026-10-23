@@ -184,55 +184,57 @@ interface CanvasEdge {
       </mat-card>
 
       @if (activeTab() === 'visual') {
-        <div class="middt-wf-studio-body">
+        <div [class]="getStudioBodyClass()">
           <!-- 1. Left Drag & Drop Palette -->
-          <aside class="middt-wf-palette" aria-label="Sürükle bırak bileşen paleti">
-            <div class="middt-wf-palette-group">
-              <div class="middt-wf-palette-group-title">📍 Durumlar (Tuvale Sürükle)</div>
-              @for (stTpl of stateTemplates; track stTpl.label) {
-                <div
-                  class="middt-wf-palette-chip"
-                  draggable="true"
-                  title="Tuvale sürükleyip bırakın veya çift tıklayın"
-                  (dragstart)="startPaletteStateDrag($event, stTpl.type, stTpl.subType, stTpl.defaultTitle)"
-                  (dblclick)="addStateAtDefaultPos(stTpl.type, stTpl.subType, stTpl.defaultTitle)">
-                  <span class="middt-wf-palette-chip-icon">{{ stTpl.icon }}</span>
-                  <div class="middt-wf-palette-chip-text">
-                    <strong>{{ stTpl.label }}</strong>
-                    <small>{{ stTpl.type }} / {{ stTpl.subType }}</small>
-                  </div>
-                </div>
-              }
-            </div>
-
-            <hr class="middt-ui-divider" />
-
-            <div class="middt-wf-palette-group">
-              <div class="middt-wf-palette-group-title">⚡ Görevler (Durum / Geçişe Sürükle)</div>
-              <input
-                class="middt-wf-input"
-                placeholder="Görev ara (set, http, agent...)"
-                [value]="paletteFilter()"
-                (input)="paletteFilter.set($any($event.target).value)" />
-              @for (grp of filteredTaskGroups(); track grp.category) {
-                <div class="middt-wf-palette-group-title">{{ grp.category }}</div>
-                @for (spec of grp.items; track spec.name) {
+          @if (showPalette()) {
+            <aside class="middt-wf-palette" aria-label="Sürükle bırak bileşen paleti">
+              <div class="middt-wf-palette-group">
+                <div class="middt-wf-palette-group-title">📍 Durumlar (Tuvale Sürükle)</div>
+                @for (stTpl of stateTemplates; track stTpl.label) {
                   <div
                     class="middt-wf-palette-chip"
                     draggable="true"
-                    [title]="spec.description + ' — Bir durumun veya geçişin üzerine sürükleyin'"
-                    (dragstart)="startPaletteTaskDrag($event, spec.name)"
-                    (dblclick)="quickAddTaskToSelection(spec.name)">
-                    <span class="middt-wf-palette-chip-icon">⚡</span>
+                    title="Tuvale sürükleyip bırakın veya çift tıklayın"
+                    (dragstart)="startPaletteStateDrag($event, stTpl.type, stTpl.subType, stTpl.defaultTitle)"
+                    (dblclick)="addStateAtDefaultPos(stTpl.type, stTpl.subType, stTpl.defaultTitle)">
+                    <span class="middt-wf-palette-chip-icon">{{ stTpl.icon }}</span>
                     <div class="middt-wf-palette-chip-text">
-                      <strong>{{ spec.title }}</strong>
-                      <small>{{ spec.name }}</small>
+                      <strong>{{ stTpl.label }}</strong>
+                      <small>{{ stTpl.type }} / {{ stTpl.subType }}</small>
                     </div>
                   </div>
                 }
-              }
-            </div>
-          </aside>
+              </div>
+
+              <hr class="middt-ui-divider" />
+
+              <div class="middt-wf-palette-group">
+                <div class="middt-wf-palette-group-title">⚡ Görevler (Durum / Geçişe Sürükle)</div>
+                <input
+                  class="middt-wf-input"
+                  placeholder="Görev ara (set, http, agent...)"
+                  [value]="paletteFilter()"
+                  (input)="paletteFilter.set($any($event.target).value)" />
+                @for (grp of filteredTaskGroups(); track grp.category) {
+                  <div class="middt-wf-palette-group-title">{{ grp.category }}</div>
+                  @for (spec of grp.items; track spec.name) {
+                    <div
+                      class="middt-wf-palette-chip"
+                      draggable="true"
+                      [title]="spec.description + ' — Bir durumun veya geçişin üzerine sürükleyin'"
+                      (dragstart)="startPaletteTaskDrag($event, spec.name)"
+                      (dblclick)="quickAddTaskToSelection(spec.name)">
+                      <span class="middt-wf-palette-chip-icon">⚡</span>
+                      <div class="middt-wf-palette-chip-text">
+                        <strong>{{ spec.title }}</strong>
+                        <small>{{ spec.name }}</small>
+                      </div>
+                    </div>
+                  }
+                }
+              </div>
+            </aside>
+          }
 
           <!-- 2. Center 2D Interactive SVG + Nodes Board -->
           <div
@@ -244,8 +246,15 @@ interface CanvasEdge {
             (pointermove)="onBoardPointerMove($event)"
             (pointerup)="onBoardPointerUp($event)"
             (keydown)="onCanvasKeyDown($event)">
-            <!-- Floating Tool Mode Dock (Pointer/Select vs Hand/Pan) -->
+            <!-- Floating Tool Mode Dock (Pointer/Select vs Hand/Pan + Panel Toggles) -->
             <div class="middt-wf-tool-dock" (pointerdown)="$event.stopPropagation()">
+              <button
+                type="button"
+                class="middt-wf-tool-btn"
+                [title]="showPalette() ? 'Sol bileşen paletini gizle (Tuvali genişlet)' : 'Sol bileşen paletini göster'"
+                (click)="showPalette.set(!showPalette())">
+                {{ showPalette() ? '◀ Palet' : '▶ Palet' }}
+              </button>
               <button
                 type="button"
                 [class]="toolMode() === 'select' ? 'middt-wf-tool-btn middt-wf-tool-btn-active' : 'middt-wf-tool-btn'"
@@ -266,6 +275,13 @@ interface CanvasEdge {
                 title="Görünümü ve yakınlaştırmayı merkeze sıfırla"
                 (click)="resetViewport()">
                 🎯 Merkeze Al
+              </button>
+              <button
+                type="button"
+                class="middt-wf-tool-btn"
+                [title]="showInspector() ? 'Sağ özellikler panelini gizle (Tuvali genişlet)' : 'Sağ özellikler panelini göster'"
+                (click)="showInspector.set(!showInspector())">
+                {{ showInspector() ? 'Özellikler ▶' : '◀ Özellikler' }}
               </button>
             </div>
 
@@ -643,6 +659,7 @@ interface CanvasEdge {
           </div>
 
           <!-- 3. Right Context-Sensitive Inspector -->
+          @if (showInspector()) {
           <aside class="middt-wf-inspector" aria-label="Seçili öğe özellikleri">
             @if (selectedNodeKeys().size + selectedEdgeIds().size > 1) {
               <!-- Multi-Selection Group Summary Inspector -->
@@ -766,29 +783,28 @@ interface CanvasEdge {
                       class="middt-wf-input"
                       [value]="errAction"
                       (change)="setErrorAction(taskObj, $any($event.target).value)">
-                      <option value="Fail">Fail (Faulted Durumuna Geç)</option>
-                      <option value="Continue">Continue (Hatayı Yut ve Devam Et)</option>
-                      <option value="Retry">Retry (Yeniden Dene)</option>
+                      <option value="Fault">Fault (Faulted Durumuna Geç / Varsayılan)</option>
+                      <option value="Continue">Continue (Hatayı Kaydet ve Devam Et)</option>
                       <option value="Transition">Transition (Hata Geçişine Yönlendir)</option>
                     </select>
                   </div>
-                  @if (errAction === 'Retry') {
-                    <div class="middt-ui-input">
-                      <label>Tekrar Sayısı / Bekleme (maxRetries / delay)</label>
-                      <div class="middt-ui-picker">
-                        <input
-                          type="number"
-                          class="middt-wf-input"
-                          style="width: 70px"
-                          [value]="getErrorInt(taskObj, 'maxRetries', 3)"
-                          (change)="setErrorInt(taskObj, 'maxRetries', $any($event.target).value)" />
-                        <input
-                          class="middt-wf-input"
-                          [value]="getErrorString(taskObj, 'delay') || '00:00:05'"
-                          (change)="setErrorString(taskObj, 'delay', $any($event.target).value)" />
-                      </div>
+                  <div class="middt-ui-input">
+                    <label>Deneme Sayısı / Bekleme (maxAttempts / delay)</label>
+                    <div class="middt-ui-picker">
+                      <input
+                        type="number"
+                        class="middt-wf-input"
+                        style="width: 70px"
+                        min="1"
+                        [value]="getErrorInt(taskObj, 'maxAttempts', 1)"
+                        (change)="setErrorAttempts(taskObj, $any($event.target).value)" />
+                      <input
+                        class="middt-wf-input"
+                        [value]="getErrorString(taskObj, 'delay') || '00:00:01'"
+                        (change)="setErrorString(taskObj, 'delay', $any($event.target).value)" />
                     </div>
-                  } @else if (errAction === 'Transition') {
+                  </div>
+                  @if (errAction === 'Transition') {
                     <div class="middt-ui-input">
                       <label>Hata Geçiş Anahtarı (onError.transition)</label>
                       <input
@@ -1348,6 +1364,7 @@ interface CanvasEdge {
               </div>
             }
           </aside>
+          }
         </div>
       } @else if (activeTab() === 'schema') {
         <mat-card appearance="outlined">
@@ -1538,6 +1555,8 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
   protected readonly panX = signal<number>(0);
   protected readonly panY = signal<number>(0);
   protected readonly toolMode = signal<'select' | 'pan'>('select');
+  protected readonly showPalette = signal<boolean>(true);
+  protected readonly showInspector = signal<boolean>(true);
   protected readonly busy = signal<boolean>(false);
   protected readonly doc = signal<WorkflowData>(createStarterWorkflow());
   protected readonly json = signal<string>('');
@@ -1707,7 +1726,7 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
         pairSeen.set(pairKey, idxInPair + 1);
         const totalInPair = pairCounts.get(pairKey) ?? 1;
 
-        const geometry = this.#computeEdgeGeometry(fromKey, resolvedTarget, idxInPair, totalInPair);
+        const geometry = this.#computeEdgeGeometry(fromKey, resolvedTarget, idxInPair, totalInPair, i, trs.length);
         const key = this.getString(tr, 'key') || `t-${i + 1}`;
         const label = this.getString(tr, 'title') || key;
         const trigger = this.getString(tr, 'trigger') || 'Manual';
@@ -1951,6 +1970,19 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
   }
 
   // --- Mouse / Pointer Canvas Interactions (Pan, Move Group, Draw Arrow, Marquee Lasso) ---
+
+  protected getStudioBodyClass(): string {
+    if (this.showPalette() && this.showInspector()) {
+      return 'middt-wf-studio-body';
+    }
+    if (!this.showPalette() && this.showInspector()) {
+      return 'middt-wf-studio-body middt-wf-studio-body-no-left';
+    }
+    if (this.showPalette() && !this.showInspector()) {
+      return 'middt-wf-studio-body middt-wf-studio-body-no-right';
+    }
+    return 'middt-wf-studio-body middt-wf-studio-body-full';
+  }
 
   protected getViewportClass(): string {
     if (this.pointerMode() === 'pan') {
@@ -2900,7 +2932,7 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
 
   #computeDagAutoLayout(): void {
     const map: Record<string, NodePoint> = {
-      [START_NODE_KEY]: { x: 40, y: 220 },
+      [START_NODE_KEY]: { x: 48, y: 96 },
     };
     const sts = this.states();
     const startTarget = this.getString(this.startNode(), 'target');
@@ -2944,18 +2976,34 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     }
 
     const layoutJson: Record<string, { x: number; y: number }> = {
-      [START_NODE_KEY]: { x: 40, y: 220 },
+      [START_NODE_KEY]: { x: 48, y: 96 },
     };
     for (const [col, keys] of byLayer.entries()) {
-      keys.forEach((k, row) => {
-        const pt = { x: 340 + col * 350, y: 80 + row * 260 };
+      const x = 352 + col * 496;
+      let curY = 80;
+      for (const k of keys) {
+        const pt = { x: snap(x), y: snap(curY) };
         map[k] = pt;
         layoutJson[k] = pt;
-      });
+        const stObj = sts.find(s => s['key'] === k);
+        curY += this.#estimateStateNodeHeight(stObj) + 48;
+      }
     }
 
     this.#nodePositions.set(map);
     this.doc()['x-layout'] = layoutJson;
+  }
+
+  #estimateStateNodeHeight(stateObj: WorkflowData | undefined): number {
+    if (!stateObj) {
+      return 220;
+    }
+
+    const onEntryCount = this.getTasks(stateObj, 'onEntry').length;
+    const isFinish = this.getString(stateObj, 'type') === 'Finish';
+    const onExitCount = isFinish ? 0 : this.getTasks(stateObj, 'onExit').length;
+    const h = 150 + Math.max(1, onEntryCount) * 32 + (isFinish ? 0 : 52 + Math.max(1, onExitCount) * 32);
+    return Math.max(210, h);
   }
 
   protected getNodePos(nodeKey: string): NodePoint {
@@ -2973,7 +3021,14 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     (d['x-layout'] as Record<string, unknown>)[nodeKey] = pt;
   }
 
-  #computeEdgeGeometry(fromKey: string, targetKey: string, parallelIndex: number, parallelTotal: number): EdgeGeometry {
+  #computeEdgeGeometry(
+    fromKey: string,
+    targetKey: string,
+    parallelIndex: number,
+    parallelTotal: number,
+    outIndex = 0,
+    outTotal = 1,
+  ): EdgeGeometry {
     const fromPos = this.getNodePos(fromKey);
     const fromWidth = fromKey === START_NODE_KEY ? START_NODE_WIDTH : STATE_NODE_WIDTH;
     const x1 = fromPos.x + fromWidth;
@@ -2992,7 +3047,7 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     const toPos = this.getNodePos(targetKey);
     const x2 = toPos.x;
     const y2 = toPos.y + PORT_OFFSET_Y;
-    const spread = (parallelIndex - (parallelTotal - 1) / 2) * 34;
+    const spread = (parallelIndex - (parallelTotal - 1) / 2) * 38;
     const dx = Math.max(90, Math.abs(x2 - x1) * 0.45);
     const cx1 = x1 + dx;
     const cy1 = y1 + spread;
@@ -3000,8 +3055,10 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     const cy2 = y2 + spread;
 
     const path = `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
-    const midX = 0.125 * x1 + 0.375 * cx1 + 0.375 * cx2 + 0.125 * x2;
-    const midY = 0.125 * y1 + 0.375 * cy1 + 0.375 * cy2 + 0.125 * y2;
+    const t = outTotal <= 1 ? 0.5 : 0.34 + (outIndex / (outTotal - 1)) * 0.32;
+    const u = 1 - t;
+    const midX = u * u * u * x1 + 3 * u * u * t * cx1 + 3 * u * t * t * cx2 + t * t * t * x2;
+    const midY = u * u * u * y1 + 3 * u * u * t * cy1 + 3 * u * t * t * cy2 + t * t * t * y2;
     return { path, midX, midY };
   }
 
@@ -3212,20 +3269,44 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
 
   protected getErrorAction(taskObj: WorkflowData): string {
     const err = taskObj['onError'] as WorkflowData | undefined;
-    return err ? this.getString(err, 'action') || 'Fail' : 'Fail';
+    return err ? this.getString(err, 'action') || 'Fault' : 'Fault';
   }
 
   protected setErrorAction(taskObj: WorkflowData, action: string): void {
-    if (!action || action === 'Fail') {
-      delete taskObj['onError'];
+    if (!action || action === 'Fault' || action === 'Fail') {
+      const existing = taskObj['onError'] as WorkflowData | undefined;
+      if (existing) {
+        delete existing['action'];
+        delete existing['transition'];
+        if (Object.keys(existing).length === 0 || this.getInt(existing, 'maxAttempts', 1) <= 1) {
+          delete taskObj['onError'];
+        }
+      }
     } else {
       const err = (taskObj['onError'] as WorkflowData | undefined) ?? {};
       err['action'] = action;
-      if (action === 'Retry' && err['maxRetries'] === undefined) {
-        err['maxRetries'] = 3;
-        err['delay'] = '00:00:05';
+      if (action !== 'Transition') {
+        delete err['transition'];
       }
 
+      taskObj['onError'] = err;
+    }
+
+    this.#touchDoc();
+  }
+
+  protected setErrorAttempts(taskObj: WorkflowData, raw: string): void {
+    const parsed = Number.parseInt(raw, 10);
+    const attempts = Number.isFinite(parsed) ? Math.max(1, parsed) : 1;
+    const existing = taskObj['onError'] as WorkflowData | undefined;
+    if (attempts <= 1 && (!existing || (this.getString(existing, 'action') || 'Fault') === 'Fault')) {
+      delete taskObj['onError'];
+    } else {
+      const err = existing ?? {};
+      err['maxAttempts'] = attempts;
+      if (!err['delay']) {
+        err['delay'] = '00:00:05';
+      }
       taskObj['onError'] = err;
     }
 
@@ -3235,14 +3316,6 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
   protected getErrorInt(taskObj: WorkflowData, prop: string, fallback: number): number {
     const err = taskObj['onError'] as WorkflowData | undefined;
     return err ? this.getInt(err, prop, fallback) : fallback;
-  }
-
-  protected setErrorInt(taskObj: WorkflowData, prop: string, raw: string): void {
-    const err = (taskObj['onError'] as WorkflowData | undefined) ?? {};
-    const parsed = Number.parseInt(raw, 10);
-    err[prop] = Number.isFinite(parsed) ? parsed : 3;
-    taskObj['onError'] = err;
-    this.#touchDoc();
   }
 
   protected getErrorString(taskObj: WorkflowData, prop: string): string {
@@ -3615,7 +3688,8 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     if (taskObj['background'] === true) parts.push('bg');
     if (this.getString(taskObj, 'when')) parts.push('when');
     const act = this.getErrorAction(taskObj);
-    if (act !== 'Fail') parts.push(act);
+    if (act !== 'Fault' && act !== 'Fail') parts.push(act);
+    if (this.getErrorInt(taskObj, 'maxAttempts', 1) > 1) parts.push(`x${this.getErrorInt(taskObj, 'maxAttempts', 1)}`);
     return parts.join('·');
   }
 

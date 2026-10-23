@@ -827,8 +827,12 @@ internal static class CrossWorkflowTaskHelpers
             query = query.Where(i => i.Status == s);
         }
 
-        var (sqlConditions, remainingFilters, createdFromUtc, createdToUtc) =
+        var (sqlConditions, unsupportedFilters, createdFromUtc, createdToUtc) =
             WorkflowPartitionManager.ClassifyDataFilters(filterDict, dataSchema);
+        if (unsupportedFilters.Count > 0)
+        {
+            throw new WorkflowTaskException($"Desteklenmeyen veya geçersiz filtre alanı: {string.Join(", ", unsupportedFilters)}.");
+        }
 
         if (sqlConditions.Count > 0 || createdFromUtc is not null || createdToUtc is not null)
         {
@@ -851,11 +855,6 @@ internal static class CrossWorkflowTaskHelpers
         foreach (var candidate in candidates)
         {
             var payload = BuildInstancePayload(candidate);
-            if (remainingFilters.Count > 0 && !WorkflowPartitionManager.MatchesDataFilters(payload, remainingFilters))
-            {
-                continue;
-            }
-
             if (!string.IsNullOrWhiteSpace(whereExpr))
             {
                 var itemScope = CreateTargetScope(context.Scope, payload);

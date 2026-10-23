@@ -16,7 +16,6 @@ namespace Middt.Framework.Workflow.Runtime;
 public static class WorkflowPartitionManager
 {
     private static readonly Regex SafeIdRegex = new("^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.Compiled);
-    private static readonly CompareInfo TrCompare = CultureInfo.GetCultureInfo("tr-TR").CompareInfo;
 
     /// <summary>Generates a PascalCase partition suffix from a kebab-case or snake_case workflow key.</summary>
     public static string PartitionSuffix(string workflowKey)
@@ -731,9 +730,16 @@ public static class WorkflowPartitionManager
         Lt,
     }
 
-    internal sealed record SqlDataCondition(string Property, string SqlOp, bool IsNumeric, object Parameter);
+    internal enum SqlConditionKind
+    {
+        ExactText,
+        ContainsText,
+        Numeric,
+        Boolean,
+        DateBound,
+    }
 
-    internal sealed record InMemoryDataCondition(string Property, DataFilterOp Op, string Value, bool ExactString);
+    internal sealed record SqlDataCondition(string Property, string SqlOp, SqlConditionKind Kind, object Parameter);
 
     internal static IEnumerable<(string Property, string Type)> ExtractIndexedProperties(WorkflowDefinition definition)
     {
@@ -902,25 +908,75 @@ public static class WorkflowPartitionManager
         return val.GetValueKind() == JsonValueKind.String && TryParseDecimal(val.GetValue<string>(), out number);
     }
 
+    internal static string FoldTurkishLower(string value) =>
+        value
+            .Replace('İ', 'i')
+            .Replace('I', 'ı')
+            .Replace('Ş', 'ş')
+            .Replace('Ğ', 'ğ')
+            .Replace('Ü', 'ü')
+            .Replace('Ö', 'ö')
+            .Replace('Ç', 'ç')
+            .ToLowerInvariant();
+
+    private static string FoldTurkishLowerSql(string rawTextExpr) =>
+        $"LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({rawTextExpr}, 'İ', 'i'), 'I', 'ı'), 'Ş', 'ş'), 'Ğ', 'ğ'), 'Ü', 'ü'), 'Ö', 'ö'), 'Ç', 'ç'))";
+
+    private static string ToSqlComparisonOp(DataFilterOp op) =>
+        op switch
+        {
+            DataFilterOp.Gte => ">=",
+            DataFilterOp.Lte => "<=",
+            DataFilterOp.Gt => ">",
+            DataFilterOp.Lt => "<",
+            _ => "=",
+        };
+
+    internal static bool IsPropertySortableAndUnmasked(string propName, JsonObject? projectedSchema, JsonObject? rawSchema)
+    {
+        if (!SafeIdRegex.IsMatch(propName))
+        {
+            return false;
+        }
+
+        if (rawSchema?["properties"] is JsonObject rawProps && rawProps.ContainsKey(propName) &&
+            projectedSchema?["properties"] is JsonObject projProps && !projProps.ContainsKey(propName))
+        {
+            return false;
+        }
+
+        if (projectedSchema?["properties"] is JsonObject properties &&
+            properties[propName] is JsonObject propSchema &&
+            propSchema[JsonSchemaValidator.MaskKeyword] is not null)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     /// <summary>
-    /// Splits data property filters into SQL-indexable conditions (unmasked <c>enum</c> equality, numeric comparisons,
-    /// and <c>CreatedAt</c> date bounds) and remaining filters evaluated on the projected JSON object.
+    /// Classifies data property filters into SQL conditions pushed to <c>WorkflowInstanceData</c> before pagination,
+    /// and reports any invalid or unsupported filter keys so callers never silently return incomplete results.
     /// </summary>
-    internal static (List<SqlDataCondition> SqlConditions, List<InMemoryDataCondition> RemainingConditions, DateTime? CreatedFromUtc, DateTime? CreatedToUtc) ClassifyDataFilters(
+    internal static (List<SqlDataCondition> SqlConditions, List<string> UnsupportedFilters, DateTime? CreatedFromUtc, DateTime? CreatedToUtc) ClassifyDataFilters(
         IReadOnlyDictionary<string, string?>? rawFilters,
-        JsonObject? projectedSchema)
+        JsonObject? projectedSchema,
+        JsonObject? rawSchema = null)
     {
         var sqlConditions = new List<SqlDataCondition>();
-        var remaining = new List<InMemoryDataCondition>();
+        var unsupported = new List<string>();
         DateTime? createdFromUtc = null;
         DateTime? createdToUtc = null;
 
         if (rawFilters is null || rawFilters.Count == 0)
         {
-            return (sqlConditions, remaining, createdFromUtc, createdToUtc);
+            return (sqlConditions, unsupported, createdFromUtc, createdToUtc);
         }
 
         var properties = projectedSchema?["properties"] as JsonObject;
+        var rawProperties = rawSchema?["properties"] as JsonObject;
+
         foreach (var (rawKey, rawValue) in rawFilters)
         {
             var key = rawKey?.Trim();
@@ -936,6 +992,10 @@ public static class WorkflowPartitionManager
                 {
                     createdFromUtc = from;
                 }
+                else
+                {
+                    unsupported.Add(key);
+                }
 
                 continue;
             }
@@ -946,61 +1006,155 @@ public static class WorkflowPartitionManager
                 {
                     createdToUtc = to;
                 }
+                else
+                {
+                    unsupported.Add(key);
+                }
 
                 continue;
             }
 
             var (propName, op) = ParseFilterKey(key);
+            if (!SafeIdRegex.IsMatch(propName))
+            {
+                unsupported.Add(key);
+                continue;
+            }
+
+            if (rawProperties is not null && rawProperties.ContainsKey(propName) &&
+                properties is not null && !properties.ContainsKey(propName))
+            {
+                unsupported.Add(key);
+                continue;
+            }
+
             if (properties?[propName] is JsonObject propSchema)
             {
-                var isEnum = propSchema["enum"] is JsonArray { Count: > 0 };
-                var isUnmasked = propSchema[JsonSchemaValidator.MaskKeyword] is null;
-                var propType = propSchema["type"]?.GetValue<string>() ?? "string";
-                var isNumeric = propType is "number" or "integer";
-
-                if (isUnmasked && SafeIdRegex.IsMatch(propName))
+                if (propSchema[JsonSchemaValidator.MaskKeyword] is not null)
                 {
-                    if (isEnum && op == DataFilterOp.Default)
-                    {
-                        sqlConditions.Add(new SqlDataCondition(propName, "=", IsNumeric: false, value));
-                        continue;
-                    }
-
-                    if (isNumeric && TryParseDecimal(value, out var decValue))
-                    {
-                        var sqlOp = op switch
-                        {
-                            DataFilterOp.Gte => ">=",
-                            DataFilterOp.Lte => "<=",
-                            DataFilterOp.Gt => ">",
-                            DataFilterOp.Lt => "<",
-                            _ => "=",
-                        };
-                        sqlConditions.Add(new SqlDataCondition(propName, sqlOp, IsNumeric: true, decValue));
-                        continue;
-                    }
+                    unsupported.Add(key);
+                    continue;
                 }
 
-                remaining.Add(new InMemoryDataCondition(propName, op, value, isEnum && op == DataFilterOp.Default));
+                var enumArray = propSchema["enum"] as JsonArray;
+                var isEnum = enumArray is { Count: > 0 };
+                var propType = propSchema["type"]?.GetValue<string>() ?? "string";
+                var propFormat = propSchema["format"]?.GetValue<string>();
+                var isNumeric = propType is "number" or "integer";
+
+                if (isEnum && op == DataFilterOp.Default)
+                {
+                    var canonical = value;
+                    var foldedTarget = FoldTurkishLower(value);
+                    foreach (var enumNode in enumArray!)
+                    {
+                        if (enumNode is JsonValue ev && ev.GetValueKind() == JsonValueKind.String)
+                        {
+                            var enumText = ev.GetValue<string>();
+                            if (string.Equals(enumText, value, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(FoldTurkishLower(enumText), foldedTarget, StringComparison.Ordinal))
+                            {
+                                canonical = enumText;
+                                break;
+                            }
+                        }
+                    }
+
+                    sqlConditions.Add(new SqlDataCondition(propName, "=", SqlConditionKind.ExactText, canonical));
+                    continue;
+                }
+
+                if (isNumeric)
+                {
+                    if (TryParseDecimal(value, out var decValue))
+                    {
+                        sqlConditions.Add(new SqlDataCondition(propName, ToSqlComparisonOp(op), SqlConditionKind.Numeric, decValue));
+                    }
+                    else
+                    {
+                        unsupported.Add(key);
+                    }
+
+                    continue;
+                }
+
+                if (propType == "boolean")
+                {
+                    if (op == DataFilterOp.Default && bool.TryParse(value, out var boolVal))
+                    {
+                        sqlConditions.Add(new SqlDataCondition(propName, "=", SqlConditionKind.Boolean, boolVal));
+                    }
+                    else
+                    {
+                        unsupported.Add(key);
+                    }
+
+                    continue;
+                }
+
+                if (op is DataFilterOp.Gte or DataFilterOp.Lte or DataFilterOp.Gt or DataFilterOp.Lt || propFormat is "date" or "date-time")
+                {
+                    if (TryParseDateBound(value, inclusiveEndOfDay: op == DataFilterOp.Lte, out var dtBound))
+                    {
+                        var iso = value.Contains('T', StringComparison.OrdinalIgnoreCase) || value.Contains(':', StringComparison.Ordinal)
+                            ? dtBound.ToString("O", CultureInfo.InvariantCulture)
+                            : dtBound.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                        sqlConditions.Add(new SqlDataCondition(propName, ToSqlComparisonOp(op), SqlConditionKind.DateBound, iso));
+                    }
+                    else if (TryParseDecimal(value, out var decFallback))
+                    {
+                        sqlConditions.Add(new SqlDataCondition(propName, ToSqlComparisonOp(op), SqlConditionKind.Numeric, decFallback));
+                    }
+                    else
+                    {
+                        unsupported.Add(key);
+                    }
+
+                    continue;
+                }
+
+                sqlConditions.Add(new SqlDataCondition(propName, "CONTAINS", SqlConditionKind.ContainsText, FoldTurkishLower(value)));
             }
             else
             {
-                remaining.Add(new InMemoryDataCondition(propName, op, value, ExactString: false));
+                if (op is DataFilterOp.Gte or DataFilterOp.Lte or DataFilterOp.Gt or DataFilterOp.Lt)
+                {
+                    var looksLikeDate = value.Contains('-', StringComparison.Ordinal) && !value.StartsWith('-') || value.Contains('.', StringComparison.Ordinal) && value.Split('.').Length == 3;
+                    if (!looksLikeDate && TryParseDecimal(value, out var decVal))
+                    {
+                        sqlConditions.Add(new SqlDataCondition(propName, ToSqlComparisonOp(op), SqlConditionKind.Numeric, decVal));
+                    }
+                    else if (TryParseDateBound(value, inclusiveEndOfDay: op == DataFilterOp.Lte, out var dtBound))
+                    {
+                        var iso = value.Contains('T', StringComparison.OrdinalIgnoreCase) || value.Contains(':', StringComparison.Ordinal)
+                            ? dtBound.ToString("O", CultureInfo.InvariantCulture)
+                            : dtBound.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                        sqlConditions.Add(new SqlDataCondition(propName, ToSqlComparisonOp(op), SqlConditionKind.DateBound, iso));
+                    }
+                    else
+                    {
+                        unsupported.Add(key);
+                    }
+                }
+                else
+                {
+                    sqlConditions.Add(new SqlDataCondition(propName, "CONTAINS", SqlConditionKind.ContainsText, FoldTurkishLower(value)));
+                }
             }
         }
 
-        return (sqlConditions, remaining, createdFromUtc, createdToUtc);
+        return (sqlConditions, unsupported, createdFromUtc, createdToUtc);
     }
 
     /// <summary>
-    /// Pushes <c>CreatedAt</c> date bounds, exact-match <c>enum</c> filters, and numeric comparison filters down to SQL
-    /// using the flow partition functional B-Tree indexes (<c>IX_Part_{suffix}_{prop}</c>).
+    /// Pushes <c>CreatedAt</c> date bounds, exact-match <c>enum</c> filters, numeric/date/boolean comparisons, and
+    /// Turkish case-insensitive substring filters down to SQL before pagination.
     /// </summary>
     internal static IQueryable<WorkflowInstance> ApplySqlDataFilters(
         IQueryable<WorkflowInstance> query,
         WorkflowDbContext db,
         string? schema,
-        string workflowKey,
+        string? workflowKey,
         IReadOnlyList<SqlDataCondition> sqlConditions,
         DateTime? createdFromUtc,
         DateTime? createdToUtc)
@@ -1029,8 +1183,13 @@ public static class WorkflowPartitionManager
         }
 
         var table = isPostgres ? $"{ValidateIdentifier(schema)}.\"WorkflowInstanceData\"" : "\"WorkflowInstanceData\"";
-        var parameters = new List<object> { workflowKey };
-        var clauses = new List<string>(sqlConditions.Count + 1) { "\"WorkflowKey\" = {0}" };
+        var parameters = new List<object>();
+        var clauses = new List<string>(sqlConditions.Count + 1);
+        if (!string.IsNullOrWhiteSpace(workflowKey))
+        {
+            parameters.Add(workflowKey);
+            clauses.Add("\"WorkflowKey\" = {0}");
+        }
 
         foreach (var cond in sqlConditions)
         {
@@ -1040,22 +1199,70 @@ public static class WorkflowPartitionManager
             }
 
             var idx = parameters.Count;
-            if (cond.IsNumeric)
+            switch (cond.Kind)
             {
-                parameters.Add(isSqlite ? Convert.ToDouble(cond.Parameter, CultureInfo.InvariantCulture) : cond.Parameter);
-                var expr = isPostgres
-                    ? $"((((\"Data\"->>'{cond.Property}')::numeric))) {cond.SqlOp} {{{idx}}}"
-                    : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS REAL) {cond.SqlOp} {{{idx}}}";
-                clauses.Add(expr);
+                case SqlConditionKind.Numeric:
+                {
+                    parameters.Add(isSqlite ? Convert.ToDouble(cond.Parameter, CultureInfo.InvariantCulture) : cond.Parameter);
+                    var expr = isPostgres
+                        ? $"((((\"Data\"->>'{cond.Property}')::numeric))) {cond.SqlOp} {{{idx}}}"
+                        : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS REAL) {cond.SqlOp} {{{idx}}}";
+                    clauses.Add(expr);
+                    break;
+                }
+                case SqlConditionKind.Boolean:
+                {
+                    var boolVal = (bool)cond.Parameter;
+                    if (isPostgres)
+                    {
+                        parameters.Add(boolVal);
+                        clauses.Add($"((((\"Data\"->>'{cond.Property}')::boolean))) = {{{idx}}}");
+                    }
+                    else
+                    {
+                        parameters.Add(boolVal ? 1 : 0);
+                        clauses.Add($"json_extract(\"Data\", '$.{cond.Property}') = {{{idx}}}");
+                    }
+
+                    break;
+                }
+                case SqlConditionKind.DateBound:
+                {
+                    parameters.Add(cond.Parameter);
+                    var expr = isPostgres
+                        ? $"((\"Data\"->>'{cond.Property}')::text) {cond.SqlOp} {{{idx}}}"
+                        : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS TEXT) {cond.SqlOp} {{{idx}}}";
+                    clauses.Add(expr);
+                    break;
+                }
+                case SqlConditionKind.ContainsText:
+                {
+                    parameters.Add(cond.Parameter);
+                    var rawTextExpr = isPostgres
+                        ? $"(\"Data\"->>'{cond.Property}')"
+                        : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS TEXT)";
+                    var foldedExpr = FoldTurkishLowerSql(rawTextExpr);
+                    var expr = isPostgres
+                        ? $"STRPOS({foldedExpr}, {{{idx}}}) > 0"
+                        : $"INSTR({foldedExpr}, {{{idx}}}) > 0";
+                    clauses.Add(expr);
+                    break;
+                }
+                default:
+                {
+                    parameters.Add(cond.Parameter);
+                    var expr = isPostgres
+                        ? $"((\"Data\"->>'{cond.Property}')::text) {cond.SqlOp} {{{idx}}}"
+                        : $"json_extract(\"Data\", '$.{cond.Property}') {cond.SqlOp} {{{idx}}}";
+                    clauses.Add(expr);
+                    break;
+                }
             }
-            else
-            {
-                parameters.Add(cond.Parameter);
-                var expr = isPostgres
-                    ? $"((\"Data\"->>'{cond.Property}')::text) {cond.SqlOp} {{{idx}}}"
-                    : $"json_extract(\"Data\", '$.{cond.Property}') {cond.SqlOp} {{{idx}}}";
-                clauses.Add(expr);
-            }
+        }
+
+        if (clauses.Count == 0)
+        {
+            return query;
         }
 
         var sql = $"SELECT * FROM {table} WHERE {string.Join(" AND ", clauses)}";
@@ -1066,108 +1273,105 @@ public static class WorkflowPartitionManager
     }
 
     /// <summary>
-    /// Evaluates remaining data conditions against a projected JSON object using numeric/date comparison or
-    /// Turkish-aware and OrdinalIgnoreCase string comparison.
+    /// Orders <paramref name="query"/> in the database by a JSON <c>Data</c> property before pagination, using
+    /// numeric comparison for JSON numbers, Turkish case-insensitive comparison for strings, and <c>InstanceId</c>
+    /// as a deterministic secondary tie-breaker.
     /// </summary>
-    internal static bool MatchesDataFilters(JsonObject? data, IReadOnlyList<InMemoryDataCondition> conditions)
+    internal static IQueryable<WorkflowInstance> OrderBySqlDataProperty(
+        IQueryable<WorkflowInstance> query,
+        WorkflowDbContext db,
+        string? schema,
+        string? workflowKey,
+        string sortProperty,
+        bool ascending)
     {
-        if (conditions.Count == 0)
+        if (!SafeIdRegex.IsMatch(sortProperty))
         {
-            return true;
+            throw new ArgumentException($"Invalid sort property '{sortProperty}'.", nameof(sortProperty));
         }
 
-        if (data is null)
+        var provider = db.Database.ProviderName ?? string.Empty;
+        var isPostgres = provider.Contains("Npgsql", StringComparison.Ordinal);
+        var isSqlite = provider.Contains("Sqlite", StringComparison.Ordinal);
+        if (!isPostgres && !isSqlite)
         {
-            return false;
+            return ascending
+                ? query.OrderBy(i => i.CreatedAt).ThenBy(i => i.Id)
+                : query.OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id);
         }
 
-        foreach (var cond in conditions)
+        var table = isPostgres ? $"{ValidateIdentifier(schema)}.\"WorkflowInstanceData\"" : "\"WorkflowInstanceData\"";
+        var dir = ascending ? "ASC" : "DESC";
+        var invDir = ascending ? "DESC" : "ASC";
+        string orderByClause;
+        if (isPostgres)
         {
-            var node = data[cond.Property];
-            if (node is null)
-            {
-                return false;
-            }
-
-            if (cond.Op is DataFilterOp.Gte or DataFilterOp.Lte or DataFilterOp.Gt or DataFilterOp.Lt)
-            {
-                if (TryGetNodeDecimal(node, out var actualDec) && TryParseDecimal(cond.Value, out var expectedDec))
-                {
-                    var ok = cond.Op switch
-                    {
-                        DataFilterOp.Gte => actualDec >= expectedDec,
-                        DataFilterOp.Lte => actualDec <= expectedDec,
-                        DataFilterOp.Gt => actualDec > expectedDec,
-                        DataFilterOp.Lt => actualDec < expectedDec,
-                        _ => actualDec == expectedDec,
-                    };
-                    if (!ok)
-                    {
-                        return false;
-                    }
-
-                    continue;
-                }
-
-                var actualDateStr = node is JsonValue dv && dv.GetValueKind() == JsonValueKind.String ? dv.GetValue<string>() : node.ToString();
-                if (TryParseDateBound(actualDateStr, inclusiveEndOfDay: false, out var actualDate) &&
-                    TryParseDateBound(cond.Value, inclusiveEndOfDay: cond.Op == DataFilterOp.Lte, out var expectedDate))
-                {
-                    var ok = cond.Op switch
-                    {
-                        DataFilterOp.Gte => actualDate >= expectedDate,
-                        DataFilterOp.Lte => actualDate <= expectedDate,
-                        DataFilterOp.Gt => actualDate > expectedDate,
-                        DataFilterOp.Lt => actualDate < expectedDate,
-                        _ => actualDate == expectedDate,
-                    };
-                    if (!ok)
-                    {
-                        return false;
-                    }
-
-                    continue;
-                }
-
-                return false;
-            }
-
-            var actual = node switch
-            {
-                JsonValue v when v.GetValueKind() == JsonValueKind.String => v.GetValue<string>(),
-                JsonNode n => n.ToString(),
-            };
-            if (string.IsNullOrEmpty(actual))
-            {
-                return false;
-            }
-
-            if (cond.ExactString)
-            {
-                if (!string.Equals(actual, cond.Value, StringComparison.OrdinalIgnoreCase) &&
-                    TrCompare.Compare(actual, cond.Value, CompareOptions.IgnoreCase) != 0)
-                {
-                    return false;
-                }
-            }
-            else if (TryGetNodeDecimal(node, out var actualNum) && TryParseDecimal(cond.Value, out var expectedNum) && node is JsonValue { } jv && jv.GetValueKind() == JsonValueKind.Number)
-            {
-                if (actualNum != expectedNum)
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                if (!actual.Contains(cond.Value, StringComparison.OrdinalIgnoreCase) &&
-                    TrCompare.IndexOf(actual, cond.Value, CompareOptions.IgnoreCase) < 0)
-                {
-                    return false;
-                }
-            }
+            orderByClause = $"""
+                CASE
+                    WHEN jsonb_typeof("Data"->'{sortProperty}') = 'number' THEN 0
+                    WHEN "Data"->'{sortProperty}' IS NULL OR jsonb_typeof("Data"->'{sortProperty}') = 'null' THEN 2
+                    ELSE 1
+                END ASC,
+                CASE
+                    WHEN jsonb_typeof("Data"->'{sortProperty}') = 'number' THEN (("Data"->>'{sortProperty}')::numeric)
+                END {dir},
+                {FoldTurkishLowerSql($"(\"Data\"->>'{sortProperty}')")} {dir},
+                "InstanceId" {dir}
+                """;
+        }
+        else
+        {
+            orderByClause = $"""
+                CASE
+                    WHEN json_type("Data", '$.{sortProperty}') IN ('integer', 'real') THEN 0
+                    WHEN json_type("Data", '$.{sortProperty}') IS NULL THEN 2
+                    ELSE 1
+                END ASC,
+                CASE
+                    WHEN json_type("Data", '$.{sortProperty}') IN ('integer', 'real') THEN CAST(json_extract("Data", '$.{sortProperty}') AS REAL)
+                END {dir},
+                CASE
+                    WHEN json_type("Data", '$.{sortProperty}') IN ('integer', 'real') AND CAST(json_extract("Data", '$.{sortProperty}') AS REAL) >= 0
+                    THEN CAST(json_extract("Data", '$.{sortProperty}') AS TEXT)
+                END {dir},
+                CASE
+                    WHEN json_type("Data", '$.{sortProperty}') IN ('integer', 'real') AND CAST(json_extract("Data", '$.{sortProperty}') AS REAL) < 0
+                    THEN CAST(json_extract("Data", '$.{sortProperty}') AS TEXT)
+                END {invDir},
+                {FoldTurkishLowerSql($"CAST(json_extract(\"Data\", '$.{sortProperty}') AS TEXT)")} {dir},
+                "InstanceId" {dir}
+                """;
         }
 
-        return true;
+        string sql;
+        object[] parameters;
+        if (!string.IsNullOrWhiteSpace(workflowKey))
+        {
+            sql = $$"""
+                SELECT "InstanceId", "WorkflowKey", "Data", "DataHash", "ETag", "UpdatedAt",
+                       CAST(ROW_NUMBER() OVER (ORDER BY {{orderByClause}}) AS int) AS "DataVersion"
+                FROM {{table}}
+                WHERE "WorkflowKey" = {0}
+                """;
+            parameters = [workflowKey];
+        }
+        else
+        {
+            sql = $"""
+                SELECT "InstanceId", "WorkflowKey", "Data", "DataHash", "ETag", "UpdatedAt",
+                       CAST(ROW_NUMBER() OVER (ORDER BY {orderByClause}) AS int) AS "DataVersion"
+                FROM {table}
+                """;
+            parameters = [];
+        }
+
+#pragma warning disable EF1002
+        var rankedData = db.InstanceData.FromSqlRaw(sql, parameters).AsNoTracking();
+#pragma warning restore EF1002
+        return from i in query
+               join d in rankedData on new { Id = i.Id, i.WorkflowKey } equals new { Id = d.InstanceId, d.WorkflowKey }
+               orderby d.DataVersion ascending
+               select i;
     }
 
     private static string CleanIdentifier(string text) =>
