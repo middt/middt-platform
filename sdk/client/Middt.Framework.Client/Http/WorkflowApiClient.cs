@@ -147,7 +147,11 @@ public class WorkflowApiClient(
 
     /// <summary>Retries the failed step of a <see cref="WorkflowInstanceStatus.Faulted"/> instance.</summary>
     public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> RetryAsync(string workflow, Guid id, CancellationToken cancellationToken = default) =>
-        SendAsync<BaseResponseDataModel<WorkflowInstanceModel>>(HttpMethod.Post, $"{InstanceRoute(workflow, id)}/retry", null, cancellationToken);
+        RetryAsync(workflow, id, null, cancellationToken);
+
+    /// <summary>Retries the failed step of a <see cref="WorkflowInstanceStatus.Faulted"/> instance with optional updated input/data.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> RetryAsync(string workflow, Guid id, JsonObject? input, CancellationToken cancellationToken = default) =>
+        SendAsync<BaseResponseDataModel<WorkflowInstanceModel>>(HttpMethod.Post, $"{InstanceRoute(workflow, id)}/retry", input, cancellationToken);
 
     protected string WorkflowRoute(string workflow) =>
         $"{RoutePrefix.TrimEnd('/')}/{EscapePathSegment(workflow, nameof(workflow))}";

@@ -156,6 +156,16 @@ public sealed class WorkflowInstanceModel
     public Guid? ParentInstanceId { get; set; }
     public Guid? WaitingForInstanceId { get; set; }
     public string? Error { get; set; }
+
+    /// <summary>Key of the failed transition (or <c>$background</c>) when <see cref="Status"/> is <see cref="WorkflowInstanceStatus.Faulted"/>.</summary>
+    public string? PendingTransition { get; set; }
+
+    /// <summary>Input payload of the failed transition (or current data when retrying a non-input step) when <see cref="Status"/> is <see cref="WorkflowInstanceStatus.Faulted"/>.</summary>
+    public JsonObject? PendingInput { get; set; }
+
+    /// <summary>JSON Schema for editing <see cref="PendingInput"/> before retrying a <see cref="WorkflowInstanceStatus.Faulted"/> instance.</summary>
+    public JsonObject? PendingInputSchema { get; set; }
+
     public string? StartedBy { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

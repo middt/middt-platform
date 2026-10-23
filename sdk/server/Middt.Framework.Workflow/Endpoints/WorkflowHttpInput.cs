@@ -120,6 +120,41 @@ public static class WorkflowHttpInput
     }
 
     /// <summary>
+    /// Replaces the body payload inside an existing HTTP input envelope while preserving <c>header</c> and <c>query</c>.
+    /// </summary>
+    public static JsonObject WithBody(JsonObject? envelope, JsonObject body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        if (envelope is null || !envelope.ContainsKey(EnvelopeMarker))
+        {
+            return EnsureEnvelope(body);
+        }
+
+        var clone = (JsonObject)envelope.DeepClone();
+        var bodyClone = (JsonObject)body.DeepClone();
+        clone["body"] = bodyClone;
+
+        var keysToRemove = clone
+            .Select(kv => kv.Key)
+            .Where(k => k is not "header" and not "query" and not "body" and not EnvelopeMarker)
+            .ToList();
+        foreach (var k in keysToRemove)
+        {
+            clone.Remove(k);
+        }
+
+        foreach (var (k, v) in bodyClone)
+        {
+            if (k is not "header" and not "query" and not "body" and not EnvelopeMarker)
+            {
+                clone[k] = v?.DeepClone();
+            }
+        }
+
+        return clone;
+    }
+
+    /// <summary>
     /// Extracts the body payload that should be validated against transition input schemas.
     /// If the schema explicitly defines properties named "header" or "query", the entire
     /// envelope is validated. Otherwise, the inner body object is validated.

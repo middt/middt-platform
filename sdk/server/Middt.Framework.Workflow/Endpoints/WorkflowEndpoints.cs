@@ -235,9 +235,10 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<List<WorkflowAgentRunModel>>.Success(items, items.Count);
         }).WithName("GetWorkflowInstanceAgentRuns");
 
-        group.MapPost("{workflow}/instances/{id:guid}/retry", async (string workflow, Guid id, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        group.MapPost("{workflow}/instances/{id:guid}/retry", async (string workflow, Guid id, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] JsonObject? input, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
         {
-            return BaseResponseDataModel<WorkflowInstanceModel>.Success(await engine.RetryAsync(workflow, id, WorkflowUser.From(principal), ct), 1);
+            var enrichedInput = input is { Count: > 0 } ? WorkflowHttpInput.FromHttpContext(http, input) : null;
+            return BaseResponseDataModel<WorkflowInstanceModel>.Success(await engine.RetryAsync(workflow, id, enrichedInput, WorkflowUser.From(principal), ct), 1);
         }).WithName("RetryWorkflowInstance");
 
         group.MapPost("{workflow}/instances/{id:guid}/messages/{message}", (string workflow, Guid id, string message, string? bufferFor, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] JsonObject? data, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>

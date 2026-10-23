@@ -115,6 +115,21 @@
     gap: 0.75rem;
 }
 
+.middt-wf-fault-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.middt-wf-retry-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+}
+
 .middt-wf-actions {
     display: flex;
     flex-wrap: wrap;

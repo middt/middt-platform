@@ -434,6 +434,50 @@ public sealed class WorkflowBuiltInTaskTests
     }
 
     [Fact]
+    public async Task Set_key_with_ensure_unique_generates_distinct_keys_for_multiple_instances_in_same_time_window()
+    {
+        const string definition = """
+            {
+              "key": "unique-keyed",
+              "start": {
+                "key": "start",
+                "target": "active",
+                "input": { "schema": { "type": "object", "properties": { "invoiceNo": { "type": "string" } } } }
+              },
+              "states": [
+                {
+                  "key": "active",
+                  "onEntry": [
+                    {
+                      "task": "setKey",
+                      "config": { "key": "INV-{{ data.invoiceNo }}", "ensureUnique": true }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync(definition);
+
+        var first = await host.StartInstanceAsync("unique-keyed", new { invoiceNo = "FTR-2026-0001" });
+        var second = await host.StartInstanceAsync("unique-keyed", new { invoiceNo = "FTR-2026-0001" });
+        var third = await host.StartInstanceAsync("unique-keyed", new { invoiceNo = "FTR-2026-0001" });
+        var fourth = await host.StartInstanceAsync("unique-keyed", new { invoiceNo = "FTR-2026-0001" });
+
+        first.Status.Should().Be(WorkflowInstanceStatus.Active);
+        second.Status.Should().Be(WorkflowInstanceStatus.Active);
+        third.Status.Should().Be(WorkflowInstanceStatus.Active);
+        fourth.Status.Should().Be(WorkflowInstanceStatus.Active);
+
+        first.Key.Should().Be("INV-FTR-2026-0001");
+        new[] { first.Key, second.Key, third.Key, fourth.Key }.Should().OnlyHaveUniqueItems();
+        second.Key.Should().Be($"INV-FTR-2026-0001-{second.Id.ToString("N")[^6..].ToUpperInvariant()}");
+        third.Key.Should().Be($"INV-FTR-2026-0001-{third.Id.ToString("N")[^6..].ToUpperInvariant()}");
+        fourth.Key.Should().Be($"INV-FTR-2026-0001-{fourth.Id.ToString("N")[^6..].ToUpperInvariant()}");
+    }
+
+    [Fact]
     public async Task A_failed_hop_rolls_the_key_back()
     {
         await using var host = await WorkflowTestHost.StartAsync(KeyedWorkflow);

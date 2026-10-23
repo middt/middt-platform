@@ -306,6 +306,64 @@ public sealed class WorkflowErrorPolicyTests
         retried.Data["note"]!.GetValue<string>().Should().Be("x");
         (await host.IncidentsAsync(instance.Id)).Should().OnlyContain(i => i.ResolvedAt != null);
     }
+
+    [Fact]
+    public async Task Retry_with_updated_input_replaces_faulted_start_data_and_succeeds()
+    {
+        await using var host = await WorkflowTestHost.StartAsync("""
+            { "key": "invoice-key-fault",
+              "start": { "key": "start", "target": "active",
+                         "input": { "schema": { "type": "object", "required": ["invoiceNo"], "properties": { "invoiceNo": { "type": "string" } } } } },
+              "states": [
+                { "key": "active",
+                  "onEntry": [ { "task": "setKey", "config": { "key": "INV-{{ data.invoiceNo }}" } } ] }
+              ] }
+            """);
+
+        var first = await host.StartInstanceAsync("invoice-key-fault", new { invoiceNo = "FTR-2026-0001" });
+        first.Status.Should().Be(WorkflowInstanceStatus.Active);
+        first.Key.Should().Be("INV-FTR-2026-0001");
+
+        // Second instance with duplicate invoiceNo faults on setKey
+        var second = await host.StartInstanceAsync("invoice-key-fault", new { invoiceNo = "FTR-2026-0001" });
+        second.Status.Should().Be(WorkflowInstanceStatus.Faulted);
+        second.PendingTransition.Should().Be("start");
+        second.PendingInput!["invoiceNo"]!.GetValue<string>().Should().Be("FTR-2026-0001");
+        second.PendingInputSchema.Should().NotBeNull();
+
+        // User edits invoiceNo to a new value and retries
+        var retried = await host.RetryAsync(second.Id, new { invoiceNo = "FTR-2026-0002" });
+        retried.Status.Should().Be(WorkflowInstanceStatus.Active);
+        retried.Key.Should().Be("INV-FTR-2026-0002");
+        retried.Data["invoiceNo"]!.GetValue<string>().Should().Be("FTR-2026-0002");
+        retried.PendingTransition.Should().BeNull();
+        retried.PendingInput.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Retry_with_updated_data_fixes_broken_condition_on_non_input_transition()
+    {
+        await using var host = await WorkflowTestHost.StartAsync("""
+            { "key": "fix-data-on-retry",
+              "dataSchema": { "type": "object", "properties": { "score": { "type": "number" } } },
+              "start": { "key": "start", "target": "a", "input": { "schema": { "type": "object" } } },
+              "states": [
+                { "key": "a", "transitions": [ { "key": "go", "target": "b" } ] },
+                { "key": "b", "type": "Finish", "onEntry": [ { "task": "record", "when": "data.score > 5", "config": { "name": "passed" } } ] }
+              ] }
+            """);
+
+        var instance = await host.StartInstanceAsync("fix-data-on-retry", new { score = "not-a-number" });
+        var faulted = await host.TransitionAsync(instance.Id, "go");
+        faulted.Status.Should().Be(WorkflowInstanceStatus.Faulted);
+        faulted.PendingTransition.Should().Be("go");
+        faulted.PendingInputSchema.Should().NotBeNull();
+
+        var retried = await host.RetryAsync(instance.Id, new { score = 10 });
+        retried.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        retried.State.Should().Be("b");
+        retried.Data["score"]!.GetValue<int>().Should().Be(10);
+    }
 }
 
 /// <summary>Throws once while a history row is being saved (simulates a database failure in the middle of a command).</summary>

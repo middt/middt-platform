@@ -189,6 +189,12 @@ export interface WorkflowInstanceModel {
   parentInstanceId?: string | null;
   waitingForInstanceId?: string | null;
   error?: string | null;
+  /** Key of the failed transition (or `$background`) when `status` is `Faulted`. */
+  pendingTransition?: string | null;
+  /** Input payload of the failed transition (or current data when retrying a non-input step) when `status` is `Faulted`. */
+  pendingInput?: WorkflowData | null;
+  /** JSON Schema for editing `pendingInput` before retrying a `Faulted` instance. */
+  pendingInputSchema?: WorkflowData | null;
   startedBy?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -392,9 +398,17 @@ export class WorkflowApiClient extends ApiClientBase {
     return this.send('GET', `${this.instanceRoute(workflow, id)}/incidents`, undefined, signal);
   }
 
-  /** Retries the failed step of a `Faulted` instance. */
-  retry(workflow: string, id: string, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowInstanceModel>> {
-    return this.send('POST', `${this.instanceRoute(workflow, id)}/retry`, undefined, signal);
+  /** Retries the failed step of a `Faulted` instance, optionally with updated input/data. */
+  retry(
+    workflow: string,
+    id: string,
+    inputOrSignal?: WorkflowData | AbortSignal | null,
+    signal?: AbortSignal,
+  ): Promise<BaseResponseDataModel<WorkflowInstanceModel>> {
+    const isSig = inputOrSignal instanceof AbortSignal;
+    const body = isSig ? undefined : (inputOrSignal ?? undefined);
+    const sig = isSig ? inputOrSignal : signal;
+    return this.send('POST', `${this.instanceRoute(workflow, id)}/retry`, body, sig);
   }
 
   /**

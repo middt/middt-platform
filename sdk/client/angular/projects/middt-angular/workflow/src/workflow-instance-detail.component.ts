@@ -101,6 +101,8 @@ export class MiddtWorkflowInstanceDetailComponent {
   protected readonly incidents = signal<WorkflowIncidentModel[]>([]);
   protected readonly loadFailed = signal(false);
   protected readonly retrying = signal(false);
+  protected readonly editingRetryInput = signal(false);
+  protected readonly retryErrors = signal<string[]>([]);
   protected readonly executing = signal(false);
   protected readonly pendingTransition = signal<AvailableTransitionModel | null>(null);
   protected readonly transitionErrors = signal<string[]>([]);
@@ -119,6 +121,7 @@ export class MiddtWorkflowInstanceDetailComponent {
 
   private readonly stepForm = viewChild<MiddtJsonSchemaFormComponent>('stepForm');
   private readonly transitionForm = viewChild<MiddtJsonSchemaFormComponent>('transitionForm');
+  private readonly retryForm = viewChild<MiddtJsonSchemaFormComponent>('retryForm');
   private readonly stateHeading = viewChild<ElementRef<HTMLElement>>('stateHeading');
 
   /** Definition of the instance's version (instances keep running on the version they were started with). */
@@ -153,6 +156,42 @@ export class MiddtWorkflowInstanceDetailComponent {
   });
 
   protected readonly pendingHasInput = computed(() => schemaHasInput(this.pendingTransition()?.inputSchema));
+
+  protected readonly displayData = computed<WorkflowData>(() => {
+    const inst = this.instance();
+    if (!inst) {
+      return {};
+    }
+
+    return Object.keys(inst.data ?? {}).length > 0 ? inst.data : (inst.pendingInput ?? inst.data ?? {});
+  });
+
+  protected readonly retrySchema = computed<WorkflowData | null>(() => {
+    const inst = this.instance();
+    const def = this.definition();
+    if (!inst) {
+      return null;
+    }
+
+    return inst.pendingInputSchema
+      ?? (!inst.state ? (def?.startInputSchema ?? def?.dataSchema ?? null) : (def?.dataSchema ?? def?.startInputSchema ?? null));
+  });
+
+  protected readonly hasRetrySchema = computed(() => schemaHasInput(this.retrySchema()));
+
+  protected readonly retryPrefill = computed<WorkflowData | null>(() => {
+    const inst = this.instance();
+    if (!inst) {
+      return null;
+    }
+
+    return inst.pendingInput && Object.keys(inst.pendingInput).length > 0 ? inst.pendingInput : inst.data;
+  });
+
+  protected readonly retryFormKey = computed(() => {
+    const inst = this.instance();
+    return inst === null ? [] : [`${inst.id}:${inst.dataVersion}:retry`];
+  });
 
   /** All transitions available on the instance or its active child subflow. */
   protected readonly allAvailableTransitions = computed<AvailableTransitionModel[]>(() => {
@@ -199,7 +238,7 @@ export class MiddtWorkflowInstanceDetailComponent {
     const instance = this.instance();
     return instance?.layout ? [`${instance.id}:${instance.dataVersion}:${instance.layout}`] : [];
   });
-  protected readonly dataJson = computed(() => formatWorkflowJson(this.instance()?.data));
+  protected readonly dataJson = computed(() => formatWorkflowJson(this.displayData()));
 
   protected readonly date = formatWorkflowDate;
   protected readonly statusText = workflowStatusText;
@@ -275,6 +314,8 @@ export class MiddtWorkflowInstanceDetailComponent {
       this.serverHtml.set(null);
       this.stepErrors.set([]);
       this.pendingTransition.set(null);
+      this.editingRetryInput.set(false);
+      this.retryErrors.set([]);
       details = true;
     }
 
@@ -325,6 +366,10 @@ export class MiddtWorkflowInstanceDetailComponent {
     }
 
     this.stepErrors.set([]);
+    if (instance.status !== 'Faulted') {
+      this.editingRetryInput.set(false);
+      this.retryErrors.set([]);
+    }
     this.instance.set(instance);
   }
 
@@ -451,20 +496,57 @@ export class MiddtWorkflowInstanceDetailComponent {
     this.#startPollingIfPending();
   }
 
-  protected async retry(): Promise<void> {
+  protected toggleRetryEditor(): void {
+    if (!this.retrying()) {
+      this.retryErrors.set([]);
+      this.editingRetryInput.update(v => !v);
+    }
+  }
+
+  protected closeRetryEditor(): void {
+    if (!this.retrying()) {
+      this.retryErrors.set([]);
+      this.editingRetryInput.set(false);
+    }
+  }
+
+  protected retry(): Promise<void> {
+    return this.#retryCore(null);
+  }
+
+  protected submitRetryWithInput(): void {
+    if (this.instance() === null || this.retrying()) {
+      return;
+    }
+
+    const form = this.retryForm();
+    if (this.hasRetrySchema() && form !== undefined && !form.validate()) {
+      return;
+    }
+
+    void this.#retryCore(form?.getValue() ?? null);
+  }
+
+  async #retryCore(overrideInput: WorkflowData | null): Promise<void> {
     const instance = this.instance();
     if (instance === null) {
       return;
     }
 
     this.retrying.set(true);
+    this.retryErrors.set([]);
     try {
-      const response = await this.#client.retry(this.workflow(), instance.id, this.#abort.signal);
+      const response = await this.#client.retry(this.workflow(), instance.id, overrideInput, this.#abort.signal);
       if (!isSuccess(response) || !response.data) {
+        if (overrideInput !== null && response.messageList.length > 0) {
+          this.retryErrors.set(response.messageList);
+        }
+
         this.#notify.error('Tekrar deneme başarısız', errorText(response));
         return;
       }
 
+      this.editingRetryInput.set(false);
       this.#notify.success('Tekrar denendi', `Durum: ${workflowStatusText(response.data.status)}`);
       await this.#load();
       this.changed.emit(this.instance() ?? response.data);

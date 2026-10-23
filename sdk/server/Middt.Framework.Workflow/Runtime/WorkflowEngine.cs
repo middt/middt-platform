@@ -253,9 +253,16 @@ public sealed partial class WorkflowEngine(
 
     /// <summary>Re-runs the failed transition of a Faulted instance with its original input.</summary>
     public Task<WorkflowInstanceModel> RetryAsync(Guid instanceId, WorkflowUser user, CancellationToken cancellationToken = default) =>
-        RetryAsync(null, instanceId, user, cancellationToken);
+        RetryAsync(null, instanceId, null, user, cancellationToken);
 
-    internal async Task<WorkflowInstanceModel> RetryAsync(string? workflow, Guid instanceId, WorkflowUser user, CancellationToken cancellationToken)
+    /// <summary>Re-runs the failed transition of a Faulted instance, optionally replacing the pending input or updating instance data.</summary>
+    public Task<WorkflowInstanceModel> RetryAsync(Guid instanceId, JsonObject? input, WorkflowUser user, CancellationToken cancellationToken = default) =>
+        RetryAsync(null, instanceId, input, user, cancellationToken);
+
+    internal Task<WorkflowInstanceModel> RetryAsync(string? workflow, Guid instanceId, WorkflowUser user, CancellationToken cancellationToken) =>
+        RetryAsync(workflow, instanceId, null, user, cancellationToken);
+
+    internal async Task<WorkflowInstanceModel> RetryAsync(string? workflow, Guid instanceId, JsonObject? overrideInput, WorkflowUser user, CancellationToken cancellationToken)
     {
         using var activity = WorkflowDiagnostics.ActivitySource.StartActivity($"workflow.retry {workflow ?? "instance"}");
         if (!string.IsNullOrEmpty(workflow))
@@ -272,8 +279,105 @@ public sealed partial class WorkflowEngine(
             throw new WorkflowConflictException("Only faulted instances can be retried.");
         }
 
+        var definition = registry.Get(snapshot.WorkflowKey, snapshot.WorkflowVersion);
+        var storedPending = JsonPath.ParseObject(snapshot.PendingInput);
+        var claimPendingInput = storedPending.Count > 0 ? storedPending : null;
+        JsonObject? effectiveTransitionInput = null;
+        JsonObject? directDataMerge = null;
+
+        var rawOverrideBody = WorkflowHttpInput.ExtractBody(overrideInput, null);
+        var hasOverride = rawOverrideBody is { Count: > 0 };
+
+        if (hasOverride)
+        {
+            if (snapshot.PendingTransition == BackgroundTransition)
+            {
+                var bgPatch = rawOverrideBody!;
+                if (bgPatch is { Count: 1 } && bgPatch["data"] is JsonObject innerBgData
+                    && (definition.DataSchema?["properties"] as JsonObject)?.ContainsKey("data") != true)
+                {
+                    bgPatch = innerBgData;
+                }
+
+                if (definition.DataSchema is { } bgSchema)
+                {
+                    var candidate = (JsonObject)JsonPath.ParseObject(snapshot.Data).DeepClone();
+                    JsonPath.Merge(candidate, bgPatch);
+                    var errors = JsonSchemaValidator.Validate(candidate, bgSchema);
+                    if (errors.Count > 0)
+                    {
+                        throw new WorkflowValidationException(errors);
+                    }
+                }
+
+                directDataMerge = (JsonObject)bgPatch.DeepClone();
+            }
+            else
+            {
+                var transition = ResolveTransition(definition, snapshot, snapshot.PendingTransition)
+                    ?? throw new WorkflowConflictException($"Transition '{snapshot.PendingTransition}' is no longer available.");
+                var extracted = WorkflowHttpInput.ExtractBody(overrideInput, transition.Input?.Schema) ?? rawOverrideBody!;
+                if (extracted is { Count: 1 } && extracted["data"] is JsonObject innerData
+                    && (transition.Input?.Schema?["properties"] as JsonObject)?.ContainsKey("data") != true)
+                {
+                    extracted = innerData;
+                }
+
+                if (transition.Input is not null)
+                {
+                    if (transition.Input.Format == InputFormat.JsonPatch && !extracted.ContainsKey(PatchProperty))
+                    {
+                        var currentData = JsonPath.ParseObject(snapshot.Data);
+                        var currentTarget = JsonPath.Get(currentData, transition.Input.Into) as JsonObject ?? [];
+                        extracted = new JsonObject { [PatchProperty] = JsonPatch.Diff(currentTarget, extracted) };
+                    }
+
+                    var wrappedOverride = WorkflowHttpInput.WithBody(overrideInput, extracted);
+                    ValidateInput(transition, wrappedOverride);
+                    var currentDataForRule = JsonPath.ParseObject(snapshot.Data);
+                    var bodyForRule = WorkflowHttpInput.ExtractBody(wrappedOverride, transition.Input.Schema) ?? [];
+                    if (!IsInputRuleSatisfied(transition, definition, snapshot, currentDataForRule, user, bodyForRule))
+                    {
+                        throw new WorkflowConflictException($"Transition '{transition.Key}' is not available for the current data.");
+                    }
+
+                    effectiveTransitionInput = wrappedOverride;
+                    claimPendingInput = transition.Input.Persistable(extracted) ?? (JsonObject)extracted.DeepClone();
+                    if (transition.Input.Schema is null)
+                    {
+                        directDataMerge = (JsonObject)extracted.DeepClone();
+                    }
+                }
+                else
+                {
+                    if (definition.DataSchema is { } dataSchema)
+                    {
+                        var candidate = (JsonObject)JsonPath.ParseObject(snapshot.Data).DeepClone();
+                        JsonPath.Merge(candidate, extracted);
+                        var errors = JsonSchemaValidator.Validate(candidate, dataSchema);
+                        if (errors.Count > 0)
+                        {
+                            throw new WorkflowValidationException(errors);
+                        }
+                    }
+
+                    directDataMerge = (JsonObject)extracted.DeepClone();
+                    if (transition.Key == definition.Start.Key && snapshot.ParentInstanceId is not null)
+                    {
+                        effectiveTransitionInput = (JsonObject)extracted.DeepClone();
+                        claimPendingInput = (JsonObject)extracted.DeepClone();
+                    }
+                }
+            }
+        }
+
         var run = await RunClaimedAsync(instanceId, WorkflowInstanceStatus.Faulted, user, async run =>
         {
+            if (directDataMerge is { Count: > 0 })
+            {
+                JsonPath.Merge(run.Data, directDataMerge);
+            }
+
             if (run.Instance.PendingTransition == BackgroundTransition)
             {
                 await RetryBackgroundAsync(run, cancellationToken);
@@ -282,7 +386,7 @@ public sealed partial class WorkflowEngine(
 
             var transition = ResolveTransition(run.Definition, run.Instance, run.Instance.PendingTransition!)
                 ?? throw new WorkflowConflictException($"Transition '{run.Instance.PendingTransition}' is no longer available.");
-            var input = JsonPath.ParseObject(run.Instance.PendingInput);
+            var input = effectiveTransitionInput ?? JsonPath.ParseObject(run.Instance.PendingInput);
             run.Instance.PendingTransition = null;
             run.Instance.PendingInput = null;
             run.Instance.Error = null;
@@ -293,7 +397,7 @@ public sealed partial class WorkflowEngine(
                 run.Data = (JsonObject)input.DeepClone();
             }
             await ExecuteChainAsync(run, transition, input.Count == 0 ? null : input, "Retry", cancellationToken);
-        }, cancellationToken, (snapshot.PendingTransition, JsonPath.ParseObject(snapshot.PendingInput) is { Count: > 0 } retryInput ? retryInput : null), snapshot);
+        }, cancellationToken, (snapshot.PendingTransition, claimPendingInput), snapshot);
 
         return await ToModelAsync(run, cancellationToken);
     }

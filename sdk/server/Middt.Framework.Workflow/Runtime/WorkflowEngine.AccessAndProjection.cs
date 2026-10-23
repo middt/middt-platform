@@ -322,6 +322,54 @@ public sealed partial class WorkflowEngine
 
         var projectedData = JsonSchemaValidator.ProjectData(data, definition.DataSchema, user);
 
+        string? pendingTransitionKey = null;
+        JsonObject? pendingInputModel = null;
+        JsonObject? pendingInputSchema = null;
+        if (instance.Status == WorkflowInstanceStatus.Faulted && !string.IsNullOrEmpty(instance.PendingTransition))
+        {
+            pendingTransitionKey = instance.PendingTransition;
+            var pendingTransition = pendingTransitionKey == BackgroundTransition
+                ? null
+                : ResolveTransition(definition, instance, pendingTransitionKey);
+            if (pendingTransition?.Input?.Schema is { } trSchema)
+            {
+                pendingInputSchema = ProjectInputSchema(trSchema, scope);
+                var rawPending = string.IsNullOrWhiteSpace(instance.PendingInput) ? null : JsonPath.ParseObject(instance.PendingInput);
+                var extracted = Endpoints.WorkflowHttpInput.ExtractBody(rawPending, trSchema);
+                if (extracted is { Count: > 0 })
+                {
+                    pendingInputModel = (JsonObject)extracted.DeepClone();
+                }
+                else if (pendingTransition.Input.Into is { Length: > 0 } into && JsonPath.Get(projectedData, into) is JsonObject intoObj)
+                {
+                    pendingInputModel = (JsonObject)intoObj.DeepClone();
+                }
+                else
+                {
+                    pendingInputModel = (JsonObject)projectedData.DeepClone();
+                }
+            }
+            else
+            {
+                pendingInputSchema = ProjectInputSchema(definition.DataSchema, scope);
+                if (pendingTransitionKey != BackgroundTransition
+                    && !string.IsNullOrWhiteSpace(instance.PendingInput)
+                    && JsonPath.ParseObject(instance.PendingInput) is { Count: > 0 } rawPending)
+                {
+                    var extracted = Endpoints.WorkflowHttpInput.ExtractBody(rawPending, null) ?? rawPending;
+                    var merged = (JsonObject)projectedData.DeepClone();
+                    JsonPath.Merge(merged, extracted);
+                    pendingInputModel = merged;
+                }
+                else
+                {
+                    pendingInputModel = (JsonObject)projectedData.DeepClone();
+                }
+            }
+
+            pendingInputSchema = EnsureEditableProperties(pendingInputSchema, pendingInputModel);
+        }
+
         return new WorkflowInstanceModel
         {
             Id = instance.Id,
@@ -329,7 +377,7 @@ public sealed partial class WorkflowEngine
             Workflow = instance.WorkflowKey,
             WorkflowVersion = instance.WorkflowVersion,
             State = instance.State,
-            StateTitle = state?.Title,
+            StateTitle = state?.Title ?? (string.IsNullOrEmpty(instance.State) ? "Başlangıç" : null),
             StateType = state?.Type.ToString() ?? string.Empty,
             StateSubType = state?.SubType.ToString() ?? string.Empty,
             View = state?.Type == StateType.SubFlow
@@ -345,6 +393,9 @@ public sealed partial class WorkflowEngine
             WaitingForInstanceId = instance.WaitingForInstanceId,
             ActiveSubFlow = activeSubFlow,
             Error = instance.Error is null ? null : options.Value.ExposeErrorDetails ? instance.Error : HiddenErrorText,
+            PendingTransition = pendingTransitionKey,
+            PendingInput = pendingInputModel,
+            PendingInputSchema = pendingInputSchema,
             StartedBy = instance.StartedBy,
             CreatedAt = instance.CreatedAt,
             UpdatedAt = instance.UpdatedAt,
@@ -355,6 +406,52 @@ public sealed partial class WorkflowEngine
             AgentRuns = agentRuns ?? [],
             ToolCalls = agentRuns is { Count: > 0 } ? [.. agentRuns.SelectMany(r => r.ToolCalls)] : [],
         };
+    }
+
+    private static JsonObject? EnsureEditableProperties(JsonObject? schema, JsonObject? sample)
+    {
+        if (schema?["properties"] is JsonObject { Count: > 0 })
+        {
+            return schema;
+        }
+
+        if (sample is not { Count: > 0 })
+        {
+            return schema;
+        }
+
+        var props = new JsonObject();
+        foreach (var (key, node) in sample)
+        {
+            if (key.StartsWith('$') || node is JsonObject or JsonArray)
+            {
+                continue;
+            }
+
+            var propType = node is JsonValue val
+                ? val.GetValueKind() switch
+                {
+                    System.Text.Json.JsonValueKind.Number => "number",
+                    System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False => "boolean",
+                    _ => "string",
+                }
+                : "string";
+            props[key] = new JsonObject
+            {
+                ["type"] = propType,
+                ["title"] = key,
+            };
+        }
+
+        if (props.Count == 0)
+        {
+            return schema;
+        }
+
+        var result = schema is not null ? (JsonObject)schema.DeepClone() : new JsonObject { ["type"] = "object" };
+        result["type"] ??= "object";
+        result["properties"] = props;
+        return result;
     }
 
     private static bool HasAgentOrMcpTasks(WorkflowDefinition definition)

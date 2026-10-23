@@ -116,10 +116,47 @@
                 <RadzenAlert AlertStyle="AlertStyle.Danger" Variant="Variant.Flat" Shade="Shade.Lighter" AllowClose="false">
                     <div class="middt-wf-fault">
                         <span>@(instance.Error ?? "Akış hata aldı.")</span>
-                        <RadzenButton Text="Tekrar dene" Icon="replay" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.Small"
-                                      title="Hatalı adımı tekrar çalıştır" Click="RetryAsync" IsBusy="@retrying" />
+                        <div class="middt-wf-fault-actions">
+                            @if (HasRetrySchema)
+                            {
+                                <RadzenButton Text="@(editingRetryInput ? "Düzenlemeyi Kapat" : "Veriyi Düzenle")" Icon="edit" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small"
+                                              title="Hatalı adım verilerini düzenleyerek tekrar dene" Click="ToggleRetryEditor" Disabled="@retrying" class="middt-wf-retry-edit-btn" />
+                            }
+                            <RadzenButton Text="Tekrar dene" Icon="replay" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.Small"
+                                          title="Hatalı adımı tekrar çalıştır" Click="RetryAsync" IsBusy="@retrying" />
+                        </div>
                     </div>
                 </RadzenAlert>
+                @if (editingRetryInput && RetrySchema is { } retrySchema)
+                {
+                    <form class="middt-wf-step-form middt-wf-retry-form" aria-label="Hatalı adım verisini düzenle ve tekrar dene" novalidate
+                          @onsubmit="SubmitRetryWithInputAsync" @onsubmit:preventDefault>
+                        <div class="middt-wf-retry-header">
+                            <strong>Veriyi Düzenle ve Tekrar Dene</strong>
+                            @if (!string.IsNullOrEmpty(instance.PendingTransition))
+                            {
+                                <span class="middt-wf-muted">(@(instance.PendingTransition == "start" ? "Başlangıç" : TransitionTitle(instance.PendingTransition)))</span>
+                            }
+                        </div>
+                        <JsonSchemaForm @key="@($"{instance.Id}:{instance.DataVersion}:retry")" @ref="retryForm"
+                                        Schema="@retrySchema" Value="@RetryPrefill" IdPrefix="@($"{IdPrefix}-retry")" Disabled="@retrying" />
+                        @if (retryErrors.Count > 0)
+                        {
+                            <ul class="middt-wf-errors" role="alert">
+                                @foreach (var error in retryErrors)
+                                {
+                                    <li>@error</li>
+                                }
+                            </ul>
+                        }
+                        <div class="middt-wf-step-actions">
+                            <RadzenButton ButtonType="ButtonType.Button" Text="Vazgeç" ButtonStyle="ButtonStyle.Light"
+                                          Click="CloseRetryEditor" Disabled="@retrying" />
+                            <RadzenButton ButtonType="ButtonType.Submit" Text="Düzeltilmiş Veriyle Tekrar Dene" Icon="check" ButtonStyle="ButtonStyle.Danger"
+                                          IsBusy="@retrying" BusyText="İşleniyor..." class="middt-wf-retry-submit" />
+                        </div>
+                    </form>
+                }
             }
 
             @if (ButtonTransitions.Where(t => !RunsDirectly(t)).ToList() is { Count: > 0 } buttons)
@@ -162,7 +199,7 @@
                 </div>
                 <details class="middt-wf-raw">
                     <summary>Ham veri</summary>
-                    <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(instance.Data)</pre>
+                    <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(DisplayData)</pre>
                 </details>
             }
             else
@@ -175,25 +212,25 @@
                         @foreach (var field in dataFields)
                         {
                             <dt>@field.Title</dt>
-                            <dd>@WorkflowUi.FormatDataCell(instance.Data, field)</dd>
+                            <dd>@WorkflowUi.FormatDataCell(DisplayData, field)</dd>
                         }
                     </dl>
                     <details class="middt-wf-raw">
                         <summary>@(ShowStepForm ? "Girilen veriler (JSON)" : "Ham veri")</summary>
-                        <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(instance.Data)</pre>
+                        <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(DisplayData)</pre>
                     </details>
                 }
                 else if (ShowStepForm)
                 {
                     <details class="middt-wf-raw">
                         <summary>Girilen veriler</summary>
-                        <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(instance.Data)</pre>
+                        <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(DisplayData)</pre>
                     </details>
                 }
                 else
                 {
                     <h3 class="middt-wf-subheading">Veri</h3>
-                    <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(instance.Data)</pre>
+                    <pre class="middt-wf-json" tabindex="0" aria-label="Akış verisi">@WorkflowUi.FormatJson(DisplayData)</pre>
                 }
             }
         </RadzenCard>

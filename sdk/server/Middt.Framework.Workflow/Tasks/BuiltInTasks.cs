@@ -179,8 +179,21 @@ public sealed class SetKeyTask : IWorkflowTask
                 cancellationToken);
             if (exists)
             {
-                var suffix = "-" + context.InstanceId.ToString("N")[..6].ToUpperInvariant();
-                key = (key.Length + suffix.Length <= MaxKeyLength ? key : key[..(MaxKeyLength - suffix.Length)]) + suffix;
+                // InstanceId is a UUIDv7 whose first 12 hex digits are the millisecond timestamp;
+                // take the last 6 hex digits (cryptographically random rand_b bits) so concurrent starts never collide.
+                var suffix = "-" + context.InstanceId.ToString("N")[^6..].ToUpperInvariant();
+                var candidate = (key.Length + suffix.Length <= MaxKeyLength ? key : key[..(MaxKeyLength - suffix.Length)]) + suffix;
+                var candidateExists = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(
+                    Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Instances),
+                    i => i.WorkflowKey == context.Workflow && i.BusinessKey == candidate && i.Id != context.InstanceId,
+                    cancellationToken);
+                if (candidateExists)
+                {
+                    var fallbackSuffix = "-" + Guid.NewGuid().ToString("N")[^8..].ToUpperInvariant();
+                    candidate = (key.Length + fallbackSuffix.Length <= MaxKeyLength ? key : key[..(MaxKeyLength - fallbackSuffix.Length)]) + fallbackSuffix;
+                }
+
+                key = candidate;
             }
         }
 

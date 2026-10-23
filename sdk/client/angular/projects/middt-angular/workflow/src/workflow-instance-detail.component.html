@@ -189,11 +189,48 @@
           <div class="middt-wf-alert middt-wf-alert-danger" role="alert">
             <div class="middt-wf-fault">
               <span>{{ instance.error ?? 'Akış hata aldı.' }}</span>
-              <button mat-flat-button type="button" class="middt-wf-btn-danger" title="Hatalı adımı tekrar çalıştır" (click)="retry()" [disabled]="retrying()">
-                <mat-icon>{{ retrying() ? 'hourglass_empty' : 'replay' }}</mat-icon>Tekrar dene
-              </button>
+              <div class="middt-wf-fault-actions">
+                @if (hasRetrySchema()) {
+                  <button mat-stroked-button type="button" class="middt-wf-retry-edit-btn"
+                          title="Hatalı adım verilerini düzenleyerek tekrar dene" (click)="toggleRetryEditor()" [disabled]="retrying()">
+                    <mat-icon>edit</mat-icon>{{ editingRetryInput() ? 'Düzenlemeyi Kapat' : 'Veriyi Düzenle' }}
+                  </button>
+                }
+                <button mat-flat-button type="button" class="middt-wf-btn-danger" title="Hatalı adımı tekrar çalıştır" (click)="retry()" [disabled]="retrying()">
+                  <mat-icon>{{ retrying() ? 'hourglass_empty' : 'replay' }}</mat-icon>Tekrar dene
+                </button>
+              </div>
             </div>
           </div>
+          @if (editingRetryInput() && retrySchema(); as rSchema) {
+            <form class="middt-wf-step-form middt-wf-retry-form" aria-label="Hatalı adım verisini düzenle ve tekrar dene" novalidate
+                  (submit)="$event.preventDefault(); submitRetryWithInput()">
+              <div class="middt-wf-retry-header">
+                <strong>Veriyi Düzenle ve Tekrar Dene</strong>
+                @if (instance.pendingTransition) {
+                  <span class="middt-wf-muted">({{ instance.pendingTransition === 'start' ? 'Başlangıç' : transitionTitle(instance.pendingTransition) }})</span>
+                }
+              </div>
+              @for (key of retryFormKey(); track key) {
+                <middt-json-schema-form #retryForm [schema]="rSchema" [value]="retryPrefill()" [idPrefix]="idPrefix() + '-retry'"
+                                        [disabled]="retrying()" />
+              }
+              @if (retryErrors().length > 0) {
+                <ul class="middt-wf-errors" role="alert">
+                  @for (error of retryErrors(); track $index) {
+                    <li>{{ error }}</li>
+                  }
+                </ul>
+              }
+              <div class="middt-wf-step-actions">
+                <button mat-stroked-button type="button" (click)="closeRetryEditor()" [disabled]="retrying()">Vazgeç</button>
+                <button mat-flat-button type="submit" class="middt-wf-btn-danger middt-wf-retry-submit" [disabled]="retrying()"
+                        [attr.aria-busy]="retrying()">
+                  <mat-icon>{{ retrying() ? 'hourglass_empty' : 'check' }}</mat-icon>{{ retrying() ? 'İşleniyor...' : 'Düzeltilmiş Veriyle Tekrar Dene' }}
+                </button>
+              </div>
+            </form>
+          }
         }
 
         @if (dialogTransitions().length > 0) {
@@ -255,7 +292,7 @@
           <h3 class="middt-wf-subheading">Veri Özeti</h3>
           <dl class="middt-wf-props">
             @for (field of dataFields(); track field.key) {
-              <dt>{{ field.title }}</dt><dd>{{ dataCell(instance.data, field) }}</dd>
+              <dt>{{ field.title }}</dt><dd>{{ dataCell(displayData(), field) }}</dd>
             }
           </dl>
           <details class="middt-wf-raw">

@@ -272,6 +272,9 @@ public sealed class WorkflowTestHost : IAsyncDisposable
     public Task<WorkflowInstanceModel> RetryAsync(Guid id, WorkflowUser? user = null) =>
         WithEngineAsync(e => e.RetryAsync(id, user ?? User(), TestContext.Current.CancellationToken));
 
+    public Task<WorkflowInstanceModel> RetryAsync(Guid id, object? input, WorkflowUser? user = null) =>
+        WithEngineAsync(e => e.RetryAsync(id, ToObject(input), user ?? User(), TestContext.Current.CancellationToken));
+
     public Task<List<WorkflowIncidentModel>> IncidentsAsync(Guid id) =>
         WithEngineAsync(e => e.IncidentsAsync(id, WorkflowUser.System, TestContext.Current.CancellationToken));
 

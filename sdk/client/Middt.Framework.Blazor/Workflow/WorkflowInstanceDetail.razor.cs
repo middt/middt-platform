@@ -25,6 +25,9 @@ public partial class WorkflowInstanceDetail
     private Guid? loadedId;
     private bool loadFailed;
     private bool retrying;
+    private bool editingRetryInput;
+    private JsonSchemaForm? retryForm;
+    private List<string> retryErrors = [];
 
     private AvailableTransitionModel? pendingTransition;
     private bool pendingHasInput;
@@ -135,6 +138,8 @@ public partial class WorkflowInstanceDetail
             stepTransition = null;
             stepPrefill = null;
             stepErrors = [];
+            editingRetryInput = false;
+            retryErrors = [];
         }
 
         loadedId = InstanceId;
@@ -177,6 +182,42 @@ public partial class WorkflowInstanceDetail
         stepPrefill = inline is null ? null : WorkflowUi.StepPrefill(activeData, inline.InputInto, inline.InputSchema);
         stepTransition = inline;
         stepErrors = [];
+        if (instance.Status != WorkflowInstanceStatus.Faulted)
+        {
+            editingRetryInput = false;
+            retryErrors = [];
+        }
+    }
+
+    private JsonObject DisplayData =>
+        instance is null ? [] : (instance.Data.Count > 0 ? instance.Data : instance.PendingInput ?? instance.Data);
+
+    private JsonObject? RetrySchema =>
+        instance?.PendingInputSchema
+        ?? (string.IsNullOrEmpty(instance?.State) ? definition?.StartInputSchema ?? definition?.DataSchema : definition?.DataSchema ?? definition?.StartInputSchema);
+
+    private bool HasRetrySchema =>
+        RetrySchema?["properties"] is JsonObject { Count: > 0 };
+
+    private JsonObject? RetryPrefill =>
+        instance?.PendingInput is { Count: > 0 } p ? p : instance?.Data;
+
+    private void ToggleRetryEditor()
+    {
+        if (!retrying)
+        {
+            retryErrors = [];
+            editingRetryInput = !editingRetryInput;
+        }
+    }
+
+    private void CloseRetryEditor()
+    {
+        if (!retrying)
+        {
+            retryErrors = [];
+            editingRetryInput = false;
+        }
     }
 
     private IReadOnlyList<AvailableTransitionModel> AllAvailableTransitions
@@ -497,7 +538,24 @@ public partial class WorkflowInstanceDetail
         }
     }
 
-    private async Task RetryAsync()
+    private Task RetryAsync() => RetryCoreAsync(null);
+
+    private async Task SubmitRetryWithInputAsync()
+    {
+        if (instance is null || retrying)
+        {
+            return;
+        }
+
+        if (HasRetrySchema && retryForm is not null && !retryForm.Validate())
+        {
+            return;
+        }
+
+        await RetryCoreAsync(retryForm?.GetValue());
+    }
+
+    private async Task RetryCoreAsync(JsonObject? overrideInput)
     {
         if (instance is null)
         {
@@ -505,17 +563,24 @@ public partial class WorkflowInstanceDetail
         }
 
         retrying = true;
+        retryErrors = [];
         try
         {
             await ExecuteMethod(async () =>
             {
-                var response = await WorkflowClient.RetryAsync(Workflow, instance.Id, ComponentCancellation);
+                var response = await WorkflowClient.RetryAsync(Workflow, instance.Id, overrideInput, ComponentCancellation);
                 if (!response.IsSuccess || response.Data is null)
                 {
+                    if (overrideInput is not null && response.MessageList.Count > 0)
+                    {
+                        retryErrors = response.MessageList;
+                    }
+
                     Notification.ShowErrorMessage("Tekrar deneme başarısız", response.ErrorText);
                     return;
                 }
 
+                editingRetryInput = false;
                 Notification.ShowSuccessMessage("Tekrar denendi", $"Durum: {WorkflowUi.StatusText(response.Data.Status)}");
                 await LoadAsync();
                 await OnChanged.InvokeAsync(instance ?? response.Data);
