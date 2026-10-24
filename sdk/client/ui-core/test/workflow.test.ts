@@ -705,5 +705,64 @@ test('workflow designer API methods: listTaskSpecs, getDefinitionJson, validateD
   ]);
 });
 
+test('workflow operations, versions, inbox, simulation, bundle, and purge API methods', async () => {
+  const { fetch, calls } = fakeFetch(
+    ok([{ version: 2, title: 'v2', statesCount: 3, transitionsCount: 4, isLatest: true }]),
+    ok({ key: 'order-approval', fromVersion: 1, toVersion: 2, addedStates: ['audit'], removedStates: [], changedStates: [], addedTransitions: [], removedTransitions: [], patch: [] }),
+    ok({ key: 'order-approval', version: 3 }),
+    ok({ faultedCount: 1, busyCount: 0, pendingJobCount: 0, unresolvedIncidentCount: 1, faultedInstances: [], pendingJobs: [], recentIncidents: [] }),
+    ok({ succeededIds: ['inst-1'], failed: [] }),
+    ok([{ instanceId: 'inst-1', workflow: 'order-approval', workflowVersion: 1, state: 'draft', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', availableTransitions: [] }], 1),
+    ok({ success: true, finalState: 'draft', finalStatus: 'Active', visitedStates: ['draft'], executedTransitions: ['start'], finalData: {}, availableTransitions: [] }),
+    ok({ exportedAt: '2026-01-01T00:00:00Z', checksum: 'abc', items: [], layouts: {} }),
+    ok({ isValid: true, dryRun: true, importedWorkflows: ['order-approval'], importedLayouts: [], errors: [] }),
+    ok({ dryRun: true, cutoffUtc: '2026-01-01T00:00:00Z', purgedInstancesCount: 3, purgedHistoryCount: 12, purgedIncidentsCount: 0 }),
+  );
+  const client = new WorkflowApiClient({ baseUrl: 'https://api.example.com', fetch });
+
+  const versions = await client.listVersions('order-approval');
+  assert.equal(versions.data?.[0]?.version, 2);
+
+  const diff = await client.getVersionDiff('order-approval', 1, 2);
+  assert.deepEqual(diff.data?.addedStates, ['audit']);
+
+  const rolledBack = await client.rollbackVersion('order-approval', 1);
+  assert.equal(rolledBack.data?.['version'], 3);
+
+  const ops = await client.getOperationsSummary('order-approval');
+  assert.equal(ops.data?.faultedCount, 1);
+
+  const batch = await client.retryBatch({ items: [{ workflow: 'order-approval', instanceId: 'inst-1' }] });
+  assert.deepEqual(batch.data?.succeededIds, ['inst-1']);
+
+  const inbox = await client.listInbox('order-approval', 1, 10);
+  assert.equal(inbox.data?.[0]?.instanceId, 'inst-1');
+
+  const sim = await client.simulate('order-approval', { key: 'SIM-1', data: { amount: 100 } });
+  assert.equal(sim.data?.success, true);
+
+  const bundle = await client.exportBundle();
+  assert.equal(bundle.data?.checksum, 'abc');
+
+  const imported = await client.importBundle({ dryRun: true, items: [] });
+  assert.equal(imported.data?.isValid, true);
+
+  const purged = await client.purge({ retentionDays: 30, dryRun: true });
+  assert.equal(purged.data?.purgedInstancesCount, 3);
+
+  assert.deepEqual(calls.map(c => `${c.init.method} ${c.url}`), [
+    'GET https://api.example.com/api/workflows/order-approval/versions',
+    'GET https://api.example.com/api/workflows/order-approval/diff?fromVersion=1&toVersion=2',
+    'POST https://api.example.com/api/workflows/order-approval/versions/1/rollback',
+    'GET https://api.example.com/api/workflows/operations?workflow=order-approval',
+    'POST https://api.example.com/api/workflows/operations/retry-batch',
+    'GET https://api.example.com/api/workflows/inbox?workflow=order-approval&page=1&pageSize=10',
+    'POST https://api.example.com/api/workflows/order-approval/simulate',
+    'GET https://api.example.com/api/workflows/bundle',
+    'POST https://api.example.com/api/workflows/bundle/import',
+    'POST https://api.example.com/api/workflows/maintenance/purge',
+  ]);
+});
+
 
 

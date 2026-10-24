@@ -966,6 +966,98 @@ public sealed class MiddtAgentTests
             tc.Result!["gateway"]!.GetValue<string>() == "PricingGateway");
     }
 
+    [Fact]
+    public async Task Agent_enforces_mcp_allowed_hosts_tool_role_rbac_and_max_tool_calls_budget()
+    {
+        const string definition = """
+        {
+          "key": "ai-policy-budget-flow",
+          "version": 1,
+          "start": {
+            "key": "start",
+            "target": "done",
+            "onExecute": [
+              {
+                "key": "run-policy-agent",
+                "task": "aiAgent",
+                "config": {
+                  "agent": "policy-agent",
+                  "prompt": "Run tool checks.",
+                  "maxToolCalls": 1,
+                  "into": "result"
+                }
+              }
+            ]
+          },
+          "states": [
+            { "key": "done", "type": "Finish", "subType": "Success" }
+          ]
+        }
+        """;
+
+        await using var host = await WorkflowTestHost.StartAsync(
+            [definition],
+            configure: o =>
+            {
+                o.AllowedHttpHosts.Add("allowed.internal");
+                o.ExposeErrorDetails = true;
+            },
+            services: s =>
+            {
+                s.AddMiddtAgents(
+                    configure: a =>
+                    {
+                        a.AddMcpServer(new McpServerDefinition
+                        {
+                            Name = "untrusted-remote-mcp",
+                            Endpoint = "https://evil.example.com/mcp",
+                        });
+
+                        a.AddDeclarativeTool(new AgentToolDefinition
+                        {
+                            Name = "manager_only_tool",
+                            Kind = "expression",
+                            Roles = ["manager"],
+                            Expression = "42",
+                        });
+
+                        a.AddDeclarativeTool(new AgentToolDefinition
+                        {
+                            Name = "public_tool_1",
+                            Kind = "expression",
+                            Expression = "1",
+                        });
+
+                        a.AddDeclarativeTool(new AgentToolDefinition
+                        {
+                            Name = "public_tool_2",
+                            Kind = "expression",
+                            Expression = "2",
+                        });
+
+                        a.AddAgent(new AgentDefinition
+                        {
+                            Name = "policy-agent",
+                            Instructions = "Execute tools.",
+                            Tools = ["manager_only_tool", "public_tool_1", "public_tool_2"],
+                        });
+                    });
+            });
+
+        // 1. R-08: Remote MCP server whose host is not in AllowedHttpHosts is blocked before any HTTP call
+        var mcpClient = host.Services.GetRequiredService<IMiddtMcpClient>();
+        var mcpAct = () => mcpClient.ListToolsAsync("untrusted-remote-mcp");
+        await mcpAct.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*AllowedHttpHosts*");
+
+        // 2. F-08: Non-manager user runs policy-agent: manager_only_tool is filtered out by RBAC,
+        // and calling 2 public tools when maxToolCalls == 1 faults the instance with a budget error.
+        var nonManager = new Middt.Framework.Workflow.Expressions.WorkflowUser { Id = "u-1", Name = "bob", Roles = ["clerk"] };
+        var instance = await host.StartInstanceAsync("ai-policy-budget-flow", new { }, user: nonManager);
+        instance.Status.Should().Be(WorkflowInstanceStatus.Faulted);
+        instance.Error.Should().Contain("exceeded maximum tool calls");
+    }
+
     private sealed class ToolTestingChatClient(string modelId) : IChatClient
     {
         public ChatClientMetadata Metadata { get; } = new("test-tool-client", null, modelId);

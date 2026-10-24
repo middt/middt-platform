@@ -51,6 +51,12 @@ public sealed class AgentSettings
     /// <summary>Default maximum output tokens when not overridden by an agent or task.</summary>
     public int? DefaultMaxOutputTokens { get; set; }
 
+    /// <summary>Default maximum number of tool calls per agent execution when not overridden by an agent or task.</summary>
+    public int? DefaultMaxToolCalls { get; set; }
+
+    /// <summary>Default maximum total token budget (input + output) per agent execution when not overridden by an agent or task.</summary>
+    public long? DefaultMaxTotalTokens { get; set; }
+
     /// <summary>Named agent definitions configured via <c>appsettings.json</c>.</summary>
     public Dictionary<string, AgentDefinition> Agents { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

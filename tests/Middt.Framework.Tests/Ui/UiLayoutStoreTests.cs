@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Middt.Framework.Expressions;
 using Middt.Framework.Ui.Model;
 using Middt.Framework.Ui.Server.Runtime;
@@ -220,5 +221,26 @@ public sealed class UiLayoutStoreTests
         await Task.Delay(50, Ct);
 
         (await host.WithStoreAsync(s => s.FindAsync("orders", Ct)))!.Body[0].StringProp("text").Should().Be("external");
+    }
+
+    [Fact]
+    public async Task Stores_with_different_schemas_sharing_the_same_memory_cache_do_not_collide()
+    {
+        using var sharedCache = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        await using var hostA = await UiTestHost.StartAsync(
+            configure: o => o.Schema = "ui_a",
+            services: s => s.AddSingleton<Microsoft.Extensions.Caching.Memory.IMemoryCache>(sharedCache));
+        await using var hostB = await UiTestHost.StartAsync(
+            configure: o => o.Schema = "ui_b",
+            services: s => s.AddSingleton<Microsoft.Extensions.Caching.Memory.IMemoryCache>(sharedCache));
+
+        await hostA.WithStoreAsync(s => s.SaveAsync(Doc("home", text: "from-A"), null, "a", Ct));
+        await hostB.WithStoreAsync(s => s.SaveAsync(Doc("home", text: "from-B"), null, "b", Ct));
+
+        var docA = await hostA.WithStoreAsync(s => s.FindAsync("home", Ct));
+        var docB = await hostB.WithStoreAsync(s => s.FindAsync("home", Ct));
+
+        docA!.Body[0].StringProp("text").Should().Be("from-A");
+        docB!.Body[0].StringProp("text").Should().Be("from-B");
     }
 }

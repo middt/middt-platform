@@ -84,6 +84,9 @@ public sealed class AgentToolDefinition
 
     /// <summary>For <c>kind: "mcp"</c>: Name of the tool on the MCP server (defaults to <see cref="Name"/>).</summary>
     public string? McpTool { get; set; }
+
+    /// <summary>Optional roles required to invoke this tool. When non-empty, only callers in at least one listed role (or <c>ui-admin</c> / <c>system</c>) may execute the tool.</summary>
+    public List<string> Roles { get; set; } = [];
 }
 
 /// <summary>

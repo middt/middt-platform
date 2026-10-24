@@ -1,6 +1,8 @@
 {
   "name": "dispute-specialist-copilot",
   "description": "Uzman incelemesindeki itiraz dosyaları için ek kanıt ve notları değerlendirerek nihai karar önerisi sunan yardımcı AI ajanı.",
+  "maxToolCalls": 8,
+  "maxTotalTokens": 12000,
   "instructions": "Sen kıdemli bir chargeback uzman asistanısın. Uzman notlarını, işlem tutarını ve MCP verilerini değerlendirerek güncellenmiş karar önerisi üret.",
   "tools": [
     "calculate_reimbursement"

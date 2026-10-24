@@ -268,6 +268,156 @@ export interface WorkflowValidationResultModel {
   errors: string[];
 }
 
+export interface WorkflowVersionSummaryModel {
+  version: number;
+  title?: string | null;
+  statesCount: number;
+  transitionsCount: number;
+  isLatest: boolean;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface WorkflowVersionDiffModel {
+  key: string;
+  fromVersion: number;
+  toVersion: number;
+  addedStates: string[];
+  removedStates: string[];
+  changedStates: string[];
+  addedTransitions: string[];
+  removedTransitions: string[];
+  patch: WorkflowJsonPatchOperation[];
+}
+
+export interface WorkflowPendingJobModel {
+  id: string;
+  workflow: string;
+  instanceId: string;
+  kind: string;
+  state: string;
+  transitionKey?: string | null;
+  dueAt: string;
+  attempts: number;
+  lastError?: string | null;
+}
+
+export interface WorkflowOperationsSummaryModel {
+  faultedCount: number;
+  busyCount: number;
+  pendingJobCount: number;
+  unresolvedIncidentCount: number;
+  faultedInstances: WorkflowInstanceModel[];
+  pendingJobs: WorkflowPendingJobModel[];
+  recentIncidents: WorkflowIncidentModel[];
+}
+
+export interface WorkflowBatchRetryItemRequest {
+  workflow: string;
+  instanceId: string;
+  input?: WorkflowData | null;
+}
+
+export interface WorkflowBatchRetryRequest {
+  items: WorkflowBatchRetryItemRequest[];
+}
+
+export interface WorkflowBatchRetryFailureModel {
+  instanceId: string;
+  workflow: string;
+  error: string;
+}
+
+export interface WorkflowBatchOperationResultModel {
+  succeededIds: string[];
+  failed: WorkflowBatchRetryFailureModel[];
+}
+
+export interface WorkflowInboxItemModel {
+  instanceId: string;
+  key?: string | null;
+  workflow: string;
+  workflowVersion: number;
+  workflowTitle?: string | null;
+  workflowIcon?: string | null;
+  state: string;
+  stateTitle?: string | null;
+  startedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  dueAt?: string | null;
+  availableTransitions: AvailableTransitionModel[];
+}
+
+export interface WorkflowSimulationStepRequest {
+  transition: string;
+  input?: WorkflowData | null;
+}
+
+export interface WorkflowSimulationRequest {
+  key?: string | null;
+  version?: number | null;
+  definition?: WorkflowData | null;
+  data?: WorkflowData | null;
+  steps?: WorkflowSimulationStepRequest[];
+  taskMocks?: Record<string, WorkflowData> | null;
+}
+
+export interface WorkflowSimulationResultModel {
+  success: boolean;
+  finalState: string;
+  finalStatus: WorkflowInstanceStatusName;
+  visitedStates: string[];
+  executedTransitions: string[];
+  finalData: WorkflowData;
+  availableTransitions: AvailableTransitionModel[];
+  error?: string | null;
+}
+
+export interface WorkflowBundleItemModel {
+  key: string;
+  version: number;
+  title?: string | null;
+  checksum: string;
+  definition: WorkflowData;
+}
+
+export interface WorkflowBundleModel {
+  exportedAt: string;
+  checksum: string;
+  items: WorkflowBundleItemModel[];
+  layouts: Record<string, WorkflowData>;
+}
+
+export interface WorkflowBundleImportRequest {
+  dryRun?: boolean;
+  expectedChecksum?: string | null;
+  items: WorkflowBundleItemModel[];
+  layouts?: Record<string, WorkflowData> | null;
+}
+
+export interface WorkflowBundleImportResultModel {
+  isValid: boolean;
+  dryRun: boolean;
+  importedWorkflows: string[];
+  importedLayouts: string[];
+  errors: string[];
+}
+
+export interface WorkflowPurgeRequest {
+  retentionDays?: number;
+  dryRun?: boolean;
+  workflow?: string | null;
+}
+
+export interface WorkflowPurgeResultModel {
+  dryRun: boolean;
+  cutoffUtc: string;
+  purgedInstancesCount: number;
+  purgedHistoryCount: number;
+  purgedIncidentsCount: number;
+}
+
 /** Filter and paging of `listInstances` (defaults: page 1, 20 per page). */
 export interface WorkflowInstanceQuery {
   state?: string | null;
@@ -330,6 +480,62 @@ export class WorkflowApiClient extends ApiClientBase {
   /** Validates and saves a workflow JSON definition at runtime (requires `ui-admin` role). */
   saveDefinition(workflow: string, definition: WorkflowData, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowData>> {
     return this.send('PUT', `${this.workflowRoute(workflow)}/definition`, definition, signal);
+  }
+
+  /** Lists all immutable versions of `workflow` ordered from newest to oldest. */
+  listVersions(workflow: string, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowVersionSummaryModel[]>> {
+    return this.send('GET', `${this.workflowRoute(workflow)}/versions`, undefined, signal);
+  }
+
+  /** Computes structural and RFC 6902 JSON Patch diff between two versions of `workflow`. */
+  getVersionDiff(workflow: string, fromVersion?: number | null, toVersion?: number | null, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowVersionDiffModel>> {
+    const suffix = query({
+      fromVersion: fromVersion === undefined || fromVersion === null ? undefined : Math.trunc(fromVersion),
+      toVersion: toVersion === undefined || toVersion === null ? undefined : Math.trunc(toVersion),
+    });
+    return this.send('GET', `${this.workflowRoute(workflow)}/diff${suffix}`, undefined, signal);
+  }
+
+  /** Publishes an earlier `version` of `workflow` as a new latest version (requires `ui-admin` role). */
+  rollbackVersion(workflow: string, version: number, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowData>> {
+    return this.send('POST', `${this.workflowRoute(workflow)}/versions/${Math.trunc(version)}/rollback`, undefined, signal);
+  }
+
+  /** Operational summary of faulted instances, busy instances, pending jobs, and unresolved incidents. */
+  getOperationsSummary(workflow?: string | null, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowOperationsSummaryModel>> {
+    const suffix = query({ workflow });
+    return this.send('GET', `${this.routePrefix}/operations${suffix}`, undefined, signal);
+  }
+
+  /** Retries multiple faulted workflow instances in a batch. */
+  retryBatch(request: WorkflowBatchRetryRequest, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowBatchOperationResultModel>> {
+    return this.send('POST', `${this.routePrefix}/operations/retry-batch`, request, signal);
+  }
+
+  /** Unified human task inbox across all accessible workflows. */
+  listInbox(workflow?: string | null, page = 1, pageSize = 20, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowInboxItemModel[]>> {
+    const suffix = query({ workflow, page: Math.trunc(page), pageSize: Math.trunc(pageSize) });
+    return this.send('GET', `${this.routePrefix}/inbox${suffix}`, undefined, signal);
+  }
+
+  /** Simulates a workflow execution in memory without database side effects. */
+  simulate(workflow: string, request: WorkflowSimulationRequest = {}, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowSimulationResultModel>> {
+    return this.send('POST', `${this.workflowRoute(workflow)}/simulate`, request, signal);
+  }
+
+  /** Exports all workflow definitions and UI layouts as a portable bundle with SHA-256 checksums. */
+  exportBundle(signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowBundleModel>> {
+    return this.send('GET', `${this.routePrefix}/bundle`, undefined, signal);
+  }
+
+  /** Validates (`dryRun: true`) or imports (`dryRun: false`) a portable workflow/layout bundle. */
+  importBundle(request: WorkflowBundleImportRequest, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowBundleImportResultModel>> {
+    return this.send('POST', `${this.routePrefix}/bundle/import`, request, signal);
+  }
+
+  /** Purges completed/cancelled workflow instances older than `retentionDays` (requires `ui-admin` role). */
+  purge(request: WorkflowPurgeRequest, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowPurgeResultModel>> {
+    return this.send('POST', `${this.routePrefix}/maintenance/purge`, request, signal);
   }
 
   /**

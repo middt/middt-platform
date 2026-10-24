@@ -1,7 +1,7 @@
 namespace Middt.Framework.Workflow.Runtime;
 
 /// <summary>Base of errors that map to HTTP problem responses.</summary>
-public abstract class WorkflowException(string message, int statusCode) : Exception(message)
+public abstract class WorkflowException(string message, int statusCode, Exception? inner = null) : Exception(message, inner)
 {
     public int StatusCode { get; } = statusCode;
 }
@@ -9,6 +9,8 @@ public abstract class WorkflowException(string message, int statusCode) : Except
 public sealed class WorkflowNotFoundException(string message) : WorkflowException(message, 404);
 
 public sealed class WorkflowForbiddenException(string message) : WorkflowException(message, 403);
+
+public sealed class WorkflowPersistenceException(string message, Exception? inner = null) : WorkflowException(message, 500, inner);
 
 /// <summary>Instance busy, finished, waiting for a subflow, or transition not available in the current state.</summary>
 public class WorkflowConflictException(string message) : WorkflowException(message, 409);

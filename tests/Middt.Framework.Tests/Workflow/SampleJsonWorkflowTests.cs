@@ -20,7 +20,7 @@ using Middt.Framework.Workflow.Tasks;
 namespace Middt.Framework.Tests.Workflow;
 
 /// <summary>
-/// Comprehensive integration tests for all 6 JSON-backed demo workflows (<c>demo/Middt.Demo.Api/Workflows</c>) and
+/// Comprehensive integration tests for all 8 JSON-backed demo workflows (<c>demo/Middt.Demo.Api/Workflows</c>) and
 /// <see cref="WorkflowInstanceDataQuery"/> operating purely on <c>WorkflowDbContext</c> JSON documents without relational domain tables.
 /// </summary>
 public sealed class SampleJsonWorkflowTests
@@ -954,5 +954,105 @@ public sealed class SampleJsonWorkflowTests
             negTwoId.ToString(),
             decOneId.ToString(),
             decTwoId.ToString());
+    }
+
+    [Fact]
+    public async Task Commercial_limit_revision_aggregates_credit_portfolio_enforces_4_eyes_updates_customer_and_renders_layout()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var host = await CreateHostAsync();
+
+        // 1. Create a customer in customer-onboarding and an active credit-allocation
+        var customer = await host.StartInstanceAsync(
+            "customer-onboarding",
+            new
+            {
+                fullName = "Ege İhracat Sanayi A.Ş.",
+                identityNumber = "55555555555",
+                email = "finans@egeihracat.com",
+                phone = "02324445566",
+                segment = "Kurumsal",
+                monthlyIncome = 600000,
+            },
+            user: Alice);
+
+        customer.Key.Should().Be("CUST-55555555555");
+
+        var loan = await host.StartInstanceAsync(
+            "credit-allocation",
+            new
+            {
+                customerKey = "CUST-55555555555",
+                amount = 400000,
+                termMonths = 24,
+                collateralAmount = 600000,
+                iban = "TR330006100519786457841326",
+                requireUnderwriting = false,
+            },
+            user: Alice);
+        loan.State.Should().Be("stage1-approval");
+
+        // 2. Start commercial-limit-revision (> 500,000) -> loads customer, queries credit-allocation portfolio, and routes to maker-review
+        var revision = await host.StartInstanceAsync(
+            "commercial-limit-revision",
+            new
+            {
+                customerKey = "CUST-55555555555",
+                requestedLimit = 1500000,
+                revisionType = "Ek Limit Artırımı",
+                justification = "Yeni ihracat bağlantıları için ek ticari limit.",
+            },
+            user: Alice);
+
+        revision.State.Should().Be("maker-review");
+        revision.Key.Should().Be("REV-CUST-55555555555");
+        revision.Data["customerName"]!.GetValue<string>().Should().Be("Ege İhracat Sanayi A.Ş.");
+        revision.Data["currentExposure"]!.GetValue<decimal>().Should().Be(400000m);
+        revision.Data["activeLoanCount"]!.GetValue<int>().Should().Be(1);
+        revision.Data["netAvailableLimit"]!.GetValue<decimal>().Should().Be(1100000m);
+
+        // 3. Revise requestedLimit via $self transition 'revise-requested-limit'
+        revision = await host.TransitionAsync(revision.Id, "revise-requested-limit", new { requestedLimit = 2000000 }, user: Alice);
+        revision.State.Should().Be("maker-review");
+        revision.Data["requestedLimit"]!.GetValue<decimal>().Should().Be(2000000m);
+        revision.Data["netAvailableLimit"]!.GetValue<decimal>().Should().Be(1600000m);
+
+        // 4. Alice approves stage 1 (maker) -> moves to checker-approval
+        revision = await host.TransitionAsync(revision.Id, "submit-to-checker", new { makerComment = "Nakit akışı uygun" }, user: Alice);
+        revision.State.Should().Be("checker-approval");
+
+        // 4-Eyes: Alice ($previousUser) cannot see 'approve-four-eyes', Bob approves -> updates customer-onboarding and completes
+        revision.AvailableTransitions.Select(t => t.Key).Should().NotContain("approve-four-eyes");
+        revision = await host.TransitionAsync(revision.Id, "approve-four-eyes", new { checkerComment = "Komite 4-göz onayı verildi" }, user: Bob);
+        revision.State.Should().Be("completed");
+        revision.Status.Should().Be(WorkflowInstanceStatus.Completed);
+
+        // Verify updateWorkflow updated the customer-onboarding record
+        var updatedCustomer = await host.GetAsync(customer.Id, user: Alice);
+        updatedCustomer.Data["approvedCommercialLimit"]!.GetValue<decimal>().Should().Be(2000000m);
+        updatedCustomer.Data["lastLimitRevisionKey"]!.GetValue<string>().Should().Be("REV-CUST-55555555555");
+
+        // Verify limit-revision-detail layout renders cleanly without any '⚠' expression error
+        var layoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Layouts", "limit-revision-detail.json");
+        var layout = UiJson.Parse(await File.ReadAllTextAsync(layoutPath, ct));
+        var uiOptions = new MiddtUiOptions();
+        var renderedHtml = new UiHtmlRenderer(uiOptions.Widgets, Options.Create(uiOptions)).Render(
+            layout,
+            new Dictionary<string, JsonNode?>
+            {
+                [UiExpressions.Data] = revision.Data,
+                [UiExpressions.Instance] = new JsonObject
+                {
+                    ["state"] = revision.State,
+                    ["stateTitle"] = revision.StateTitle,
+                    ["workflow"] = revision.Workflow,
+                },
+            },
+            new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] },
+            CultureInfo.InvariantCulture);
+        var decodedHtml = System.Net.WebUtility.HtmlDecode(renderedHtml);
+        decodedHtml.Should().NotContain("⚠");
+        decodedHtml.Should().Contain("Ege İhracat Sanayi A.Ş.");
+        decodedHtml.Should().Contain("CUST-55555555555");
     }
 }

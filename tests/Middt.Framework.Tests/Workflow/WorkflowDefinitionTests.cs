@@ -103,7 +103,8 @@ public sealed class WorkflowDefinitionTests
             "sla-escalation",
             "risk-limit-eval",
             "invoice-collection",
-            "ai-dispute-resolution");
+            "ai-dispute-resolution",
+            "commercial-limit-revision");
 
         var invoice = registry.GetLatest("invoice-collection");
         invoice.History.Should().Be(HistoryMode.Delta);
@@ -137,7 +138,7 @@ public sealed class WorkflowDefinitionTests
         var registry = services.BuildServiceProvider().GetRequiredService<WorkflowRegistry>();
 
         registry.Invoking(r => r.EnsureLoaded()).Should().NotThrow();
-        registry.Latest.Should().HaveCount(7);
+        registry.Latest.Should().HaveCount(8);
     }
 
     [Fact]

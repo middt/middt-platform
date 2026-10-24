@@ -182,10 +182,16 @@ Task attempts use separate data snapshots. A failed attempt cannot leave partial
 Child cancellation, parent resumption and event delivery are written as jobs in the same commit as the state change. The engine tries them after commit for prompt results; the background processor handles work left by failures or restarts. Event delivery can repeat, so handlers should be idempotent. A job that still fails after 20 attempts is atomically removed and recorded as a workflow incident in a single database transaction for investigation; delivery is not guaranteed after that point.
 
 REST API (all responses use the `BaseResponseDataModel<T>` envelope; errors are ProblemDetails):
-`GET /api/workflows`, `GET /{workflow}`, `POST /{workflow}/instances`, `GET /{workflow}/instances`,
+`GET /api/workflows`, `GET /{workflow}`, `GET /{workflow}/definition`, `PUT /{workflow}/definition` (immutable versioning: bumps to `v2`, `v3`, … when a definition already exists so running instances keep their version), `GET /{workflow}/versions`, `GET /{workflow}/diff?fromVersion=1&toVersion=2` (structural + RFC 6902 JSON Patch diff), `POST /{workflow}/versions/{version}/rollback`, `POST /validate`, `GET /tasks`,
+`POST /{workflow}/instances`, `GET /{workflow}/instances`,
 `GET /{workflow}/instances/{id}` (includes the caller's available transitions and their input schemas),
-`POST` or `PATCH /{workflow}/instances/{id}/transitions/{key}[?async=true]`, `GET …/history`, `GET …/incidents`, `POST …/retry` (a transition body is an object, or a JSON Patch array for `input.format: jsonPatch` with `application/json` or `application/json-patch+json`),
-`POST /{workflow}/instances/{id}/messages/{message}` and `POST /{workflow}/messages/{message}?key=…` (`[&bufferFor=PT10M]`; 200 delivered, 202 buffered).
+`POST` or `PATCH /{workflow}/instances/{id}/transitions/{key}[?async=true]`, `GET …/history`, `GET …/incidents`, `POST …/retry` (re-validates transition `roles`, `denyRoles`, `$previousUser`, `rule`, `input.rule`, and `DataSchema` `x-roles`/`readOnly` guards; accepts an optional override body or JSON Patch array for `input.format: jsonPatch` with `application/json` or `application/json-patch+json`),
+`POST /{workflow}/instances/{id}/messages/{message}` and `POST /{workflow}/messages/{message}?key=…` (`[&bufferFor=PT10M]`; 200 delivered, 202 buffered),
+`GET /inbox` (unified human task inbox across all workflows, filtered by `roles`, `instanceAccess`, and transition `CanExecute`),
+`GET /operations` and `POST /operations/retry-batch` (admin operations center: faulted instances, unresolved incidents, pending jobs, and batch retry),
+`POST /{workflow}/simulate` (side-effect-free dry-run simulator with step traces),
+`GET /bundle`, `POST /bundle/import` (portable workflow + layout + agent/tool/MCP bundle with SHA-256 checksum & CI `dryRun`), and `POST /maintenance/purge` (retention purge for terminal instances).
+Every HTTP request to `/instances`, `/transitions`, or `/messages` automatically enriches `input.header` with `correlationId` (`X-Correlation-ID`), `traceId`, `spanId`, `clientIp`, and `userAgent`.
 
 ### Messages (event transitions)
 
@@ -419,14 +425,14 @@ HTML (`UiHtmlRenderer`), and Angular renders it with `@middt/angular` (on `@midd
 - **Blazor & Angular**: `<UiPageHost Key="@Key" />` / `<UiLayoutHost />` (Blazor) and `<middt-layout-page />` / `<middt-layout-host />` (Angular), plus the visual drag-and-drop **Screen Designer** (`<UiLayoutEditor />` / `<middt-layout-editor />` at `/ui-admin` – widget palette, 2D canvas, property inspector, structured column/field editors, live preview, JSON code tab, server validation, revisions) and the **Workflow Designer** (`<WorkflowDesigner />` / `<middt-workflow-designer />` at `/workflow-admin` – drag-and-drop states & 16 tasks, live SVG transition arrows, lasso multi-select, and direct bi-directional integration with `/ui-admin` to create or edit state `view.layout` screens).
   Grid/record/layout widgets call the API **with the signed-in user's token**, so API authorization is unchanged;
   a layout can only show what the user may already read.
-- **Workflows**: every state in the sample uses `"view": { "layout": "kyc-review" }` (or `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`);
+- **Workflows**: every state in the sample uses `"view": { "layout": "kyc-review" }` (or `credit-review`, `limit-revision-detail`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`);
   both frontends render it automatically with `data` and `instance`. `SubFlow` states delegate rendering to the active child workflow state automatically (or use an optional fallback `view.layout`).
 - **Editors**: `GET api/ui/schema` (also committed as `spec/ui-layout.schema.json`) is the JSON Schema of layouts;
   seed files reference it with `"$schema"` for completion in VS Code / Rider.
 - **Custom widgets**: register the spec in the API – `o.AddWidget(spec, html)` (optional static HTML) – and an
   implementation in each frontend: `AddMiddtUi(w => w.Add<MyWidget>(spec))` in Blazor, `provideMiddtUiWidgets({ name, component })` in Angular.
 
-All screens in `demo/Middt.Demo.Api/Layouts` (`customer-directory`, `credit-pipeline`, `order-monitor`, `kyc-review`, `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`, `customer-summary-card`, `risk-eval-card`, and `workflow-footer`) are 100% backend-driven JSON layouts.
+All screens in `demo/Middt.Demo.Api/Layouts` (`customer-directory`, `credit-pipeline`, `order-monitor`, `kyc-review`, `credit-review`, `limit-revision-detail`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`, `customer-summary-card`, `risk-eval-card`, and `workflow-footer`) are 100% backend-driven JSON layouts.
 
 ## Messaging (Rebus)
 
@@ -469,7 +475,9 @@ Publishing after `SaveChanges` is not atomic with the database write; use Rebus'
 | Search filters & sorting | Filters and sorting (numeric & text, with deterministic `id` tie-breaker) pushed down to SQL before pagination; masked (`x-mask`) or non-pushable fields are rejected | – |
 | Workflow errors | raw task errors hidden from API callers (logged + stored) | `MiddtWorkflowOptions.ExposeErrorDetails` |
 | Workflow instances | everyone allowed by `roles` sees all instances | `"instanceAccess": { "mode": "owner", "supervisorRoles": ["manager"] }` (the demo uses it) |
-| Workflow `http` task | no redirects; any host of the definition | `AllowedHttpHosts` |
+| Workflow `retry` & cross-workflow tasks | `POST …/retry` re-evaluates transition `roles`, `denyRoles`, `$previousUser`, `rule`, `input.rule`, and `DataSchema` `x-roles`/`readOnly` checks; `loadWorkflow`/`queryWorkflow`/`updateWorkflow` enforce target workflow `roles`, `instanceAccess`, and recursive `DataSchema` masking | – |
+| Workflow `http` & MCP egress | no redirects; host placeholders forbidden; remote HTTP & MCP endpoints checked against `AllowedHttpHosts` when configured | `AllowedHttpHosts` |
+| AI agent tools & budgets | declarative/MCP tools honor `roles` RBAC; agents enforce `maxToolCalls` and `maxTotalTokens` budgets | `AgentDefinition.MaxToolCalls`, `MaxTotalTokens`, `AgentToolDefinition.Roles` |
 | BFF proxy | `/api/**/token/**` is not proxied (tokens never reach JS) | `MiddtBffOptions.ProxyDeniedPaths` |
 | BFF login | per IP and per user name (failed logins); OIDC mode: password form disabled, code + PKCE at the provider | `LoginAttemptsPerMinute`, `LoginAttemptsPerUsernamePerMinute`, `Bff:Oidc` |
 | Logout | auto-submits only from the same origin (no logout CSRF) | – |

@@ -1,10 +1,13 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Middt.Framework.Common.Model.Data;
+using Middt.Framework.Expressions;
 using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow.Definitions;
 using Middt.Framework.Workflow.Expressions;
@@ -94,50 +97,256 @@ public static class WorkflowEndpoints
                 throw new WorkflowValidationException(["The route workflow key and the definition 'key' differ."]);
             }
 
-            var (savedDef, savedJson) = registry.Save(definition);
-
-            var serialized = savedJson.ToJsonString(WorkflowJson.Options);
-            var existingRecord = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
-                db.Definitions,
-                d => d.Key == savedDef.Key && d.Version == savedDef.Version,
-                ct);
-
-            if (existingRecord is null)
-            {
-                db.Definitions.Add(new Persistence.WorkflowDefinitionRecord
-                {
-                    Key = savedDef.Key,
-                    Version = savedDef.Version,
-                    Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title,
-                    Content = serialized,
-                    UpdatedBy = user.Id,
-                    UpdatedAt = DateTime.UtcNow,
-                });
-            }
-            else
-            {
-                existingRecord.Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title;
-                existingRecord.Content = serialized;
-                existingRecord.UpdatedBy = user.Id;
-                existingRecord.UpdatedAt = DateTime.UtcNow;
-            }
-
-            try
-            {
-                await db.SaveChangesAsync(ct);
-            }
-            catch
-            {
-                // Ignore if in-memory test database did not create the definitions table yet.
-            }
-
-            if (db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true)
-            {
-                await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, workflowOptions.Value.Schema, null, ct);
-            }
-
+            var savedJson = await PersistAndCommitDefinitionAsync(definition, registry, db, workflowOptions.Value, user, ct);
             return BaseResponseDataModel<JsonObject>.Success(savedJson, 1);
         }).WithName("SaveWorkflowDefinitionJson");
+
+        group.MapGet("{workflow}/versions", async (string workflow, WorkflowRegistry registry, Persistence.WorkflowDbContext db, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var versions = registry.GetVersions(workflow);
+            var latest = versions[^1];
+            var user = WorkflowUser.From(principal);
+            if (latest.Roles.Count > 0 && !latest.Roles.Any(user.IsInRole) && !user.IsInRole("ui-admin"))
+            {
+                throw new WorkflowForbiddenException($"You are not allowed to access workflow '{workflow}'.");
+            }
+
+            Dictionary<int, (string? UpdatedBy, DateTime UpdatedAt)> persistedMeta = [];
+            if (await WorkflowStartup.TableExistsAsync(db, workflowOptions.Value.Schema, "WorkflowDefinitions", ct))
+            {
+                var rows = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+                    Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Definitions)
+                        .Where(d => d.Key == workflow),
+                    ct);
+                foreach (var row in rows)
+                {
+                    persistedMeta[row.Version] = (row.UpdatedBy, row.UpdatedAt);
+                }
+            }
+
+            var items = versions
+                .OrderByDescending(v => v.Version)
+                .Select(v =>
+                {
+                    persistedMeta.TryGetValue(v.Version, out var meta);
+                    return new WorkflowVersionSummaryModel
+                    {
+                        Version = v.Version,
+                        Title = v.Title,
+                        StatesCount = v.States.Count,
+                        TransitionsCount = v.States.Sum(s => s.Transitions.Count) + v.SharedTransitions.Count,
+                        IsLatest = v.Version == latest.Version,
+                        UpdatedBy = meta.UpdatedBy,
+                        UpdatedAt = meta.UpdatedAt == default ? null : meta.UpdatedAt,
+                    };
+                })
+                .ToList();
+
+            return BaseResponseDataModel<List<WorkflowVersionSummaryModel>>.Success(items, items.Count);
+        }).WithName("ListWorkflowVersions");
+
+        group.MapGet("{workflow}/diff", (string workflow, int? fromVersion, int? toVersion, WorkflowRegistry registry, ClaimsPrincipal principal) =>
+        {
+            var versions = registry.GetVersions(workflow);
+            var latest = versions[^1];
+            var user = WorkflowUser.From(principal);
+            if (latest.Roles.Count > 0 && !latest.Roles.Any(user.IsInRole) && !user.IsInRole("ui-admin"))
+            {
+                throw new WorkflowForbiddenException($"You are not allowed to access workflow '{workflow}'.");
+            }
+
+            var resolvedTo = toVersion ?? latest.Version;
+            var resolvedFrom = fromVersion ?? (versions.Count > 1 && resolvedTo == latest.Version ? versions[^2].Version : resolvedTo);
+
+            var fromDef = registry.Get(workflow, resolvedFrom);
+            var toDef = registry.Get(workflow, resolvedTo);
+            var fromJson = registry.GetJson(workflow, resolvedFrom);
+            var toJson = registry.GetJson(workflow, resolvedTo);
+
+            var fromStateKeys = fromDef.States.Select(s => s.Key).ToHashSet(StringComparer.Ordinal);
+            var toStateKeys = toDef.States.Select(s => s.Key).ToHashSet(StringComparer.Ordinal);
+
+            var addedStates = toStateKeys.Except(fromStateKeys, StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal).ToList();
+            var removedStates = fromStateKeys.Except(toStateKeys, StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal).ToList();
+
+            var changedStates = new List<string>();
+            foreach (var commonState in fromStateKeys.Intersect(toStateKeys, StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal))
+            {
+                var s1 = fromJson["states"]?.AsArray().FirstOrDefault(n => string.Equals(n?["key"]?.GetValue<string>(), commonState, StringComparison.Ordinal));
+                var s2 = toJson["states"]?.AsArray().FirstOrDefault(n => string.Equals(n?["key"]?.GetValue<string>(), commonState, StringComparison.Ordinal));
+                if (!JsonNode.DeepEquals(s1, s2))
+                {
+                    changedStates.Add(commonState);
+                }
+            }
+
+            var fromTransitions = fromDef.States.SelectMany(s => s.Transitions.Select(t => $"{s.Key}:{t.Key}"))
+                .Concat(fromDef.SharedTransitions.Select(t => $"*:{t.Key}"))
+                .ToHashSet(StringComparer.Ordinal);
+            var toTransitions = toDef.States.SelectMany(s => s.Transitions.Select(t => $"{s.Key}:{t.Key}"))
+                .Concat(toDef.SharedTransitions.Select(t => $"*:{t.Key}"))
+                .ToHashSet(StringComparer.Ordinal);
+
+            var diffModel = new WorkflowVersionDiffModel
+            {
+                Key = workflow,
+                FromVersion = resolvedFrom,
+                ToVersion = resolvedTo,
+                AddedStates = addedStates,
+                RemovedStates = removedStates,
+                ChangedStates = changedStates,
+                AddedTransitions = toTransitions.Except(fromTransitions, StringComparer.Ordinal).OrderBy(t => t, StringComparer.Ordinal).ToList(),
+                RemovedTransitions = fromTransitions.Except(toTransitions, StringComparer.Ordinal).OrderBy(t => t, StringComparer.Ordinal).ToList(),
+                Patch = JsonPatch.Diff(fromJson, toJson),
+            };
+
+            return BaseResponseDataModel<WorkflowVersionDiffModel>.Success(diffModel, 1);
+        }).WithName("GetWorkflowVersionDiff");
+
+        group.MapPost("{workflow}/versions/{version:int}/rollback", async (string workflow, int version, WorkflowRegistry registry, Persistence.WorkflowDbContext db, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var user = WorkflowUser.From(principal);
+            if (requireAuthorization && !user.IsInRole("ui-admin"))
+            {
+                throw new WorkflowForbiddenException("Rolling back workflow definitions requires the 'ui-admin' role.");
+            }
+
+            var targetJson = registry.GetJson(workflow, version);
+            var savedJson = await PersistAndCommitDefinitionAsync(targetJson, registry, db, workflowOptions.Value, user, ct);
+            return BaseResponseDataModel<JsonObject>.Success(savedJson, 1);
+        }).WithName("RollbackWorkflowVersion");
+
+        group.MapGet("operations", async (string? workflow, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var summary = await engine.GetOperationsSummaryAsync(workflow, WorkflowUser.From(principal), ct);
+            return BaseResponseDataModel<WorkflowOperationsSummaryModel>.Success(summary, 1);
+        }).WithName("GetWorkflowOperationsSummary");
+
+        group.MapPost("operations/retry-batch", async (WorkflowBatchRetryRequest request, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+        {
+            var result = await engine.RetryBatchAsync(request, WorkflowUser.From(principal), http, ct);
+            return BaseResponseDataModel<WorkflowBatchOperationResultModel>.Success(result, result.SucceededIds.Count);
+        }).WithName("RetryWorkflowBatch");
+
+        group.MapGet("inbox", async (string? workflow, int? page, int? pageSize, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var (items, totalCount) = await engine.ListInboxAsync(workflow, WorkflowUser.From(principal), page ?? 1, pageSize ?? 20, ct);
+            return BaseResponseDataModel<List<WorkflowInboxItemModel>>.Success(items, totalCount);
+        }).WithName("ListWorkflowInbox");
+
+        group.MapPost("{workflow}/simulate", async (string workflow, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] WorkflowSimulationRequest? request, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var result = await engine.SimulateAsync(workflow, request ?? new WorkflowSimulationRequest(), WorkflowUser.From(principal), ct);
+            return BaseResponseDataModel<WorkflowSimulationResultModel>.Success(result, 1);
+        }).WithName("SimulateWorkflow");
+
+        group.MapGet("bundle", (WorkflowRegistry registry, ClaimsPrincipal principal) =>
+        {
+            var user = WorkflowUser.From(principal);
+            var definitions = registry.Latest
+                .Where(d => d.Roles.Count == 0 || d.Roles.Any(user.IsInRole) || user.IsInRole("ui-admin"))
+                .OrderBy(d => d.Key, StringComparer.Ordinal)
+                .ToList();
+
+            var items = new List<WorkflowBundleItemModel>(definitions.Count);
+            var bundleDigestBuilder = new StringBuilder();
+            foreach (var def in definitions)
+            {
+                var raw = registry.GetJson(def.Key, def.Version);
+                var canonical = raw.ToJsonString(WorkflowJson.Options);
+                var itemChecksum = ComputeSha256Hex(canonical);
+                bundleDigestBuilder.Append(def.Key).Append(':').Append(def.Version).Append(':').Append(itemChecksum).Append('\n');
+                items.Add(new WorkflowBundleItemModel
+                {
+                    Key = def.Key,
+                    Version = def.Version,
+                    Title = def.Title,
+                    Checksum = itemChecksum,
+                    Definition = raw,
+                });
+            }
+
+            var bundle = new WorkflowBundleModel
+            {
+                ExportedAt = DateTime.UtcNow,
+                Checksum = ComputeSha256Hex(bundleDigestBuilder.ToString()),
+                Items = items,
+            };
+
+            return BaseResponseDataModel<WorkflowBundleModel>.Success(bundle, items.Count);
+        }).WithName("ExportWorkflowBundle");
+
+        group.MapPost("bundle/import", async (WorkflowBundleImportRequest request, WorkflowRegistry registry, Persistence.WorkflowDbContext db, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var user = WorkflowUser.From(principal);
+            if (requireAuthorization && !request.DryRun && !user.IsInRole("ui-admin"))
+            {
+                throw new WorkflowForbiddenException("Importing workflow bundles requires the 'ui-admin' role.");
+            }
+
+            var result = new WorkflowBundleImportResultModel { DryRun = request.DryRun };
+            if (request.Items.Count == 0)
+            {
+                result.Errors.Add("Bundle 'items' must contain at least one workflow definition.");
+                return BaseResponseDataModel<WorkflowBundleImportResultModel>.Success(result, 0);
+            }
+
+            var digestBuilder = new StringBuilder();
+            foreach (var item in request.Items.OrderBy(i => i.Key, StringComparer.Ordinal))
+            {
+                var canonical = item.Definition.ToJsonString(WorkflowJson.Options);
+                var computedItemChecksum = ComputeSha256Hex(canonical);
+                if (!string.IsNullOrWhiteSpace(item.Checksum) && !string.Equals(item.Checksum, computedItemChecksum, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Errors.Add($"Workflow '{item.Key}' checksum mismatch (expected '{item.Checksum}', actual '{computedItemChecksum}').");
+                }
+
+                var version = item.Definition["version"]?.GetValue<int>() ?? (item.Version > 0 ? item.Version : 1);
+                digestBuilder.Append(item.Key).Append(':').Append(version).Append(':').Append(computedItemChecksum).Append('\n');
+
+                var validation = registry.ValidateJson(item.Definition);
+                if (!validation.IsValid)
+                {
+                    foreach (var err in validation.Errors)
+                    {
+                        result.Errors.Add($"{item.Key}: {err}");
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.ExpectedChecksum))
+            {
+                var actualBundleChecksum = ComputeSha256Hex(digestBuilder.ToString());
+                if (!string.Equals(request.ExpectedChecksum, actualBundleChecksum, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Errors.Add($"Bundle checksum mismatch (expected '{request.ExpectedChecksum}', actual '{actualBundleChecksum}').");
+                }
+            }
+
+            if (!result.IsValid || request.DryRun)
+            {
+                if (result.IsValid)
+                {
+                    result.ImportedWorkflows.AddRange(request.Items.Select(i => i.Key));
+                }
+
+                return BaseResponseDataModel<WorkflowBundleImportResultModel>.Success(result, result.ImportedWorkflows.Count);
+            }
+
+            foreach (var item in request.Items)
+            {
+                var saved = await PersistAndCommitDefinitionAsync(item.Definition, registry, db, workflowOptions.Value, user, ct);
+                result.ImportedWorkflows.Add(saved["key"]?.GetValue<string>() ?? item.Key);
+            }
+
+            return BaseResponseDataModel<WorkflowBundleImportResultModel>.Success(result, result.ImportedWorkflows.Count);
+        }).WithName("ImportWorkflowBundle");
+
+        group.MapPost("maintenance/purge", async (WorkflowPurgeRequest request, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var result = await engine.PurgeAsync(request, WorkflowUser.From(principal), ct);
+            return BaseResponseDataModel<WorkflowPurgeResultModel>.Success(result, result.PurgedInstancesCount);
+        }).WithName("PurgeWorkflowInstances");
 
         group.MapGet("{workflow}", (string workflow, int? version, WorkflowRegistry registry, ClaimsPrincipal principal) =>
         {
@@ -365,6 +574,87 @@ public static class WorkflowEndpoints
         }
 
         return result;
+    }
+
+    private static async Task<JsonObject> PersistAndCommitDefinitionAsync(
+        JsonObject definition,
+        WorkflowRegistry registry,
+        Persistence.WorkflowDbContext db,
+        MiddtWorkflowOptions workflowOptions,
+        WorkflowUser user,
+        CancellationToken ct)
+    {
+        var key = definition["key"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            throw new WorkflowValidationException(["'key' is required."]);
+        }
+
+        int? dbMaxVersion = null;
+        var hasDefinitionsTable = await WorkflowStartup.TableExistsAsync(db, workflowOptions.Schema, "WorkflowDefinitions", ct);
+        if (hasDefinitionsTable)
+        {
+            dbMaxVersion = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.MaxAsync(
+                db.Definitions.Where(d => d.Key == key).Select(d => (int?)d.Version),
+                ct);
+        }
+
+        var (savedDef, savedJson) = registry.PrepareSave(definition, dbMaxVersion);
+        var serialized = savedJson.ToJsonString(WorkflowJson.Options);
+
+        if (hasDefinitionsTable)
+        {
+            var existingRecord = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                db.Definitions,
+                d => d.Key == savedDef.Key && d.Version == savedDef.Version,
+                ct);
+
+            if (existingRecord is null)
+            {
+                db.Definitions.Add(new Persistence.WorkflowDefinitionRecord
+                {
+                    Key = savedDef.Key,
+                    Version = savedDef.Version,
+                    Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title,
+                    Content = serialized,
+                    UpdatedBy = user.Id,
+                    UpdatedAt = DateTime.UtcNow,
+                });
+            }
+            else
+            {
+                existingRecord.Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title;
+                existingRecord.Content = serialized;
+                existingRecord.UpdatedBy = user.Id;
+                existingRecord.UpdatedAt = DateTime.UtcNow;
+            }
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not WorkflowException)
+            {
+                throw new WorkflowPersistenceException(
+                    $"Workflow definition '{savedDef.Key}' could not be persisted to the database.",
+                    ex);
+            }
+        }
+
+        registry.CommitSaved(savedDef, savedJson);
+
+        if (db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true)
+        {
+            await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, workflowOptions.Schema, null, ct);
+        }
+
+        return savedJson;
+    }
+
+    private static string ComputeSha256Hex(string text)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(text));
+        return Convert.ToHexStringLower(hash);
     }
 
     private static string ComputeInstanceETag(WorkflowInstanceModel instance) =>

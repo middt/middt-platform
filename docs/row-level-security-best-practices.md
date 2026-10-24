@@ -164,15 +164,17 @@ public override async Task<ActionResult<BaseResponseDataModel<Customer>>> Insert
 
 > **Vaka:** Müşteri ekleme veya hesap açılış akışında, açılır kutudan (dropdown) **yalnızca o şubenin personelleri** seçilebilmelidir.
 
-### Yöntem 1: Doğrudan SQL ile Yükleme (`db-query`)
-Akışın ilgili adımına (`onEntry`) doğrudan bir `db-query` görevi eklenerek şube ID'si parametrik olarak sorgulanabilir:
+### Yöntem 1: Akışlar Arası Dinamik Sorgulama (`queryWorkflow`)
+Akışın ilgili adımına (`onEntry`) doğrudan bir `queryWorkflow` görevi eklenerek şube ID'si ve aktiflik durumu PostgreSQL partition indeksleri üzerinden sorgulanabilir:
 
 ```json
 {
-  "task": "db-query",
+  "task": "queryWorkflow",
   "config": {
-    "sql": "SELECT staff_id AS id, first_name + ' ' + last_name AS name FROM staffs WHERE branch_id = {0} AND active = 1",
-    "parameters": [ "{{ input.branchId ?? data.branchId }}" ],
+    "workflow": "branch-staff",
+    "state": "active",
+    "where": "target.branchId == (input.branchId ?? data.branchId)",
+    "select": [ "id", "key", "fullName", "branchId" ],
     "into": "availableStaffList"
   }
 }
@@ -186,11 +188,11 @@ Akışın ilgili adımına (`onEntry`) doğrudan bir `db-query` görevi eklenere
 
 ### Yöntem 2: Tekrar Kullanılabilir SubFlow (Alt Akış) Deseni *(Önerilen Yaklaşım)*
 
-SQL sorgusunu her akışa gömmek yerine, veri çekme mantığı **bağımsız ve tekrar kullanılabilir bir Alt Akış (SubFlow)** haline getirilir:
+Sorguyu her akışa gömmek yerine, veri çekme mantığı **bağımsız ve tekrar kullanılabilir bir Alt Akış (SubFlow)** haline getirilir:
 
 #### 1. Reusable Alt Akış Tanımı (`get-branch-staff.json`)
 
-Bu demo akışı parametreli SQL ve alt akış veri eşlemesini gösterir; **şube yetkilendirmesi yapmaz**. Aşağıdaki
+Bu demo akışı parametreli `queryWorkflow` sorgusunu ve alt akış veri eşlemesini gösterir; **şube yetkilendirmesi yapmaz**. Aşağıdaki
 `branchId` değerini istemciden alıp doğrudan sorguda kullanmak gerçek personel verisi için yeterli değildir. Üretim
 uygulamasında yetkili şube sunucuda doğrulanmış kimlik bilgisinden gelmeli ve sorgudan önce kontrol edilmelidir.
 Bu akış parametre olarak `branchId` alır, doğrular, sorguyu çalıştırır ve sonucu döner:
@@ -215,10 +217,12 @@ Bu akış parametre olarak `branchId` alır, doğrular, sorguyu çalıştırır 
       "title": "Personel Sorgusu",
       "onEntry": [
         {
-          "task": "db-query",
+          "task": "queryWorkflow",
           "config": {
-            "sql": "SELECT staff_id AS id, first_name + ' ' + last_name AS name FROM staffs WHERE branch_id = {0} AND active = 1",
-            "parameters": [ "{{ data.branchId }}" ],
+            "workflow": "branch-staff",
+            "state": "active",
+            "where": "target.branchId == data.branchId",
+            "select": [ "id", "key", "fullName" ],
             "into": "items"
           }
         }
@@ -296,7 +300,7 @@ Alt akış tamamlandığında veriler ebeveyn akışın `data.availableStaff` al
 1. **Sıfır Bekleme Süresi (Senkron Yürütme):** Alt akışın tüm adımları `Automatic` olduğunda, Middt motoru alt akışı başlatır, sorguyu çalıştırır ve ebeveyne geri döner. Ebeveyn akış tek bir tick içinde `assign-staff-step` ekranına geçer; kullanıcı gecikme hissetmez.
 2. **Kapsülleme (Encapsulation):** Tablo adı, kolon adı veya filtre kuralı (`active = 1`, `store_id`) değiştiğinde yalnızca `get-branch-staff.json` dosyası güncellenir; onlarca iş akışına dokunulmaz.
 3. **Versiyonlama Desteği:** İleride `version: 2` çıkartılabilir ve eski çalışan akışlar bozulmadan yeni akışlara entegre edilebilir (`"version": 2`).
-4. **Kolay Zenginleştirme:** Gelecekte alt akışın içine SQL sorgusu öncesinde Redis önbellek kontrolü (`cache-get`) veya harici İK servisinden LDAP kontrolü (`http-request`) eklemek mümkündür.
+4. **Kolay Zenginleştirme:** Gelecekte alt akışın içine sorgu öncesinde Redis önbellek kontrolü (`cache`) veya harici İK servisinden LDAP kontrolü (`http`) eklemek mümkündür.
 
 ---
 
@@ -314,7 +318,7 @@ Middt Framework bu farklı kaynakları şu stratejilerle destekler:
 #### A. Otomatik HTTP Bağlamı (`input.header`, `input.query`, `input.body`)
 Middt Framework'te REST API (`WorkflowEndpoints`) üzerinden gelen HTTP isteklerinde, framework gelen tüm HTTP bağlamını **otomatik olarak** `input` zarfına yerleştirir:
 
-- **`input.header.*`**: İstek başlıkları (örneğin `X-Branch-Id: 101` gönderildiğinde `input.header.branchId`, `input.header.xBranchId` veya `input.header["X-Branch-Id"]`).
+- **`input.header.*`**: İstek başlıkları (örneğin `X-Branch-Id: 101` gönderildiğinde `input.header.branchId`, `input.header.xBranchId` veya `input.header["X-Branch-Id"]`) ve otomatik üretilen izleme/denetim alanları (`input.header.correlationId`, `input.header.traceId`, `input.header.spanId`, `input.header.clientIp`, `input.header.userAgent`).
 - **`input.query.*`**: URL sorgu parametreleri (örneğin `?branchId=101` gönderildiğinde `input.query.branchId`).
 - **`input.body.*`**: İstek gövdesi (JSON body içerisindeki alanlar).
 - **`input.*`**: Geriye dönük uyumluluk ve doğrudan erişim için gövdedeki alanlar (`body`) doğrudan `input` kökünde de mevcuttur (örneğin `input.branchId`).
@@ -326,12 +330,11 @@ Middt'in taşınabilir ifade motoru (`ExpressionEvaluator`) **null-coalescing (`
 
 ```json
 {
-  "task": "db-query",
+  "task": "queryWorkflow",
   "config": {
-    "sql": "SELECT staff_id AS id, first_name + ' ' + last_name AS name FROM staffs WHERE branch_id = {0} AND active = 1",
-    "parameters": [
-      "{{ input.header.branchId ?? input.query.branchId ?? input.body.branchId ?? data.branchId }}"
-    ],
+    "workflow": "branch-staff",
+    "state": "active",
+    "where": "target.branchId == (input.header.branchId ?? input.query.branchId ?? input.body.branchId ?? data.branchId)",
     "into": "availableStaffList"
   }
 }
@@ -406,12 +409,12 @@ Eğer kullanıcı sayfaya `?branchId=101` linki ile gelmişse veya aktif şubesi
   });
   ```
 
-#### D. Dış Servis Çağrılarında Header ve Query Aktarımı (`http-request` Task)
+#### D. Dış Servis Çağrılarında Header ve Query Aktarımı (`http` Task)
 İş akışının bir adımı harici bir REST API çağrısı yapıyorsa (`HttpTask`), URL Query ve Header değerleri doğrudan JSON tanımı üzerinden `{{ ... }}` şablonlarıyla beslenebilir:
 
 ```json
 {
-  "task": "http-request",
+  "task": "http",
   "config": {
     "method": "GET",
     "url": "https://api.internal/v1/staffs",
@@ -498,9 +501,13 @@ Limit aşımlarında Genel Müdürlük ya da Şube Müdürü ayrımı otomatik a
 
 ## 7. Katman 5: Onay Havuzu ve Görev Listesi (Worklist / Inbox)
 
-Şube müdürü sisteme girdiğinde tüm bankadaki binlerce işlemi değil, sadece kendi şubesinde onay bekleyen EFT'leri görmelidir:
+Şube müdürü sisteme girdiğinde tüm bankadaki binlerce işlemi değil, sadece kendi yetkisinde onay bekleyen kayıtları görmelidir:
 
-### A. API Seviyesinde Havuz Filtreleme
+### A. Birleşik Görev Kutusu (`GET /api/workflows/inbox`)
+
+`WorkflowEngine.GetInboxAsync` (`GET /api/workflows/inbox`) tüm iş akışlarındaki aktif ve `subType: "Human"` durumundaki kayıtları tarar; her kaydın kendi tanım sürümündeki (`WorkflowVersion`) `roles` ve `instanceAccess` kurallarını ve durumdaki manuel geçişlerin `CanExecute` koşullarını (`roles`, `denyRoles`, `$previousUser` 4-göz ilkesi ve geçiş `rule` ifadesi) değerlendirir. Yalnızca çağrıyı yapan kullanıcının o anda tetikleyebileceği en az bir manuel geçişi bulunan kayıtlar (`AvailableTransitions`) ve kullanıcının rolüne göre maskelenmiş (`ApplySchemaReadAccess`) veri özeti döndürülür.
+
+### B. Liste Sorgularında SQL Seviyesinde Şube Filtreleme
 
 `WorkflowEngine.ListAsync` iş akışı, durum, iş anahtarı ve tanım sürümünün `roles` / `instanceAccess` kurallarını
 uygular; **şube filtresi sağlamaz**. Bu nedenle `ListAsync` sonucunu bellekte `Data["branchId"]` ile daraltmak doğru

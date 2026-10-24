@@ -22,60 +22,68 @@ internal sealed class WorkflowStartup(
     {
         registry.EnsureLoaded();
 
-        if (!options.Value.AutoCreateSchema)
-        {
-            return;
-        }
-
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<WorkflowDbContext>();
-        var creator = db.GetService<IRelationalDatabaseCreator>();
 
-        if (!await creator.ExistsAsync(cancellationToken))
+        if (options.Value.AutoCreateSchema)
         {
-            await creator.CreateAsync(cancellationToken);
-        }
+            var creator = db.GetService<IRelationalDatabaseCreator>();
 
-        var isPostgres = db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true;
-
-        if (!await TablesExistAsync(db, cancellationToken))
-        {
-            // Tables of this context only (the database may contain other application tables).
-            if (options.Value.Schema is { Length: > 0 } schema && !db.Database.ProviderName!.Contains("Sqlite", StringComparison.Ordinal))
+            if (!await creator.ExistsAsync(cancellationToken))
             {
-                await EnsureSchemaAsync(db, schema, cancellationToken);
+                await creator.CreateAsync(cancellationToken);
             }
 
-            if (isPostgres)
+            var isPostgres = db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true;
+
+            if (!await TablesExistAsync(db, cancellationToken))
             {
-                await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
+                // Tables of this context only (the database may contain other application tables).
+                if (options.Value.Schema is { Length: > 0 } schema && !db.Database.ProviderName!.Contains("Sqlite", StringComparison.Ordinal))
+                {
+                    await EnsureSchemaAsync(db, schema, cancellationToken);
+                }
+
+                if (isPostgres)
+                {
+                    await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
+                }
+                else
+                {
+                    await creator.CreateTablesAsync(cancellationToken);
+                }
             }
             else
             {
-                await creator.CreateTablesAsync(cancellationToken);
+                // CreateTables only runs for a new database: ensure any newly added partitioned tables and nullable columns exist.
+                if (isPostgres)
+                {
+                    await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
+                }
+
+                await EnsureWorkflowKeyMigrationAsync(db, options.Value.Schema, cancellationToken);
+                await EnsureColumnsAsync(db, cancellationToken);
             }
         }
-        else
+
+        await RestorePersistedDefinitionsAsync(db, registry, options.Value.Schema, cancellationToken);
+
+        if (options.Value.AutoCreateSchema)
         {
-            // CreateTables only runs for a new database: ensure any newly added partitioned tables and nullable columns exist.
-            if (isPostgres)
-            {
-                await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
-            }
-
-            await EnsureWorkflowKeyMigrationAsync(db, options.Value.Schema, cancellationToken);
-            await EnsureColumnsAsync(db, cancellationToken);
+            await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, options.Value.Schema, logger, cancellationToken);
+            await EnsureIndexesAsync(db, cancellationToken);
         }
-
-        await RestorePersistedDefinitionsAsync(db, registry, cancellationToken);
-        await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, options.Value.Schema, logger, cancellationToken);
-        await EnsureIndexesAsync(db, cancellationToken);
     }
 
-    private static async Task RestorePersistedDefinitionsAsync(WorkflowDbContext db, WorkflowRegistry registry, CancellationToken cancellationToken)
+    private static async Task RestorePersistedDefinitionsAsync(WorkflowDbContext db, WorkflowRegistry registry, string? schema, CancellationToken cancellationToken)
     {
         try
         {
+            if (!await TableExistsAsync(db, schema, "WorkflowDefinitions", cancellationToken))
+            {
+                return;
+            }
+
             var rows = await db.Definitions
                 .AsNoTracking()
                 .OrderBy(d => d.Version)
@@ -88,7 +96,7 @@ internal sealed class WorkflowStartup(
         }
         catch
         {
-            // Table may not exist on legacy non-migrated SQLite databases.
+            // Database may not be created yet when AutoCreateSchema = false on an uninitialized store.
         }
     }
 
@@ -242,15 +250,18 @@ internal sealed class WorkflowStartup(
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private async Task<bool> TablesExistAsync(WorkflowDbContext db, CancellationToken cancellationToken)
+    private Task<bool> TablesExistAsync(WorkflowDbContext db, CancellationToken cancellationToken) =>
+        TableExistsAsync(db, options.Value.Schema, "WorkflowInstances", cancellationToken);
+
+    internal static async Task<bool> TableExistsAsync(WorkflowDbContext db, string? schemaName, string tableName, CancellationToken cancellationToken)
     {
         if (db.Database.ProviderName?.Contains("Sqlite", StringComparison.Ordinal) == true)
         {
-            return await db.Database.SqlQuery<int>($"SELECT COUNT(*) AS \"Value\" FROM sqlite_master WHERE type = 'table' AND name = 'WorkflowInstances'").SingleAsync(cancellationToken) > 0;
+            return await db.Database.SqlQuery<int>($"SELECT COUNT(*) AS \"Value\" FROM sqlite_master WHERE type = 'table' AND name = {tableName}").SingleAsync(cancellationToken) > 0;
         }
 
-        var schema = options.Value.Schema ?? "public";
-        return await db.Database.SqlQuery<int>($"SELECT CAST(COUNT(*) AS int) AS \"Value\" FROM information_schema.tables WHERE table_schema = {schema} AND table_name = 'WorkflowInstances'").SingleAsync(cancellationToken) > 0;
+        var schema = schemaName ?? "public";
+        return await db.Database.SqlQuery<int>($"SELECT CAST(COUNT(*) AS int) AS \"Value\" FROM information_schema.tables WHERE table_schema = {schema} AND table_name = {tableName}").SingleAsync(cancellationToken) > 0;
     }
 
     private static async Task EnsureSchemaAsync(WorkflowDbContext db, string schema, CancellationToken cancellationToken)

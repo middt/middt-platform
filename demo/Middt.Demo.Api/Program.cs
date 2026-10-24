@@ -14,6 +14,8 @@ using Middt.Demo.Api.Handlers;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+builder.Configuration.AddEnvironmentVariables();
+builder.Configuration.AddCommandLine(args);
 
 builder.AddMiddtOpenTelemetry();
 builder.AddMiddtApi(options => options.Title = "Middt Sample API");

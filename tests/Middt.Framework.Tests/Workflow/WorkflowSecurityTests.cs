@@ -304,4 +304,182 @@ public sealed class WorkflowSecurityTests
 
         await target.StopAsync(Ct);
     }
+
+    // ───────────────────────────── S-01: Retry authorization ─────────────────────────────
+
+    [Fact]
+    public async Task Retry_enforces_transition_roles_deny_roles_and_four_eyes()
+    {
+        const string definition = """
+            {
+              "key": "retry-auth",
+              "start": { "key": "start", "target": "review" },
+              "states": [
+                {
+                  "key": "review",
+                  "transitions": [
+                    {
+                      "key": "approve",
+                      "target": "done",
+                      "roles": [ "manager" ],
+                      "denyRoles": [ "$previousUser", "auditor" ],
+                      "input": {
+                        "schema": {
+                          "type": "object",
+                          "properties": { "note": { "type": "string" } }
+                        }
+                      },
+                      "onExecute": [
+                        { "task": "flaky", "key": "f", "config": { "failTimes": 1 } }
+                      ]
+                    }
+                  ]
+                },
+                { "key": "done", "type": "Finish" }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync([definition]);
+        var instance = await host.StartInstanceAsync("retry-auth", user: WorkflowTestHost.User("alice"));
+
+        // Manager bob executes approve, which faults on the first attempt.
+        var faulted = await host.TransitionAsync(instance.Id, "approve", new { note = "initial" }, user: WorkflowTestHost.User("bob", "manager"));
+        faulted.Status.Should().Be(WorkflowInstanceStatus.Faulted);
+
+        // 1. Reader without 'manager' role cannot retry (403) and does not receive PendingInputSchema
+        using var getReader = await SendAsync(host, HttpMethod.Get, $"{Base}/retry-auth/instances/{instance.Id}", "reader");
+        var readerView = (await EnvelopeAsync<WorkflowInstanceModel>(getReader)).Data!;
+        readerView.PendingInput.Should().BeNull();
+        readerView.PendingInputSchema.Should().BeNull();
+
+        using var retryReader = await SendAsync(host, HttpMethod.Post, $"{Base}/retry-auth/instances/{instance.Id}/retry", "reader");
+        retryReader.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        // 2. User in denyRoles ('auditor') cannot retry even if also 'manager'
+        using var retryAuditor = await SendAsync(host, HttpMethod.Post, $"{Base}/retry-auth/instances/{instance.Id}/retry", "dan", "manager", "auditor");
+        retryAuditor.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        // 3. Starter ('alice', who is $previousUser) cannot retry even if she has 'manager' role (4-eyes enforcement)
+        using var retryPreviousUser = await SendAsync(host, HttpMethod.Post, $"{Base}/retry-auth/instances/{instance.Id}/retry", "alice", "manager");
+        retryPreviousUser.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        // 4. Authorized manager ('carol') can retry with updated input and succeeds
+        using var retryManagerReq = host.Request(HttpMethod.Post, $"{Base}/retry-auth/instances/{instance.Id}/retry", new { note = "approved-by-carol" }, "carol", "manager");
+        using var retryManager = await host.Client.SendAsync(retryManagerReq, Ct);
+        retryManager.StatusCode.Should().Be(HttpStatusCode.OK);
+        var completed = (await EnvelopeAsync<WorkflowInstanceModel>(retryManager)).Data!;
+        completed.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        completed.Data["note"]!.GetValue<string>().Should().Be("approved-by-carol");
+    }
+
+    // ───────────────────────────── S-02: Cross-workflow access & masking ─────────────────────────────
+
+    [Fact]
+    public async Task LoadWorkflow_and_QueryWorkflow_enforce_owner_access_and_data_schema_masking()
+    {
+        const string sourceWf = """
+            {
+              "key": "protected-customer",
+              "instanceAccess": { "mode": "owner", "supervisorRoles": [ "manager" ] },
+              "dataSchema": {
+                "type": "object",
+                "properties": {
+                  "fullName": { "type": "string" },
+                  "identityNumber": { "type": "string", "x-mask": { "pattern": "last4", "exceptRoles": [ "manager" ] } },
+                  "internalNote": { "type": "string", "x-roles": [ "manager" ] }
+                }
+              },
+              "start": {
+                "key": "start",
+                "target": "active",
+                "input": { "schema": { "type": "object" } }
+              },
+              "states": [ { "key": "active" } ]
+            }
+            """;
+
+        const string readerWf = """
+            {
+              "key": "credit-check",
+              "instanceAccess": { "mode": "owner", "supervisorRoles": [ "manager" ] },
+              "start": {
+                "key": "start",
+                "target": "done",
+                "input": { "schema": { "type": "object", "properties": { "customerKey": { "type": "string" } } } }
+              },
+              "states": [
+                {
+                  "key": "done",
+                  "type": "Finish",
+                  "onEntry": [
+                    {
+                      "task": "loadWorkflow",
+                      "config": {
+                        "workflow": "protected-customer",
+                        "key": "{{ data.customerKey }}",
+                        "into": "loadedCustomer"
+                      }
+                    },
+                    {
+                      "task": "queryWorkflow",
+                      "config": {
+                        "workflow": "protected-customer",
+                        "into": "queriedCustomers"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync([sourceWf, readerWf]);
+
+        await host.StartInstanceAsync(
+            "protected-customer",
+            new { fullName = "Bob Secret", identityNumber = "12345678901", internalNote = "VIP Risk Note" },
+            key: "CUST-BOB",
+            user: WorkflowTestHost.User("bob"));
+
+        await host.StartInstanceAsync(
+            "protected-customer",
+            new { fullName = "Alice Own", identityNumber = "98765432109", internalNote = "Manager Only Note" },
+            key: "CUST-ALICE",
+            user: WorkflowTestHost.User("alice"));
+
+        // 1. Alice tries to load Bob's customer record via credit-check -> must not disclose Bob's record
+        var aliceAttemptOnBob = await host.StartInstanceAsync(
+            "credit-check",
+            new { customerKey = "CUST-BOB" },
+            user: WorkflowTestHost.User("alice"));
+
+        aliceAttemptOnBob.Data["loadedCustomer"]!["found"]!.GetValue<bool>().Should().BeFalse();
+        aliceAttemptOnBob.Data["loadedCustomer"]!.AsObject().ContainsKey("fullName").Should().BeFalse();
+        aliceAttemptOnBob.Data["queriedCustomers"]!["count"]!.GetValue<int>().Should().Be(1, "Alice only sees her own customer record in queryWorkflow");
+
+        // 2. Alice loads her own customer record -> found, but x-mask and x-roles are still enforced
+        var aliceOwn = await host.StartInstanceAsync(
+            "credit-check",
+            new { customerKey = "CUST-ALICE" },
+            user: WorkflowTestHost.User("alice"));
+
+        var loadedForAlice = aliceOwn.Data["loadedCustomer"]!.AsObject();
+        loadedForAlice["found"]!.GetValue<bool>().Should().BeTrue();
+        loadedForAlice["fullName"]!.GetValue<string>().Should().Be("Alice Own");
+        loadedForAlice["identityNumber"]!.GetValue<string>().Should().Be("*******2109");
+        loadedForAlice.ContainsKey("internalNote").Should().BeFalse("x-roles: [manager] must be stripped for non-managers");
+
+        // 3. Manager Carol loads Bob's customer record -> supervisor sees full unmasked data
+        var managerAttempt = await host.StartInstanceAsync(
+            "credit-check",
+            new { customerKey = "CUST-BOB" },
+            user: WorkflowTestHost.User("carol", "manager"));
+
+        var loadedForManager = managerAttempt.Data["loadedCustomer"]!.AsObject();
+        loadedForManager["found"]!.GetValue<bool>().Should().BeTrue();
+        loadedForManager["fullName"]!.GetValue<string>().Should().Be("Bob Secret");
+        loadedForManager["identityNumber"]!.GetValue<string>().Should().Be("12345678901");
+        loadedForManager["internalNote"]!.GetValue<string>().Should().Be("VIP Risk Note");
+    }
 }

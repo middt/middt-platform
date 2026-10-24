@@ -244,6 +244,18 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         IMiddtMcpClient mcpClient,
         CancellationToken cancellationToken)
     {
+        if (tool.Roles.Count > 0)
+        {
+            var callerUser = WorkflowTaskAmbientContext.Current?.Scope.User ?? WorkflowUser.System;
+            if (!string.Equals(callerUser.Id, WorkflowUser.System.Id, StringComparison.Ordinal)
+                && !tool.Roles.Any(callerUser.IsInRole)
+                && !callerUser.IsInRole("ui-admin"))
+            {
+                throw new InvalidOperationException(
+                    $"User is not allowed to invoke tool '{tool.Name}'. Required roles: [{string.Join(", ", tool.Roles)}].");
+            }
+        }
+
         args = CoerceArgumentsBySchema(args, tool.Parameters);
 
         if (!string.IsNullOrWhiteSpace(tool.Task))
@@ -567,6 +579,20 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         JsonObject parameters,
         CancellationToken cancellationToken)
     {
+        if (!Uri.TryCreate(server.Endpoint, UriKind.Absolute, out var endpointUri)
+            || (endpointUri.Scheme != Uri.UriSchemeHttp && endpointUri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException($"MCP server '{server.Name}' has an invalid HTTP/HTTPS endpoint '{server.Endpoint}'.");
+        }
+
+        var workflowOptions = _services.GetService<Microsoft.Extensions.Options.IOptions<Middt.Framework.Workflow.MiddtWorkflowOptions>>()?.Value;
+        if (workflowOptions is { AllowedHttpHosts.Count: > 0 }
+            && !workflowOptions.AllowedHttpHosts.Any(h => string.Equals(h, endpointUri.Host, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                $"MCP server '{server.Name}' host '{endpointUri.Host}' is not in MiddtWorkflowOptions.AllowedHttpHosts.");
+        }
+
         var httpClient = _services.GetRequiredService<IHttpClientFactory>().CreateClient(DefaultHttpClientName);
 
         var rpcRequest = new JsonObject

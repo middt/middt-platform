@@ -59,6 +59,88 @@ public class WorkflowApiClient(
         return SendAsync<BaseResponseDataModel<JsonObject>>(HttpMethod.Put, $"{WorkflowRoute(workflow)}/definition", definition, cancellationToken);
     }
 
+    /// <summary>Lists all immutable versions of <paramref name="workflow"/> ordered from newest to oldest.</summary>
+    public virtual Task<BaseResponseDataModel<List<WorkflowVersionSummaryModel>>> ListVersionsAsync(string workflow, CancellationToken cancellationToken = default) =>
+        SendAsync<BaseResponseDataModel<List<WorkflowVersionSummaryModel>>>(HttpMethod.Get, $"{WorkflowRoute(workflow)}/versions", null, cancellationToken);
+
+    /// <summary>Computes structural and RFC 6902 JSON Patch diff between two versions of <paramref name="workflow"/>.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowVersionDiffModel>> GetVersionDiffAsync(
+        string workflow,
+        int? fromVersion = null,
+        int? toVersion = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new StringBuilder();
+        AppendQuery(query, "fromVersion", fromVersion?.ToString(CultureInfo.InvariantCulture));
+        AppendQuery(query, "toVersion", toVersion?.ToString(CultureInfo.InvariantCulture));
+        return SendAsync<BaseResponseDataModel<WorkflowVersionDiffModel>>(HttpMethod.Get, $"{WorkflowRoute(workflow)}/diff{query}", null, cancellationToken);
+    }
+
+    /// <summary>Publishes an earlier <paramref name="version"/> of <paramref name="workflow"/> as a new latest version (requires <c>ui-admin</c> role).</summary>
+    public virtual Task<BaseResponseDataModel<JsonObject>> RollbackVersionAsync(string workflow, int version, CancellationToken cancellationToken = default) =>
+        SendAsync<BaseResponseDataModel<JsonObject>>(HttpMethod.Post, $"{WorkflowRoute(workflow)}/versions/{version.ToString(CultureInfo.InvariantCulture)}/rollback", null, cancellationToken);
+
+    /// <summary>Gets an operational summary of faulted instances, busy instances, pending jobs, and unresolved incidents.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowOperationsSummaryModel>> GetOperationsSummaryAsync(string? workflow = null, CancellationToken cancellationToken = default)
+    {
+        var query = new StringBuilder();
+        AppendQuery(query, "workflow", workflow);
+        return SendAsync<BaseResponseDataModel<WorkflowOperationsSummaryModel>>(HttpMethod.Get, $"{RoutePrefix.TrimEnd('/')}/operations{query}", null, cancellationToken);
+    }
+
+    /// <summary>Retries multiple faulted workflow instances in a batch.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowBatchOperationResultModel>> RetryBatchAsync(WorkflowBatchRetryRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<BaseResponseDataModel<WorkflowBatchOperationResultModel>>(HttpMethod.Post, $"{RoutePrefix.TrimEnd('/')}/operations/retry-batch", request, cancellationToken);
+    }
+
+    /// <summary>Lists actionable human tasks across all accessible workflows.</summary>
+    public virtual Task<BaseResponseDataModel<List<WorkflowInboxItemModel>>> ListInboxAsync(
+        string? workflow = null,
+        int page = 1,
+        int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new StringBuilder();
+        AppendQuery(query, "workflow", workflow);
+        AppendQuery(query, "page", page.ToString(CultureInfo.InvariantCulture));
+        AppendQuery(query, "pageSize", pageSize.ToString(CultureInfo.InvariantCulture));
+        return SendAsync<BaseResponseDataModel<List<WorkflowInboxItemModel>>>(HttpMethod.Get, $"{RoutePrefix.TrimEnd('/')}/inbox{query}", null, cancellationToken);
+    }
+
+    /// <summary>Simulates a workflow execution in memory without database side effects.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowSimulationResultModel>> SimulateAsync(
+        string workflow,
+        WorkflowSimulationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<BaseResponseDataModel<WorkflowSimulationResultModel>>(HttpMethod.Post, $"{WorkflowRoute(workflow)}/simulate", request, cancellationToken);
+    }
+
+    /// <summary>Exports all workflow definitions and UI layouts as a portable bundle with SHA-256 checksums.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowBundleModel>> ExportBundleAsync(CancellationToken cancellationToken = default) =>
+        SendAsync<BaseResponseDataModel<WorkflowBundleModel>>(HttpMethod.Get, $"{RoutePrefix.TrimEnd('/')}/bundle", null, cancellationToken);
+
+    /// <summary>Validates (<c>DryRun = true</c>) or imports (<c>DryRun = false</c>) a portable workflow/layout bundle.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowBundleImportResultModel>> ImportBundleAsync(
+        WorkflowBundleImportRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<BaseResponseDataModel<WorkflowBundleImportResultModel>>(HttpMethod.Post, $"{RoutePrefix.TrimEnd('/')}/bundle/import", request, cancellationToken);
+    }
+
+    /// <summary>Purges completed/cancelled workflow instances older than <see cref="WorkflowPurgeRequest.RetentionDays"/> (requires <c>ui-admin</c> role).</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowPurgeResultModel>> PurgeAsync(
+        WorkflowPurgeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<BaseResponseDataModel<WorkflowPurgeResultModel>>(HttpMethod.Post, $"{RoutePrefix.TrimEnd('/')}/maintenance/purge", request, cancellationToken);
+    }
+
     /// <summary>Gets the definition of <paramref name="workflow"/>: the latest version, or <paramref name="version"/> when given
     /// (instances keep running on the version they were started with, see <see cref="WorkflowInstanceModel.WorkflowVersion"/>).</summary>
     public virtual Task<BaseResponseDataModel<WorkflowDefinitionModel>> GetDefinitionAsync(string workflow, int? version = null, CancellationToken cancellationToken = default)

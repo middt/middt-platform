@@ -61,6 +61,7 @@
       "key": "triage",
       "title": "Otomatik Triyaj (Zincirleme Adım 1)",
       "step": 1,
+      "view": { "layout": "order-escalated" },
       "onEntry": [
         {
           "task": "set",
@@ -85,6 +86,7 @@
       "key": "priority-routing",
       "title": "Öncelik Yönlendirme (Zincirleme Adım 2)",
       "step": 1,
+      "view": { "layout": "order-escalated" },
       "transitions": [
         {
           "key": "critical-immediate-escalation",

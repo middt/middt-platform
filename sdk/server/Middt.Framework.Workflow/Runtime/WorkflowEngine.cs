@@ -280,6 +280,7 @@ public sealed partial class WorkflowEngine(
         }
 
         var definition = registry.Get(snapshot.WorkflowKey, snapshot.WorkflowVersion);
+        var currentData = JsonPath.ParseObject(snapshot.Data);
         var storedPending = JsonPath.ParseObject(snapshot.PendingInput);
         var claimPendingInput = storedPending.Count > 0 ? storedPending : null;
         JsonObject? effectiveTransitionInput = null;
@@ -287,6 +288,17 @@ public sealed partial class WorkflowEngine(
 
         var rawOverrideBody = WorkflowHttpInput.ExtractBody(overrideInput, null);
         var hasOverride = rawOverrideBody is { Count: > 0 };
+
+        TransitionDefinition? pendingTransition = null;
+        if (snapshot.PendingTransition != BackgroundTransition)
+        {
+            pendingTransition = ResolveTransition(definition, snapshot, snapshot.PendingTransition)
+                ?? throw new WorkflowConflictException($"Transition '{snapshot.PendingTransition}' is no longer available.");
+            if (!CanExecute(pendingTransition, definition, snapshot, currentData, user))
+            {
+                throw new WorkflowForbiddenException($"You are not allowed to execute '{pendingTransition.Key}'.");
+            }
+        }
 
         if (hasOverride)
         {
@@ -299,9 +311,10 @@ public sealed partial class WorkflowEngine(
                     bgPatch = innerBgData;
                 }
 
+                EnsureCanPatchInstanceData(definition, snapshot, bgPatch, user);
                 if (definition.DataSchema is { } bgSchema)
                 {
-                    var candidate = (JsonObject)JsonPath.ParseObject(snapshot.Data).DeepClone();
+                    var candidate = (JsonObject)currentData.DeepClone();
                     JsonPath.Merge(candidate, bgPatch);
                     var errors = JsonSchemaValidator.Validate(candidate, bgSchema);
                     if (errors.Count > 0)
@@ -314,8 +327,7 @@ public sealed partial class WorkflowEngine(
             }
             else
             {
-                var transition = ResolveTransition(definition, snapshot, snapshot.PendingTransition)
-                    ?? throw new WorkflowConflictException($"Transition '{snapshot.PendingTransition}' is no longer available.");
+                var transition = pendingTransition!;
                 var extracted = WorkflowHttpInput.ExtractBody(overrideInput, transition.Input?.Schema) ?? rawOverrideBody!;
                 if (extracted is { Count: 1 } && extracted["data"] is JsonObject innerData
                     && (transition.Input?.Schema?["properties"] as JsonObject)?.ContainsKey("data") != true)
@@ -327,32 +339,27 @@ public sealed partial class WorkflowEngine(
                 {
                     if (transition.Input.Format == InputFormat.JsonPatch && !extracted.ContainsKey(PatchProperty))
                     {
-                        var currentData = JsonPath.ParseObject(snapshot.Data);
                         var currentTarget = JsonPath.Get(currentData, transition.Input.Into) as JsonObject ?? [];
                         extracted = new JsonObject { [PatchProperty] = JsonPatch.Diff(currentTarget, extracted) };
                     }
 
                     var wrappedOverride = WorkflowHttpInput.WithBody(overrideInput, extracted);
                     ValidateInput(transition, wrappedOverride);
-                    var currentDataForRule = JsonPath.ParseObject(snapshot.Data);
-                    var bodyForRule = WorkflowHttpInput.ExtractBody(wrappedOverride, transition.Input.Schema) ?? [];
-                    if (!IsInputRuleSatisfied(transition, definition, snapshot, currentDataForRule, user, bodyForRule))
-                    {
-                        throw new WorkflowConflictException($"Transition '{transition.Key}' is not available for the current data.");
-                    }
 
                     effectiveTransitionInput = wrappedOverride;
                     claimPendingInput = transition.Input.Persistable(extracted) ?? (JsonObject)extracted.DeepClone();
                     if (transition.Input.Schema is null)
                     {
+                        EnsureCanPatchInstanceData(definition, snapshot, extracted, user);
                         directDataMerge = (JsonObject)extracted.DeepClone();
                     }
                 }
                 else
                 {
+                    EnsureCanPatchInstanceData(definition, snapshot, extracted, user);
                     if (definition.DataSchema is { } dataSchema)
                     {
-                        var candidate = (JsonObject)JsonPath.ParseObject(snapshot.Data).DeepClone();
+                        var candidate = (JsonObject)currentData.DeepClone();
                         JsonPath.Merge(candidate, extracted);
                         var errors = JsonSchemaValidator.Validate(candidate, dataSchema);
                         if (errors.Count > 0)
@@ -371,8 +378,41 @@ public sealed partial class WorkflowEngine(
             }
         }
 
+        if (pendingTransition is not null)
+        {
+            var candidateData = (JsonObject)currentData.DeepClone();
+            if (directDataMerge is { Count: > 0 })
+            {
+                JsonPath.Merge(candidateData, directDataMerge);
+            }
+
+            if (!CanExecute(pendingTransition, definition, snapshot, candidateData, user))
+            {
+                throw new WorkflowForbiddenException($"You are not allowed to execute '{pendingTransition.Key}'.");
+            }
+
+            var effectiveInputNode = effectiveTransitionInput ?? (storedPending.Count > 0 ? storedPending : null);
+            var bodyForRule = WorkflowHttpInput.ExtractBody(effectiveInputNode, pendingTransition.Input?.Schema) ?? effectiveInputNode ?? [];
+            if (!IsRuleSatisfied(pendingTransition, definition, snapshot, candidateData, user)
+                || !IsRuleSatisfied(pendingTransition, definition, snapshot, candidateData, user, bodyForRule)
+                || !IsInputRuleSatisfied(pendingTransition, definition, snapshot, candidateData, user, bodyForRule))
+            {
+                throw new WorkflowConflictException($"Transition '{pendingTransition.Key}' is not available for the current data.");
+            }
+        }
+
         var run = await RunClaimedAsync(instanceId, WorkflowInstanceStatus.Faulted, user, async run =>
         {
+            if (run.Instance.PendingTransition != BackgroundTransition)
+            {
+                var claimedTransition = ResolveTransition(run.Definition, run.Instance, run.Instance.PendingTransition!)
+                    ?? throw new WorkflowConflictException($"Transition '{run.Instance.PendingTransition}' is no longer available.");
+                if (!CanExecute(claimedTransition, run.Definition, run.Instance, run.Data, user))
+                {
+                    throw new WorkflowForbiddenException($"You are not allowed to execute '{claimedTransition.Key}'.");
+                }
+            }
+
             if (directDataMerge is { Count: > 0 })
             {
                 JsonPath.Merge(run.Data, directDataMerge);
@@ -386,6 +426,11 @@ public sealed partial class WorkflowEngine(
 
             var transition = ResolveTransition(run.Definition, run.Instance, run.Instance.PendingTransition!)
                 ?? throw new WorkflowConflictException($"Transition '{run.Instance.PendingTransition}' is no longer available.");
+            if (!CanExecute(transition, run.Definition, run.Instance, run.Data, user))
+            {
+                throw new WorkflowForbiddenException($"You are not allowed to execute '{transition.Key}'.");
+            }
+
             var input = effectiveTransitionInput ?? JsonPath.ParseObject(run.Instance.PendingInput);
             run.Instance.PendingTransition = null;
             run.Instance.PendingInput = null;

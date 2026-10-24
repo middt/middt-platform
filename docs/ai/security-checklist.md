@@ -11,8 +11,9 @@ Answer these before finishing a change (add tests for anything security relevant
   URLs through `UiUrl`/`LocalUrl`? Error messages without internal details (ProblemDetails, hidden workflow errors)?
 - **Tokens/session**: tokens never reach the browser (BFF), no new proxy routes around `X-CSRF`/deny list, cookies
   HttpOnly/SameSite, re-login revokes the old session.
-- **Outbound calls**: allow-listed hosts, no redirects, timeouts (`http` task, HttpClients).
-- **Workflow retries**: are secret input fields declared in `input.sensitive` and absent from pending input/history?
+- **Outbound calls**: allow-listed hosts, no redirects, timeouts (`http` task, remote MCP `http`/`sse` transports, AI HTTP tools, HttpClients).
+- **Workflow retries**: are secret input fields declared in `input.sensitive` and absent from pending input/history? Does `RetryAsync` re-verify the pending transition's `roles`, `denyRoles` (including `$previousUser` 4-eyes), `rule`, and `input.schema` / `input.rule` / `DataSchema` before executing?
+- **Cross-workflow tasks & AI tools**: do `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, and `triggerWorkflow` enforce target workflow `roles`, row-level `instanceAccess`, and `DataSchema` field masking (`x-roles` / `x-mask`) when running under a user caller? Are AI tools gated by `roles` and bounded by `maxToolCalls` / `maxTotalTokens`?
 - **Workflow messages**: do event transitions that change money or status carry `roles`? The sender is checked at send time and buffered messages later run as the system; message bodies are validated by the transition `input.schema` – keep `additionalProperties: false`.
 - **Background tasks**: an `http` background task still honours `AllowedHttpHosts`; its side effects can be retried after a crash, so the receiver must deduplicate on `Idempotency-Key` (stable per background job).
   Can external task side effects and event handlers tolerate retries or duplicate delivery? Is the HTTP task's

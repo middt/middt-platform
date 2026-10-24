@@ -30,6 +30,12 @@ public sealed class AgentDefinition
     /// <summary>Optional maximum number of output tokens generated per turn.</summary>
     public int? MaxOutputTokens { get; set; }
 
+    /// <summary>Optional maximum number of tool calls allowed in a single agent execution before failing the step.</summary>
+    public int? MaxToolCalls { get; set; }
+
+    /// <summary>Optional maximum total token budget (input + output) allowed in a single agent execution before failing the step.</summary>
+    public long? MaxTotalTokens { get; set; }
+
     /// <summary>Names of registered <c>AITool</c> functions granted to this agent.</summary>
     public List<string> Tools { get; set; } = [];
 

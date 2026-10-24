@@ -38,12 +38,16 @@ public sealed class UiLayoutStore(UiDbContext db, IMemoryCache cache, UiLayoutVa
         public long Generation;
     }
 
-    // One gate per cache instance (the store itself is scoped).
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IMemoryCache, SnapshotGate> Gates = new();
+    // One gate map per cache instance, keyed by schema (the store itself is scoped).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IMemoryCache, System.Collections.Concurrent.ConcurrentDictionary<string, SnapshotGate>> Gates = new();
 
-    private SnapshotGate Gate => Gates.GetValue(cache, _ => new SnapshotGate());
+    private string SchemaKey => string.IsNullOrWhiteSpace(options.Value.Schema) ? "ui" : options.Value.Schema;
 
-    private const string CacheKey = "middt-ui:layouts";
+    private SnapshotGate Gate =>
+        Gates.GetValue(cache, _ => new System.Collections.Concurrent.ConcurrentDictionary<string, SnapshotGate>(StringComparer.Ordinal))
+            .GetOrAdd(SchemaKey, _ => new SnapshotGate());
+
+    private string CacheKey => $"middt-ui:layouts:{SchemaKey}";
 
     public const string SourceSeed = "seed";
     public const string SourceApi = "api";
@@ -252,7 +256,7 @@ public sealed class UiLayoutStore(UiDbContext db, IMemoryCache cache, UiLayoutVa
                 cache.Set(CacheKey, snapshot, new MemoryCacheEntryOptions
                 {
                     AbsoluteExpirationRelativeToNow = options.Value.CacheDuration,
-                    Size = 1, // required when the application's IMemoryCache has a SizeLimit
+                    Size = Math.Max(1, snapshot.Count), // proportional to layout count when IMemoryCache has a SizeLimit
                 });
             }
 

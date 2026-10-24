@@ -1,0 +1,406 @@
+{
+  "key": "commercial-limit-revision",
+  "version": 1,
+  "title": "Ticari Limit Revizyonu & Portföy Özeti",
+  "icon": "trending_up",
+  "history": "delta",
+  "historySnapshotEvery": 10,
+  "instanceAccess": {
+    "mode": "owner",
+    "supervisorRoles": [ "manager" ]
+  },
+  "dataSchema": {
+    "type": "object",
+    "properties": {
+      "customerKey": { "type": "string", "title": "Müşteri Anahtarı", "x-search": true },
+      "customerName": { "type": "string", "title": "Müşteri Adı", "x-search": true },
+      "revisionType": {
+        "type": "string",
+        "title": "Revizyon Türü",
+        "enum": [ "Yıllık Gözden Geçirme", "Ek Limit Artırımı", "Acil Sezonluk Limit" ],
+        "x-search": true
+      },
+      "requestedLimit": { "type": "number", "title": "Talep Edilen Limit (₺)", "x-search": true },
+      "currentExposure": { "type": "number", "title": "Mevcut Kredi Riski (₺)" },
+      "netAvailableLimit": { "type": "number", "title": "Net Ek Kapasite (₺)" },
+      "activeLoanCount": { "type": "integer", "title": "Aktif Kredi Adedi", "x-list": false },
+      "correlationId": { "type": "string", "title": "İstek Korelasyon No", "x-list": false },
+      "committeeNote": {
+        "type": "string",
+        "title": "Komite Gizli Notu",
+        "x-list": false,
+        "x-roles": [ "manager" ]
+      },
+      "customer": {
+        "type": "object",
+        "title": "Müşteri Bilgileri",
+        "x-list": false,
+        "properties": {
+          "fullName": { "type": "string", "title": "Ad Soyad / Ünvan" },
+          "identityNumber": {
+            "type": "string",
+            "title": "T.C. Kimlik / Vergi No",
+            "x-mask": { "pattern": "last4", "exceptRoles": [ "manager", "idp-admin" ] }
+          },
+          "email": {
+            "type": "string",
+            "title": "E-posta",
+            "x-mask": { "pattern": "email", "exceptRoles": [ "manager", "idp-admin" ] }
+          },
+          "phone": {
+            "type": "string",
+            "title": "Telefon",
+            "x-mask": { "pattern": "last4", "exceptRoles": [ "manager", "idp-admin" ] }
+          },
+          "internalRiskNote": {
+            "type": "string",
+            "title": "İç Denetim Notu",
+            "x-roles": [ "manager" ]
+          }
+        }
+      }
+    }
+  },
+  "start": {
+    "key": "start",
+    "target": "portfolio-analysis",
+    "input": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [ "customerKey", "requestedLimit", "revisionType" ],
+        "properties": {
+          "customerKey": {
+            "type": "string",
+            "title": "Müşteri Seçiniz",
+            "default": "CUST-12345678901",
+            "x-lookup": {
+              "entity": "CustomerOnboarding",
+              "valueField": "key",
+              "textField": "fullName"
+            }
+          },
+          "requestedLimit": {
+            "type": "number",
+            "minimum": 50000,
+            "maximum": 25000000,
+            "title": "Talep Edilen Yeni Ticari Limit (₺)",
+            "default": 1500000
+          },
+          "revisionType": {
+            "type": "string",
+            "title": "Revizyon Türü",
+            "enum": [
+              "Yıllık Gözden Geçirme",
+              "Ek Limit Artırımı",
+              "Acil Sezonluk Limit"
+            ],
+            "default": "Ek Limit Artırımı"
+          },
+          "justification": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Talep Gerekçesi",
+            "default": "Artan ticari hacim ve ihracat siparişleri doğrultusunda genel kredi limitinin artırılması talep edilmektedir."
+          }
+        }
+      }
+    },
+    "onExecute": [
+      {
+        "task": "set",
+        "config": {
+          "values": {
+            "requestedBy": "user.Name",
+            "requestedAt": "now",
+            "correlationId": "input.header != null && input.header.correlationId != null ? input.header.correlationId : \"LOCAL-REV\"",
+            "committeeNote": "\"Ticari limit revizyon dosyası oluşturuldu.\""
+          }
+        }
+      }
+    ]
+  },
+  "states": [
+    {
+      "key": "portfolio-analysis",
+      "title": "Müşteri & Kredi Portföy Analizi",
+      "step": 1,
+      "view": { "layout": "limit-revision-detail" },
+      "onEntry": [
+        {
+          "task": "setKey",
+          "config": {
+            "key": "REV-{{ data.customerKey }}",
+            "ensureUnique": true
+          }
+        },
+        {
+          "task": "loadWorkflow",
+          "config": {
+            "workflow": "customer-onboarding",
+            "key": "{{ data.customerKey }}",
+            "failIfNotFound": false,
+            "into": "customer"
+          }
+        },
+        {
+          "task": "queryWorkflow",
+          "config": {
+            "workflow": "credit-allocation",
+            "where": "target.customerKey == data.customerKey",
+            "orderBy": "amount",
+            "descending": true,
+            "take": 20,
+            "select": [ "id", "key", "amount", "termMonths", "state" ],
+            "aggregate": {
+              "totalAllocated": { "op": "sum", "field": "amount" },
+              "maxLoan": { "op": "max", "field": "amount" },
+              "loanCount": "count"
+            },
+            "into": "creditPortfolio"
+          }
+        },
+        {
+          "task": "set",
+          "config": {
+            "values": {
+              "customerName": "data.customer != null && data.customer.fullName != null ? data.customer.fullName : data.customerKey",
+              "currentExposure": "data.creditPortfolio != null && data.creditPortfolio.totalAllocated != null ? data.creditPortfolio.totalAllocated : 0",
+              "activeLoanCount": "data.creditPortfolio != null && data.creditPortfolio.loanCount != null ? data.creditPortfolio.loanCount : 0",
+              "netAvailableLimit": "data.requestedLimit > (data.creditPortfolio != null && data.creditPortfolio.totalAllocated != null ? data.creditPortfolio.totalAllocated : 0) ? data.requestedLimit - (data.creditPortfolio != null && data.creditPortfolio.totalAllocated != null ? data.creditPortfolio.totalAllocated : 0) : 0"
+            }
+          }
+        },
+        {
+          "task": "log",
+          "config": {
+            "level": "Information",
+            "message": "Ticari limit portföy analizi tamamlandı: {{ data.customerKey }} (Mevcut Risk: {{ data.currentExposure }} TL, Talep: {{ data.requestedLimit }} TL)"
+          }
+        }
+      ],
+      "transitions": [
+        {
+          "key": "auto-approve-standard",
+          "title": "Standart Limit Otomatik Onayı",
+          "target": "apply-limit",
+          "trigger": "Automatic",
+          "rule": "data.requestedLimit <= 500000 && data.netAvailableLimit > 0"
+        },
+        {
+          "key": "to-maker-review",
+          "title": "Tahsis Uzmanı İncelemesine Sevk",
+          "target": "maker-review",
+          "trigger": "Automatic",
+          "default": true
+        }
+      ]
+    },
+    {
+      "key": "maker-review",
+      "title": "1. Onay: Ticari Tahsis Uzmanı",
+      "step": 2,
+      "subType": "Human",
+      "view": { "layout": "limit-revision-detail" },
+      "transitions": [
+        {
+          "key": "submit-to-checker",
+          "title": "1. Onayı Ver (Komiteye Gönder)",
+          "target": "checker-approval",
+          "roles": [ "manager" ],
+          "view": { "inline": true },
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "makerComment": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "title": "1. Onaycı Değerlendirme Notu",
+                  "default": "Portföy nakit akışı ve teminat yapısı limit artışına uygun."
+                }
+              }
+            },
+            "set": {
+              "makerApprovedBy": "user.Name",
+              "makerApprovedAt": "now",
+              "committeeNote": "input.makerComment ?? data.committeeNote"
+            }
+          }
+        },
+        {
+          "key": "revise-requested-limit",
+          "title": "Talep Limitini Güncelle ($self)",
+          "target": "$self",
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [ "requestedLimit" ],
+              "properties": {
+                "requestedLimit": {
+                  "type": "number",
+                  "minimum": 50000,
+                  "maximum": 25000000,
+                  "title": "Revize Talep Limiti (₺)",
+                  "default": 1250000
+                }
+              }
+            },
+            "set": {
+              "requestedLimit": "input.requestedLimit",
+              "netAvailableLimit": "input.requestedLimit > data.currentExposure ? input.requestedLimit - data.currentExposure : 0"
+            }
+          }
+        },
+        {
+          "key": "reject-revision",
+          "title": "Talebi Reddet",
+          "target": "rejected",
+          "style": "danger",
+          "roles": [ "manager" ],
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [ "reason" ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 400,
+                  "title": "Red Gerekçesi",
+                  "default": "Mevcut kredi riski ve finansal kaldıraç oranı limit artışına uygun değil."
+                }
+              }
+            },
+            "set": {
+              "rejectedBy": "user.Name",
+              "rejectedAt": "now"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "key": "checker-approval",
+      "title": "2. Onay: Kredi Komitesi (4-Göz İlkesi)",
+      "step": 3,
+      "subType": "Human",
+      "view": { "layout": "limit-revision-detail" },
+      "transitions": [
+        {
+          "key": "approve-four-eyes",
+          "title": "2. Onayı Ver (4-Göz: Farklı Yönetici)",
+          "target": "apply-limit",
+          "roles": [ "manager" ],
+          "denyRoles": [ "$previousUser" ],
+          "view": { "inline": true },
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "checkerComment": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "title": "2. Onaycı (4-Göz) Karar Notu",
+                  "default": "4-Göz komite kontrolü tamamlandı, yeni ticari limit onaylandı."
+                }
+              }
+            },
+            "set": {
+              "checkerApprovedBy": "user.Name",
+              "checkerApprovedAt": "now"
+            }
+          }
+        },
+        {
+          "key": "executive-limit-override",
+          "title": "Üst Komite Onayı (Tek Kullanıcı Demo)",
+          "target": "apply-limit",
+          "roles": [ "idp-admin" ],
+          "input": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "overrideReason": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "title": "Üst Komite Onay Açıklaması",
+                  "default": "Üst komite yetkisiyle limit revizyonu onaylandı."
+                }
+              }
+            },
+            "set": {
+              "checkerApprovedBy": "user.Name",
+              "checkerApprovedAt": "now"
+            }
+          }
+        },
+        {
+          "key": "return-to-maker",
+          "title": "1. Onaya İade Et",
+          "target": "maker-review",
+          "roles": [ "manager" ]
+        }
+      ]
+    },
+    {
+      "key": "apply-limit",
+      "title": "Müşteri Kartına Limit Tanımlanıyor",
+      "step": 4,
+      "view": { "layout": "limit-revision-detail" },
+      "onEntry": [
+        {
+          "task": "updateWorkflow",
+          "config": {
+            "workflow": "customer-onboarding",
+            "key": "{{ data.customerKey }}",
+            "failIfNotFound": false,
+            "values": {
+              "approvedCommercialLimit": "data.requestedLimit",
+              "lastLimitRevisionKey": "instance.key",
+              "limitRevisedAt": "now"
+            },
+            "into": "customerUpdateResult"
+          }
+        },
+        {
+          "task": "set",
+          "config": {
+            "values": {
+              "activatedAt": "now"
+            }
+          }
+        }
+      ],
+      "transitions": [
+        {
+          "key": "to-completed",
+          "target": "completed",
+          "trigger": "Automatic",
+          "default": true
+        }
+      ]
+    },
+    {
+      "key": "completed",
+      "title": "Ticari Limit Tanımlandı",
+      "step": 5,
+      "type": "Finish",
+      "subType": "Success",
+      "view": { "layout": "limit-revision-detail" }
+    },
+    {
+      "key": "rejected",
+      "title": "Limit Revizyonu Reddedildi",
+      "step": 5,
+      "type": "Finish",
+      "subType": "Error",
+      "view": { "layout": "limit-revision-detail" }
+    }
+  ]
+}

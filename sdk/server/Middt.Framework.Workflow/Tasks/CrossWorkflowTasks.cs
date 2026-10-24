@@ -100,7 +100,8 @@ public sealed class LoadWorkflowTask : IWorkflowTask
             return;
         }
 
-        var loaded = CrossWorkflowTaskHelpers.BuildInstancePayload(instance);
+        var registry = context.Services.GetService<WorkflowRegistry>();
+        var loaded = CrossWorkflowTaskHelpers.BuildInstancePayload(instance, registry, context.Scope.User);
 
         if (context.Config["includeAgents"]?.GetValue<bool>() == true)
         {
@@ -397,7 +398,7 @@ public sealed class UpdateWorkflowTask : IWorkflowTask
                 cancellationToken);
 
             var targetData = JsonPath.ParseObject(instance.Data);
-            var targetScopePayload = CrossWorkflowTaskHelpers.BuildInstancePayload(instance);
+            var targetScopePayload = CrossWorkflowTaskHelpers.BuildInstancePayload(instance, registry, context.Scope.User);
             var evalScope = CrossWorkflowTaskHelpers.CreateTargetScope(context.Scope, targetScopePayload);
 
             if (context.Config["merge"] is not null && context.Expressions.Render(context.Config["merge"], evalScope) is JsonObject mergedObj)
@@ -461,7 +462,7 @@ public sealed class UpdateWorkflowTask : IWorkflowTask
                 instance.Revision++;
             }
 
-            updatedPayloads.Add(CrossWorkflowTaskHelpers.BuildInstancePayload(instance));
+            updatedPayloads.Add(CrossWorkflowTaskHelpers.BuildInstancePayload(instance, registry, context.Scope.User));
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -773,30 +774,40 @@ internal static class CrossWorkflowTaskHelpers
         int maxScan,
         CancellationToken cancellationToken)
     {
+        var registry = context.Services.GetService<WorkflowRegistry>();
+        var user = context.Scope.User;
+        var isSystemAccess = user.IsSystem
+                             || string.Equals(context.Config["access"]?.GetValue<string>(), "system", StringComparison.OrdinalIgnoreCase);
+
         if (Guid.TryParse(idText, out var id))
         {
             var byId = await db.Instances.AsNoTracking()
                 .FirstOrDefaultAsync(i => i.Id == id && i.WorkflowKey == workflow, cancellationToken);
-            return byId is not null ? [(byId, BuildInstancePayload(byId))] : [];
+            return byId is not null && CanAccessTargetInstance(byId, registry, user, isSystemAccess)
+                ? [(byId, BuildInstancePayload(byId, registry, user))]
+                : [];
         }
 
         if (!string.IsNullOrEmpty(key) && context.Config["where"] is null && context.Config["filter"] is null)
         {
             var byKey = await db.Instances.AsNoTracking()
                 .FirstOrDefaultAsync(i => i.WorkflowKey == workflow && i.BusinessKey == key, cancellationToken);
-            return byKey is not null ? [(byKey, BuildInstancePayload(byKey))] : [];
+            return byKey is not null && CanAccessTargetInstance(byKey, registry, user, isSystemAccess)
+                ? [(byKey, BuildInstancePayload(byKey, registry, user))]
+                : [];
         }
 
         var (filterDict, whereExpr) = ExtractUnifiedWhereFilters(context);
 
-        var registry = context.Services.GetService<WorkflowRegistry>();
         var workflowOptions = context.Services.GetService<IOptions<MiddtWorkflowOptions>>()?.Value;
+        WorkflowDefinition? latestDefinition = null;
         JsonObject? dataSchema = null;
         if (registry is not null)
         {
             try
             {
-                dataSchema = registry.GetLatest(workflow).DataSchema;
+                latestDefinition = registry.GetLatest(workflow);
+                dataSchema = latestDefinition.DataSchema;
             }
             catch (WorkflowNotFoundException)
             {
@@ -804,7 +815,25 @@ internal static class CrossWorkflowTaskHelpers
             }
         }
 
+        if (!isSystemAccess && latestDefinition is not null && latestDefinition.Roles.Count > 0 && !latestDefinition.Roles.Any(user.IsInRole))
+        {
+            return [];
+        }
+
         IQueryable<WorkflowInstance> query = db.Instances.AsNoTracking().Where(i => i.WorkflowKey == workflow);
+
+        if (!isSystemAccess
+            && latestDefinition?.InstanceAccess is { IsOwnerOnly: true } ownerAccess
+            && !ownerAccess.SupervisorRoles.Any(user.IsInRole))
+        {
+            var callerName = (user as WorkflowUser)?.AuditName ?? user.Name ?? user.Id;
+            if (string.IsNullOrEmpty(callerName))
+            {
+                return [];
+            }
+
+            query = query.Where(i => i.StartedBy == callerName);
+        }
 
         if (excludeSelf && context.InstanceId != Guid.Empty)
         {
@@ -854,7 +883,12 @@ internal static class CrossWorkflowTaskHelpers
         var results = new List<(WorkflowInstance Instance, JsonObject Payload)>(candidates.Count);
         foreach (var candidate in candidates)
         {
-            var payload = BuildInstancePayload(candidate);
+            if (!CanAccessTargetInstance(candidate, registry, user, isSystemAccess))
+            {
+                continue;
+            }
+
+            var payload = BuildInstancePayload(candidate, registry, user);
             if (!string.IsNullOrWhiteSpace(whereExpr))
             {
                 var itemScope = CreateTargetScope(context.Scope, payload);
@@ -868,6 +902,62 @@ internal static class CrossWorkflowTaskHelpers
         }
 
         return results;
+    }
+
+    private static bool CanAccessTargetInstance(
+        WorkflowInstance instance,
+        WorkflowRegistry? registry,
+        ExpressionUser user,
+        bool isSystemAccess)
+    {
+        if (isSystemAccess || user.IsSystem)
+        {
+            return true;
+        }
+
+        var definition = TryGetDefinition(registry, instance.WorkflowKey, instance.WorkflowVersion);
+        if (definition is null)
+        {
+            return true;
+        }
+
+        if (definition.Roles.Count > 0 && !definition.Roles.Any(user.IsInRole))
+        {
+            return false;
+        }
+
+        if (definition.InstanceAccess is { IsOwnerOnly: true } access && !access.SupervisorRoles.Any(user.IsInRole))
+        {
+            var callerName = (user as WorkflowUser)?.AuditName ?? user.Name ?? user.Id;
+            return !string.IsNullOrEmpty(instance.StartedBy)
+                   && string.Equals(instance.StartedBy, callerName, StringComparison.Ordinal);
+        }
+
+        return true;
+    }
+
+    private static WorkflowDefinition? TryGetDefinition(WorkflowRegistry? registry, string workflowKey, int version)
+    {
+        if (registry is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return registry.Get(workflowKey, version);
+        }
+        catch (WorkflowNotFoundException)
+        {
+            try
+            {
+                return registry.GetLatest(workflowKey);
+            }
+            catch (WorkflowNotFoundException)
+            {
+                return null;
+            }
+        }
     }
 
     /// <summary>
@@ -994,9 +1084,15 @@ internal static class CrossWorkflowTaskHelpers
         }
     }
 
-    public static JsonObject BuildInstancePayload(WorkflowInstance instance)
+    public static JsonObject BuildInstancePayload(WorkflowInstance instance, WorkflowRegistry? registry = null, ExpressionUser? user = null)
     {
         var loaded = JsonNode.Parse(string.IsNullOrWhiteSpace(instance.Data) ? "{}" : instance.Data) as JsonObject ?? [];
+        if (registry is not null && user is not null && !user.IsSystem)
+        {
+            var targetDefinition = TryGetDefinition(registry, instance.WorkflowKey, instance.WorkflowVersion);
+            loaded = JsonSchemaValidator.ProjectData(loaded, targetDefinition?.DataSchema, user);
+        }
+
         loaded["id"] = instance.Id.ToString("D");
         loaded["key"] = instance.BusinessKey;
         loaded["workflow"] = instance.WorkflowKey;

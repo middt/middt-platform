@@ -4,7 +4,8 @@
   "title": "Kredi Tahsis & 4-Göz Onay",
   "icon": "account_balance",
   "instanceAccess": {
-    "mode": "all"
+    "mode": "owner",
+    "supervisorRoles": [ "manager" ]
   },
   "dataSchema": {
     "type": "object",
@@ -24,6 +25,34 @@
         "title": "Komite Gizli Değerlendirme Notu",
         "x-list": false,
         "x-roles": [ "manager" ]
+      },
+      "customer": {
+        "type": "object",
+        "title": "Müşteri Bilgileri",
+        "x-list": false,
+        "properties": {
+          "fullName": { "type": "string", "title": "Ad Soyad / Ünvan" },
+          "identityNumber": {
+            "type": "string",
+            "title": "T.C. Kimlik / Vergi No",
+            "x-mask": { "pattern": "last4", "exceptRoles": [ "manager", "idp-admin" ] }
+          },
+          "email": {
+            "type": "string",
+            "title": "E-posta",
+            "x-mask": { "pattern": "email", "exceptRoles": [ "manager", "idp-admin" ] }
+          },
+          "phone": {
+            "type": "string",
+            "title": "Telefon",
+            "x-mask": { "pattern": "last4", "exceptRoles": [ "manager", "idp-admin" ] }
+          },
+          "internalRiskNote": {
+            "type": "string",
+            "title": "İç Denetim Notu (Sadece Yönetici)",
+            "x-roles": [ "manager" ]
+          }
+        }
       }
     }
   },

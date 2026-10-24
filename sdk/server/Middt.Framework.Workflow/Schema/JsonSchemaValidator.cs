@@ -215,28 +215,48 @@ public static partial class JsonSchemaValidator
         }
 
         var projected = (JsonObject)schema.DeepClone();
-        if (user.IsSystem || projected["properties"] is not JsonObject properties)
+        if (user.IsSystem)
         {
             return projected;
         }
 
-        var disallowed = properties
-            .Where(kv => kv.Value is JsonObject propSchema &&
-                         propSchema[RolesKeyword] is JsonArray rolesArr &&
-                         rolesArr.Count > 0 &&
-                         !rolesArr
-                             .Select(r => r is JsonValue rv && rv.TryGetValue<string>(out var s) ? s : null)
-                             .OfType<string>()
-                             .Any(user.IsInRole))
-            .Select(kv => kv.Key)
-            .ToList();
+        ApplySchemaProjection(projected, user);
+        return projected;
+    }
 
-        foreach (var name in disallowed)
+    private static void ApplySchemaProjection(JsonObject schemaObj, ExpressionUser user)
+    {
+        if (schemaObj["properties"] is JsonObject properties)
         {
-            properties.Remove(name);
+            var disallowed = properties
+                .Where(kv => kv.Value is JsonObject propSchema &&
+                             propSchema[RolesKeyword] is JsonArray rolesArr &&
+                             rolesArr.Count > 0 &&
+                             !rolesArr
+                                 .Select(r => r is JsonValue rv && rv.TryGetValue<string>(out var s) ? s : null)
+                                 .OfType<string>()
+                                 .Any(user.IsInRole))
+                .Select(kv => kv.Key)
+                .ToList();
+
+            foreach (var name in disallowed)
+            {
+                properties.Remove(name);
+            }
+
+            foreach (var (_, propNode) in properties)
+            {
+                if (propNode is JsonObject childSchema)
+                {
+                    ApplySchemaProjection(childSchema, user);
+                }
+            }
         }
 
-        return projected;
+        if (schemaObj["items"] is JsonObject itemsSchema)
+        {
+            ApplySchemaProjection(itemsSchema, user);
+        }
     }
 
     private static void ApplyProjection(JsonObject obj, JsonObject schema, ExpressionUser user)

@@ -76,11 +76,11 @@ widgets can also be defined in pure JSON (`kind: "view"`) and embedded via `{ "w
    The Angular package has focused `core`, `ui`, and `workflow` entry points; the root entry point remains
    an aggregate for compatibility.
 4. **Workflows**: `WorkflowApiClient` (ui-core) + list/detail/wizard components; all workflow states use `view.layout`
-   JSON layouts (`kyc-review`, `credit-review`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`) rendered by
+   JSON layouts (`kyc-review`, `credit-review`, `limit-revision-detail`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`) rendered by
    the layout host in both frontends (`SubFlow` states delegate rendering to the active child workflow state automatically or use an optional fallback `view.layout`).
    Transition input schemas are rendered as forms; a property with `x-lookup` (`entity`, `valueField`, `textField`)
    becomes a select loaded dynamically from the endpoint – the engine only checks the hint's shape.
-5. **Visual Designers**: both frontends ship a visual drag-and-drop **Screen Designer** (`/ui-admin`, `UiLayoutEditor` / `MiddtLayoutEditorComponent`) and a visual drag-and-drop **Workflow Designer** (`/workflow-admin`, `WorkflowDesigner` / `MiddtWorkflowDesignerComponent`) with bi-directional integration to create or edit state `view.layout` screens directly from workflow states.
+5. **Visual Designers**: both frontends ship a visual drag-and-drop **Screen Designer** (`/ui-admin`, `UiLayoutEditor` / `MiddtLayoutEditorComponent`) and a visual drag-and-drop **Workflow Designer** (`/workflow-admin`, `WorkflowDesigner` / `MiddtWorkflowDesignerComponent`) with bi-directional integration to create or edit state `view.layout` screens directly from workflow states. Saving a workflow definition at runtime (`PUT /api/workflows/{workflow}/definition`) creates a new immutable version (`v2`, `v3`, …) so in-flight instances continue on their original version, and supports version listing (`/versions`), structural + RFC 6902 diff (`/diff`), and rollback (`/rollback`).
 
 For a third frontend (e.g. React) repeat 1–4: reuse `@middt/ui-core` and a BFF host built with `AddMiddtSpaBff()`.
 
@@ -122,6 +122,12 @@ checked against it by `spec/json-patch.conformance.json`. The EF model is cached
 
 Definition versions are retained for running instances. Instance-level access checks and list filters apply each
 instance's stored version of `roles` and `instanceAccess`, rather than the newest definition's rules.
+
+In addition to core instance execution, `Middt.Framework.Workflow` exposes enterprise governance and operations APIs:
+- **Unified Human Task Inbox (`GET /api/workflows/inbox`)**: aggregates active human-state instances across all workflows where the caller has at least one executable manual transition (`CanExecute` including `roles`, `denyRoles`, `$previousUser`, and transition `rule`).
+- **Operations Center & Batch Retry (`GET /api/workflows/operations`, `POST /api/workflows/operations/retry-batch`)**: surfaces faulted instances, unresolved incidents, and pending jobs, and supports batch retry with per-item input overrides.
+- **Dry-Run Simulator (`POST /api/workflows/{workflow}/simulate`)**: executes a workflow definition (or an inline candidate definition) through a sequence of transitions on an isolated in-memory clone without writing to the database or calling external HTTP/message brokers.
+- **Portable Bundle Export/Import (`GET /api/workflows/bundle`, `POST /api/workflows/bundle/import`) & Retention Purge (`POST /api/workflows/maintenance/purge`)**: exports and imports workflows, layouts, and agent/tool/MCP JSON assets with SHA-256 integrity verification and `dryRun` support for CI/CD promotion, and purges terminal (`Completed`, `Cancelled`, `Faulted`) instances older than a retention threshold in bounded batches.
 
 ## Project map
 

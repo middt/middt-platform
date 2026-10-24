@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Middt.Framework.Expressions;
@@ -68,23 +69,44 @@ public sealed class WorkflowRegistry
         }
     }
 
-    public IEnumerable<WorkflowDefinition> Latest => Definitions.Values.Select(v => v.Values[^1]);
+    public IEnumerable<WorkflowDefinition> Latest
+    {
+        get
+        {
+            SyncPersistedDefinitions();
+            return Definitions.Values.Select(v => v.Values[^1]);
+        }
+    }
 
     /// <summary>All registered versions of one workflow, for version-specific instance access checks.</summary>
-    public IReadOnlyList<WorkflowDefinition> GetVersions(string key) =>
-        Definitions.TryGetValue(key, out var versions)
+    public IReadOnlyList<WorkflowDefinition> GetVersions(string key)
+    {
+        SyncPersistedDefinitions(key);
+        return Definitions.TryGetValue(key, out var versions)
             ? versions.Values.ToArray()
             : throw new WorkflowNotFoundException($"Workflow '{key}' does not exist.");
+    }
 
-    public WorkflowDefinition GetLatest(string key) =>
-        Definitions.TryGetValue(key, out var versions)
+    public WorkflowDefinition GetLatest(string key)
+    {
+        SyncPersistedDefinitions(key);
+        return Definitions.TryGetValue(key, out var versions)
             ? versions.Values[^1]
             : throw new WorkflowNotFoundException($"Workflow '{key}' does not exist.");
+    }
 
-    public WorkflowDefinition Get(string key, int version) =>
-        Definitions.TryGetValue(key, out var versions) && versions.TryGetValue(version, out var definition)
+    public WorkflowDefinition Get(string key, int version)
+    {
+        if (Definitions.TryGetValue(key, out var versions) && versions.TryGetValue(version, out var definition))
+        {
+            return definition;
+        }
+
+        SyncPersistedDefinitions(key);
+        return Definitions.TryGetValue(key, out versions) && versions.TryGetValue(version, out definition)
             ? definition
             : throw new WorkflowNotFoundException($"Workflow '{key}' version {version} does not exist.");
+    }
 
     /// <summary>Returns a deep-cloned <see cref="JsonObject"/> of the full workflow definition for the visual designer.</summary>
     public JsonObject GetJson(string key, int? version = null)
@@ -138,8 +160,11 @@ public sealed class WorkflowRegistry
         return new WorkflowValidationResultModel { Errors = errors };
     }
 
-    /// <summary>Validates and registers/updates a workflow definition at runtime without restarting the application.</summary>
-    public (WorkflowDefinition Definition, JsonObject RawJson) Save(JsonObject rawJson)
+    /// <summary>
+    /// Validates and prepares a new immutable version of a workflow definition without mutating the in-memory registry yet.
+    /// Call <see cref="CommitSaved"/> after persisting to the database so failed database writes never pollute the registry.
+    /// </summary>
+    public (WorkflowDefinition Definition, JsonObject RawJson) PrepareSave(JsonObject rawJson, int? minExistingVersion = null)
     {
         ArgumentNullException.ThrowIfNull(rawJson);
 
@@ -150,11 +175,20 @@ public sealed class WorkflowRegistry
             throw new WorkflowValidationException(["'key' is required."]);
         }
 
+        SyncPersistedDefinitions(key);
+
         var existingLatestVersion = Definitions.TryGetValue(key, out var existingVersions) && existingVersions.Count > 0
             ? existingVersions.Keys[^1]
             : 0;
+        if (minExistingVersion is { } dbMax && dbMax > existingLatestVersion)
+        {
+            existingLatestVersion = dbMax;
+        }
+
         var requestedVersion = clone["version"]?.GetValue<int>() ?? 0;
-        var targetVersion = requestedVersion > 0 ? requestedVersion : existingLatestVersion + 1;
+        var targetVersion = existingLatestVersion > 0
+            ? Math.Max(existingLatestVersion + 1, requestedVersion)
+            : (requestedVersion > 0 ? requestedVersion : 1);
         clone["version"] = targetVersion;
 
         var validation = ValidateJson(clone);
@@ -164,6 +198,16 @@ public sealed class WorkflowRegistry
         }
 
         var definition = clone.Deserialize<WorkflowDefinition>(WorkflowJson.Options)!;
+        return (definition, clone);
+    }
+
+    /// <summary>Commits a validated workflow definition into the active in-memory registry after persistence succeeds.</summary>
+    public (WorkflowDefinition Definition, JsonObject RawJson) CommitSaved(WorkflowDefinition definition, JsonObject rawJson)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(rawJson);
+
+        var clone = (JsonObject)rawJson.DeepClone();
         lock (sync)
         {
             runtimeDefinitions[(definition.Key, definition.Version)] = (definition, clone);
@@ -174,6 +218,54 @@ public sealed class WorkflowRegistry
         }
 
         return (definition, (JsonObject)clone.DeepClone());
+    }
+
+    /// <summary>Validates and registers a new immutable version of a workflow definition at runtime without restarting the application.</summary>
+    public (WorkflowDefinition Definition, JsonObject RawJson) Save(JsonObject rawJson)
+    {
+        var (definition, preparedJson) = PrepareSave(rawJson);
+        return CommitSaved(definition, preparedJson);
+    }
+
+    private void SyncPersistedDefinitions(string? key = null)
+    {
+        try
+        {
+            using var scope = services.CreateScope();
+            var db = scope.ServiceProvider.GetService<Persistence.WorkflowDbContext>();
+            if (db is null)
+            {
+                return;
+            }
+
+            IQueryable<Persistence.WorkflowDefinitionRecord> query = db.Definitions.AsNoTracking();
+            if (!string.IsNullOrEmpty(key))
+            {
+                query = query.Where(d => d.Key == key);
+            }
+
+            var rows = query
+                .OrderBy(d => d.Version)
+                .ToList();
+
+            foreach (var row in rows)
+            {
+                bool alreadyLoaded;
+                lock (sync)
+                {
+                    alreadyLoaded = runtimeDefinitions.ContainsKey((row.Key, row.Version));
+                }
+
+                if (!alreadyLoaded)
+                {
+                    RestorePersistedDefinition(row.Content);
+                }
+            }
+        }
+        catch
+        {
+            // Ignore when WorkflowDbContext is not configured or the table does not exist yet.
+        }
     }
 
     /// <summary>Restores a persisted workflow definition loaded from <c>wf.WorkflowDefinitions</c> on startup.</summary>

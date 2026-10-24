@@ -131,6 +131,62 @@ public sealed partial class WorkflowEngine
         return transition.Roles.Count == 0 || transition.Roles.Any(r => MatchesRoleEntry(r, definition, instance, data, user));
     }
 
+    private static void EnsureCanPatchInstanceData(WorkflowDefinition definition, WorkflowInstance instance, JsonObject patch, WorkflowUser user)
+    {
+        if (user.IsSystem)
+        {
+            return;
+        }
+
+        if (definition.DataSchema is { } dataSchema)
+        {
+            EnsureCanWriteDataProperties(patch, dataSchema, user);
+        }
+
+        var isOwnerOrStarter = !string.IsNullOrEmpty(instance.StartedBy) &&
+                               string.Equals(instance.StartedBy, user.AuditName, StringComparison.Ordinal);
+        var isSupervisor = user.IsInRole("ui-admin")
+                           || user.IsInRole("manager")
+                           || (definition.InstanceAccess?.SupervisorRoles.Any(user.IsInRole) == true);
+        if (!isOwnerOrStarter && !isSupervisor && definition.InstanceAccess is { IsOwnerOnly: true })
+        {
+            throw new WorkflowForbiddenException("You are not allowed to modify instance data on retry.");
+        }
+    }
+
+    private static void EnsureCanWriteDataProperties(JsonObject patch, JsonObject schema, WorkflowUser user)
+    {
+        if (schema["properties"] is not JsonObject properties)
+        {
+            return;
+        }
+
+        foreach (var (propName, propVal) in patch)
+        {
+            if (properties[propName] is not JsonObject propSchema)
+            {
+                continue;
+            }
+
+            if (propSchema[JsonSchemaValidator.RolesKeyword] is JsonArray rolesArr && rolesArr.Count > 0)
+            {
+                var allowed = rolesArr
+                    .Select(r => r is JsonValue rv && rv.TryGetValue<string>(out var s) ? s : null)
+                    .OfType<string>()
+                    .Any(user.IsInRole);
+                if (!allowed)
+                {
+                    throw new WorkflowForbiddenException($"You are not allowed to modify field '{propName}'.");
+                }
+            }
+
+            if (propVal is JsonObject childPatch)
+            {
+                EnsureCanWriteDataProperties(childPatch, propSchema, user);
+            }
+        }
+    }
+
     private bool MatchesRoleEntry(string roleEntry, WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user)
     {
         if (roleEntry is "$starter" or "$owner")
@@ -331,43 +387,48 @@ public sealed partial class WorkflowEngine
             var pendingTransition = pendingTransitionKey == BackgroundTransition
                 ? null
                 : ResolveTransition(definition, instance, pendingTransitionKey);
-            if (pendingTransition?.Input?.Schema is { } trSchema)
+            var canRetryPending = pendingTransitionKey == BackgroundTransition
+                || (pendingTransition is not null && CanExecute(pendingTransition, definition, instance, data, user));
+            if (canRetryPending)
             {
-                pendingInputSchema = ProjectInputSchema(trSchema, scope);
-                var rawPending = string.IsNullOrWhiteSpace(instance.PendingInput) ? null : JsonPath.ParseObject(instance.PendingInput);
-                var extracted = Endpoints.WorkflowHttpInput.ExtractBody(rawPending, trSchema);
-                if (extracted is { Count: > 0 })
+                if (pendingTransition?.Input?.Schema is { } trSchema)
                 {
-                    pendingInputModel = (JsonObject)extracted.DeepClone();
-                }
-                else if (pendingTransition.Input.Into is { Length: > 0 } into && JsonPath.Get(projectedData, into) is JsonObject intoObj)
-                {
-                    pendingInputModel = (JsonObject)intoObj.DeepClone();
+                    pendingInputSchema = ProjectInputSchema(trSchema, scope);
+                    var rawPending = string.IsNullOrWhiteSpace(instance.PendingInput) ? null : JsonPath.ParseObject(instance.PendingInput);
+                    var extracted = Endpoints.WorkflowHttpInput.ExtractBody(rawPending, trSchema);
+                    if (extracted is { Count: > 0 })
+                    {
+                        pendingInputModel = JsonSchemaValidator.ProjectData((JsonObject)extracted.DeepClone(), trSchema, user);
+                    }
+                    else if (pendingTransition.Input.Into is { Length: > 0 } into && JsonPath.Get(projectedData, into) is JsonObject intoObj)
+                    {
+                        pendingInputModel = (JsonObject)intoObj.DeepClone();
+                    }
+                    else
+                    {
+                        pendingInputModel = (JsonObject)projectedData.DeepClone();
+                    }
                 }
                 else
                 {
-                    pendingInputModel = (JsonObject)projectedData.DeepClone();
+                    pendingInputSchema = ProjectInputSchema(definition.DataSchema, scope);
+                    if (pendingTransitionKey != BackgroundTransition
+                        && !string.IsNullOrWhiteSpace(instance.PendingInput)
+                        && JsonPath.ParseObject(instance.PendingInput) is { Count: > 0 } rawPending)
+                    {
+                        var extracted = Endpoints.WorkflowHttpInput.ExtractBody(rawPending, null) ?? rawPending;
+                        var merged = (JsonObject)projectedData.DeepClone();
+                        JsonPath.Merge(merged, JsonSchemaValidator.ProjectData(extracted, definition.DataSchema, user));
+                        pendingInputModel = merged;
+                    }
+                    else
+                    {
+                        pendingInputModel = (JsonObject)projectedData.DeepClone();
+                    }
                 }
-            }
-            else
-            {
-                pendingInputSchema = ProjectInputSchema(definition.DataSchema, scope);
-                if (pendingTransitionKey != BackgroundTransition
-                    && !string.IsNullOrWhiteSpace(instance.PendingInput)
-                    && JsonPath.ParseObject(instance.PendingInput) is { Count: > 0 } rawPending)
-                {
-                    var extracted = Endpoints.WorkflowHttpInput.ExtractBody(rawPending, null) ?? rawPending;
-                    var merged = (JsonObject)projectedData.DeepClone();
-                    JsonPath.Merge(merged, extracted);
-                    pendingInputModel = merged;
-                }
-                else
-                {
-                    pendingInputModel = (JsonObject)projectedData.DeepClone();
-                }
-            }
 
-            pendingInputSchema = EnsureEditableProperties(pendingInputSchema, pendingInputModel);
+                pendingInputSchema = EnsureEditableProperties(pendingInputSchema, pendingInputModel);
+            }
         }
 
         return new WorkflowInstanceModel

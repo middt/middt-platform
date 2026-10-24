@@ -104,6 +104,9 @@ public sealed class AiAgentTask : IWorkflowTask
         AIAgent agent;
         JsonObject? effectiveOutputSchema = inlineOutputSchema;
         List<WorkflowTransitionOptionModel> allowedTransitionOptions = [];
+        var agentSettings = context.Services.GetService<Microsoft.Extensions.Options.IOptions<AgentSettings>>()?.Value;
+        var effectiveMaxToolCalls = config["maxToolCalls"]?.GetValue<int>() ?? agentSettings?.DefaultMaxToolCalls;
+        var effectiveMaxTotalTokens = config["maxTotalTokens"]?.GetValue<long>() ?? agentSettings?.DefaultMaxTotalTokens;
 
         if (mode is "sequential" or "concurrent" or "parallel" or "handoff")
         {
@@ -114,6 +117,8 @@ public sealed class AiAgentTask : IWorkflowTask
         else if (!string.IsNullOrWhiteSpace(agentName) && registry.GetDefinition(agentName) is { } registeredDef)
         {
             effectiveOutputSchema ??= registeredDef.OutputSchema;
+            effectiveMaxToolCalls = config["maxToolCalls"]?.GetValue<int>() ?? registeredDef.MaxToolCalls ?? agentSettings?.DefaultMaxToolCalls;
+            effectiveMaxTotalTokens = config["maxTotalTokens"]?.GetValue<long>() ?? registeredDef.MaxTotalTokens ?? agentSettings?.DefaultMaxTotalTokens;
             if (allowedTransitions.Count == 0 && registeredDef.AllowedTransitions.Count > 0)
             {
                 allowedTransitions.AddRange(registeredDef.AllowedTransitions);
@@ -271,6 +276,18 @@ public sealed class AiAgentTask : IWorkflowTask
         }
 
         var toolCallsArray = ExtractToolCalls(response.Messages);
+        if (effectiveMaxToolCalls is > 0 && toolCallsArray.Count > effectiveMaxToolCalls.Value)
+        {
+            throw new WorkflowTaskException(
+                $"agent '{resolvedAgentName}' exceeded maximum tool calls ({toolCallsArray.Count} > {effectiveMaxToolCalls.Value}).");
+        }
+
+        if (effectiveMaxTotalTokens is > 0 && response.Usage?.TotalTokenCount is { } totalTokenCount && totalTokenCount > effectiveMaxTotalTokens.Value)
+        {
+            throw new WorkflowTaskException(
+                $"agent '{resolvedAgentName}' exceeded maximum token budget ({totalTokenCount} > {effectiveMaxTotalTokens.Value}).");
+        }
+
         var meta = new JsonObject
         {
             ["agent"] = resolvedAgentName,

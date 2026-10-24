@@ -113,24 +113,27 @@ Her iş akışı `Workflows/` klasöründe bir `.json` dosyasıdır:
   "version": 1,
   "title": "Kredi Tahsis & 4-Göz Onay",
   "icon": "account_balance",
-  "historyMode": "Full",
-  "readRoles": ["manager"],
-  "ownerField": "createdBy",
-  "branchField": "branchCode",
+  "history": "delta",
+  "historySnapshotEvery": 10,
+  "roles": ["manager", "credit-officer"],
+  "instanceAccess": {
+    "mode": "owner",
+    "supervisorRoles": ["manager"]
+  },
   "timeout": {
-    "duration": "24:00:00",
+    "after": "PT24H",
     "target": "expired"
   }
 }
 ```
 
 - **`key`**: Akışın benzersiz kimliği (`kebab-case`). URL'lerde (`/workflow/credit-allocation`) ve alt akış çağrılarında kullanılır.
-- **`title` & `icon`**: Ekran başlığı ve Material ikon adı (`account_balance`, `verified_user`, `receipt_long`, `smart_toy`, vb.).
-- **`historyMode`**: `"Full"` (varsayılan; her geçişte tüm veriyi tarihçeye yazar), `"Delta"` (sadece değişen alanların RFC 6902 farkını yazar) veya `"None"`.
-- **Satır Bazlı Güvenlik (Row-Level Security)**:
-  - `readRoles`: Tüm kayıtları görebilecek roller (ör. `["manager"]`).
-  - `ownerField`: Kayıt sahibinin tutulduğu alan (ör. `"createdBy"`). Bu роle sahip olmayan kullanıcılar yalnızca kendi oluşturdukları kayıtları görebilir.
-  - `branchField`: Şube bazlı izolasyon alanı.
+- **`title` & `icon`**: Ekran başlığı ve Material ikon adı (`account_balance`, `verified_user`, `receipt_long`, `smart_toy`, `trending_up`, vb.).
+- **`history`**: `"full"` (varsayılan; her geçişte tüm veriyi tarihçeye yazar), `"delta"` (sadece değişen alanların RFC 6902 farkını yazar; `historySnapshotEvery` adımda bir tam anlık görüntü alır) veya `"none"`.
+- **Akış ve Satır Bazlı Güvenlik (`roles` & `instanceAccess`)**:
+  - `roles`: Akışı başlatabilecek ve görüntüleyebilecek roller (boş bırakılırsa oturum açmış tüm kullanıcılar erişebilir).
+  - `instanceAccess.mode`: `"all"` (varsayılan) veya `"owner"` (kullanıcılar yalnızca kendi başlattıkları kayıtları görebilir).
+  - `instanceAccess.supervisorRoles`: `"owner"` modunda tüm kayıtları görebilecek yönetici/denetçi rolleri (ör. `["manager"]`).
 
 ---
 
@@ -151,8 +154,10 @@ Her iş akışı `Workflows/` klasöründe bir `.json` dosyasıdır:
       "type": "string",
       "title": "TCKN / VKN",
       "x-search": true,
-      "x-mask": "last4",
-      "x-DynamicMaskRoles": ["manager", "idp-admin"]
+      "x-mask": {
+        "pattern": "last4",
+        "exceptRoles": ["manager", "idp-admin"]
+      }
     },
     "segment": {
       "type": "string",
@@ -177,10 +182,9 @@ Her iş akışı `Workflows/` klasöründe bir `.json` dosyasıdır:
 - **`"x-search": true`**:
   - `string` alanlarda büyük/küçük harf duyarsız arama kutusu (veya `enum` ise açılır kutu) oluşturur.
   - `number` / `integer` alanlarda otomatik olarak **Min (≥)** ve **Max (≤)** aralık filtreleri oluşturur.
-- **Alan Gizleme ve Maskeleme**:
-  - `"x-mask": "last4"`: Yetkisiz kullanıcılara alanı `*******8901` şeklinde maskeler.
-  - `"x-DynamicMaskRoles": ["manager"]`: Belirtilen rollere sahip kullanıcılara maskesiz tam değeri gösterir.
-  - `"x-roles": ["manager"]`: Yetkisiz kullanıcılardan alanı tamamen gizler (API yanıtından çıkarır).
+- **Alan Gizleme ve Maskeleme (İç İçe Nesneler Dahil)**:
+  - `"x-mask": { "pattern": "last4" | "email" | "middle", "exceptRoles": ["manager", "idp-admin"] }`: Yetkisiz kullanıcılara alanı `*******8901` şeklinde maskeler, `exceptRoles` içindeki rollere tam değeri gösterir. (`data.customer.identityNumber` gibi iç içe nesne ve dizilerde de otomatik çalışır.)
+  - `"x-roles": ["manager"]`: Yetkisiz kullanıcılardan alanı tamamen gizler (API yanıtından çıkarır) ve yetkisiz kullanıcıların bu alanı yazmasını engeller.
 - **`"x-list": false`**: Alanın liste tablosunda sütun olarak görünmesini engeller, yalnızca detayda kullanılır.
 
 ---
@@ -293,14 +297,14 @@ Bir durumdan diğerine (veya `"$self"` ile aynı durumun kendisine) geçişler 4
 | `"Event"` | Dış sistemden veya başka akıştan mesaj geldiğinde tetiklenir. | `event`: `"payment.received"`, `rule`: `"input.amount > 0"`. |
 
 **4-Göz (Four-Eyes) Onay Kuralı Örneği**:
-Bir önceki adımı onaylayan kişinin ikinci adımı onaylayamaması için:
+Bir önceki adımı onaylayan kişinin ikinci adımı onaylayamaması için `"denyRoles": ["$previousUser"]` kullanılır:
 ```json
 {
   "key": "approve-stage2-four-eyes",
   "title": "2. Kademe Onay (4-Göz)",
   "target": "disbursed",
   "roles": ["manager"],
-  "rule": "user.Id != instance.previousUser"
+  "denyRoles": ["$previousUser"]
 }
 ```
 
@@ -862,14 +866,16 @@ Bir dizi (`items`) içindeki her eleman için `subTask` görevini izole bir kopy
 | `instructions` *(veya `system`)* | `string` | Kayıtlı ajanın sistem talimatlarını (`instructions`) bu görev özelinde ezmek veya satır içi ajan tanımlamak için kullanılır. |
 | `tools` | `string[]` | Ajana tanımlı araçlara ek olarak bu adımda açılacak araç (`Tools/*.json`) listesi. |
 | `mcpServers` | `string[]` | Ajana bu adımda bağlanacak MCP sunucu adları listesi. |
-| **Otomatik Geçiş Yönlendirme (Auto-Routing)** | | Ajanın bulunduğu durumdaki (`state`) `Automatic` geçişler motor tarafından **otomatik olarak keşfedilir** ve ajanın JSON çıktı şemasına (`outputSchema`) enum olarak enjekte edilir. Ajanın seçtiği geçiş `instance.agents.<key>.nextTransition` üzerinden akışı yönlendirir: |
+| **Otomatik Geçiş Yönlendirme (Auto-Routing)** | | Ajanın bulunduğu durumdaki (`state`) `Automatic` geçişler motor tarafından **otomatik olarak keşfedilir** ve ajanın JSON çıktı şemasına (`outputSchema`) enum olarak enjekte edilir. Ajanın seçtiği geçiş `instance.agents.<key>.selectedTransition` üzerinden akışı yönlendirir: |
 | `allowedTransitions` | `string[]` | Ajanın seçmesine izin verilen geçiş anahtarlarının açık listesi (ör. `["auto-approve", "auto-reject"]`). Belirtilmezse durumdaki uygun tüm geçişler otomatik verilir. |
-| `transitionProperty` | `string` | Ajanın JSON yanıtındaki hangi alanın geçiş kararı olarak okunacağını belirler (varsayılan **`"nextTransition"`**). |
+| `transitionProperty` | `string` | Ajanın JSON yanıtındaki hangi alanın geçiş kararı olarak okunacağını belirler (varsayılan **`"selectedTransition"`**). |
 | `transitionInto` | `string` | Ajanın seçtiği geçiş anahtarının ayrıca `instance.data` içinde yazılacağı alan yolu (ör. `"aiSelectedRoute"`). |
 | `sessionKey` | `string` | Çok turlu (multi-turn) konuşma geçmişi anahtarı (varsayılan: görev `key` değeri). Aynı `sessionKey` kullanılan adımlar önceki konuşma geçmişini hatırlar. |
 | `model` *(veya `modelId`)* | `string` | Varsayılan LLM modelini bu görev için değiştirir. |
 | `temperature` | `number` | Yaratıcılık/deterministiklik katsayısı (ör. `0.1`). |
 | `maxOutputTokens` | `number` | Maksimum yanıt token sınırı. |
+| `maxToolCalls` | `number` | Ajanın tek bir çalışmada yapabileceği maksimum araç (Tool/MCP) çağrısı bütçesi (aşılırsa görev hata verir). |
+| `maxTotalTokens` | `number` | Ajanın tek bir çalışmada tüketebileceği maksimum toplam (girdi + çıktı) token bütçesi. |
 | `outputSchema` | `object` | Ajanın yanıtını zorunlu kılacak JSON Schema tanımı. |
 | `into` | `string` | Ajan çıktıları varsayılan olarak `instance.agents.<key>` tablosuna kaydedilir; ayrıca `instance.data` içine de kopyalanması isteniyorsa hedef alan yolu verilir. |
 
@@ -970,7 +976,9 @@ Middt Platform, **Microsoft Agent Framework** (`Microsoft.Agents.AI`) üzerinde 
 {
   "name": "risk-limit-underwriter",
   "description": "Müşterinin KKB risk skorunu, ödeme geçmişini ve TCMB sicilini analiz eden AI Tahsis Ajanı.",
-  "instructions": "Sen otonom bir Kredi Tahsis ajanısın. Araçları çağırarak müşteriyi analiz et ve uygun geçişi (nextTransition) seç.",
+  "maxToolCalls": 10,
+  "maxTotalTokens": 16000,
+  "instructions": "Sen otonom bir Kredi Tahsis ajanısın. Araçları çağırarak müşteriyi analiz et ve uygun geçişi (selectedTransition) seç.",
   "tools": [
     "query_customer_risk_score",
     "lookup_customer_payment_history",
@@ -992,9 +1000,9 @@ Middt Platform, **Microsoft Agent Framework** (`Microsoft.Agents.AI`) üzerinde 
 }
 ```
 
-### 4.2. Kodsuz AI Araçları (`Agents/Tools/*.json`) — Expression, Task (`http`, `set`, `cache`) ve MCP
+### 4.2. Kodsuz AI Araçları (`Agents/Tools/*.json`) — Expression, Task (`http`, `set`, `cache`), MCP ve Rol Bazlı Yetki (`roles`)
 
-Bir AI ajanının kullanabileceği araçlar `Agents/Tools/*.json` altında C# kodu yazmadan tanımlanır:
+Bir AI ajanının kullanabileceği araçlar `Agents/Tools/*.json` altında C# kodu yazmadan tanımlanır. Bir araca `"roles": ["manager"]` eklendiğinde, akışı çalıştıran kullanıcının bu rolü yoksa araç ajana sunulmaz ve çağrılamaz:
 
 #### Tür A: İfade / Hesaplama Aracı (`"kind": "expression"`)
 ```json
@@ -1258,9 +1266,23 @@ Sol menüdeki **Akış Tasarımı** (`/workflow-admin`) sayfası, Citizen Develo
    - Tuvalde bir **Göreve** tıkladığınızda: Görevin ortak ayarları (`key`, `when`, `background`, `onError.action`, `maxRetries`, `delay`, `transition`), sıra değiştirme (`↑`/`↓`) ve `GET /api/workflows/tasks` kataloğundan gelen tipe özel parametre kontrolleri açılır.
    - Bir **Geçişe (Transition)** tıkladığınızda: `key`, `title`, `target`, `trigger` (`Manual`, `Automatic`, `Scheduled`, `Event`), `rule`, `description`, buton stili/rolleri, `default`, `after`, `event` ve `onExecute` görev listesi açılır.
    - Bir **Duruma (State)** tıkladığınızda: `key` (değiştirildiğinde tüm geçiş referanslarını otomatik günceller), `title`, `type`, `subType`, `step` (ekranın üstündeki aşama çubuğunda `1 -> 2 -> 3` sırasını belirleyen **Aşama Sıra No**), `view.layout` (**"🎨 Ekranı Tasarla"** ve **"+ Yeni Ekran Oluştur & Tasarla"** kısayollarıyla) ve çıkan geçişler açılır.
-4. **Veri Şeması (`dataSchema`), Kalıcı Kayıt ve Otomatik Sol Menü**:
+4. **Veri Şeması (`dataSchema`), Kalıcı Sürümleme ve Otomatik Sol Menü**:
    - **`🗂️ Veri Şeması (dataSchema)`** sekmesinden akış alanlarını (`string`, `number`, `integer`, `boolean`, `array`, `object`), maskeleme kuralını (`x-mask`), zorunluluğu (`required`), liste kolonunu (`x-list`) ve otomatik PostgreSQL indeks + arama filtresini (`x-search`) yönetebilirsiniz.
-   - **`{ } JSON Kodu`** sekmesi 2B tuvalle çift yönlü senkronizedir. **"Doğrula"** (`POST /api/workflows/validate`) tüm ifadeleri kontrol eder; **"Kaydet"** (`PUT /api/workflows/{workflow}/definition`) akışı hem `Workflows/{key}.json` dosyasına yazar hem de `WorkflowRegistry` + PostgreSQL bölüm/indekslerine canlı yükler ve sol menüdeki **İş Akışları** altına otomatik olarak ekler.
+   - **`{ } JSON Kodu`** sekmesi 2B tuvalle çift yönlü senkronizedir. **"Doğrula"** (`POST /api/workflows/validate`) tüm ifadeleri kontrol eder; **"Kaydet"** (`PUT /api/workflows/{workflow}/definition`) mevcut akışı ezmek yerine **yeni bir değişmez sürüm (`v2`, `v3`, …)** oluşturur (böylece çalışmakta olan eski kayıtlar kendi sürümlerinde güvenle devam eder, yeni kayıtlar yeni sürümle başlar), `Workflows/` klasörüne yazar, `WorkflowRegistry` + PostgreSQL bölüm/indekslerine canlı yükler ve sol menüdeki **İş Akışları** altına otomatik olarak ekler.
+
+### 6.4. Sürüm Geçmişi, Simülasyon (Dry-Run), Görev Kutusu (`/inbox`), Operasyon Merkezi ve Paket Taşıma
+
+Platform, tasarlanan iş akışlarının güvenli yayımlanması ve işletilmesi için yerleşik yönetişim uçları sunar:
+
+| Özellik | REST Ucu | Açıklama |
+|---|---|---|
+| **Sürüm Listesi & Fark (Diff)** | `GET /api/workflows/{workflow}/versions`<br>`GET /api/workflows/{workflow}/diff?fromVersion=1&toVersion=2` | Akışın tüm sürümlerini listeler; iki sürüm arasındaki eklenen/silinen/değişen durumları, geçişleri ve RFC 6902 JSON Patch farkını döndürür. |
+| **Sürüme Geri Dönme (Rollback)** | `POST /api/workflows/{workflow}/versions/{version}/rollback` | Seçilen eski sürümün tanımını yeni en güncel sürüm (`latestVersion + 1`) olarak yayımlar. |
+| **Yan Etkisiz Simülasyon (Dry-Run)** | `POST /api/workflows/{workflow}/simulate` | Veritabanına kayıt yazmadan ve dış HTTP/mesaj servislerini çağırmadan, verilen başlangıç verisi (`startInput`) ve adım dizisini (`steps`) bellek içi izole kopyada çalıştırır; ziyaret edilen durumları, çalışan görevleri ve nihai `data` durumunu döndürür. |
+| **Birleşik Görev Kutusu (Inbox)** | `GET /api/workflows/inbox` | Oturum açmış kullanıcının tüm iş akışları genelinde onay/aksiyon bekleyen (`subType: "Human"`) ve çalıştırma yetkisine (`roles`, `denyRoles`, `$previousUser`, `rule`) sahip olduğu kayıtları tek listede toplar. |
+| **Operasyon Merkezi & Toplu Retry** | `GET /api/workflows/operations`<br>`POST /api/workflows/operations/retry-batch` | `Faulted` durumundaki kayıtları, açık `WorkflowIncidents` hatalarını ve bekleyen `WorkflowJobs` işlerini tek ekranda özetler; seçilen kayıtları (isteğe bağlı yeni `input` verisiyle) topluca yeniden dener. |
+| **Taşınabilir Paket (Bundle Export/Import)** | `GET /api/workflows/bundle`<br>`POST /api/workflows/bundle/import` | İş akışlarını, ekran tasarımlarını (`Layouts`) ve AI ajan/araç/MCP tanımlarını SHA-256 bütünlük özetiyle (`checksum`) tek pakette dışa/içe aktarır (`dryRun: true` ile CI/CD doğrulaması destekler). |
+| **Veri Saklama Temizliği (Purge)** | `POST /api/workflows/maintenance/purge` | Tamamlanmış (`Completed`, `Cancelled`, `Faulted`) eski kayıtları saklama süresi (`olderThanDays`) ve parti sınırı (`batchSize`) ile temizler (`dryRun` destekli). |
 
 ---
 
@@ -1335,16 +1357,9 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
   - `approved` (`type: "Finish"`, `subType: "Success"`, `view.layout: "purchase-detail"`).
   - `rejected` (`type: "Finish"`, `subType: "Error"`, `view.layout: "purchase-detail"`).
 
-### Adım 4: Durum Ekranını ve Menüyü Tanımla (`Layouts/`)
-1. `demo/Middt.Demo.Api/Layouts/purchase-detail.json` dosyasını oluşturun (`data.*`, `instance.agents.*` ve `instance.toolCalls` alanlarını gösteren `section`, `fields`, `list` bileşenleriyle).
-2. Sol menüde görünmesi için `demo/Middt.Demo.Api/Layouts/nav-menu.json` içindeki `İş Akışları` grubuna ekleyin:
-```json
-{
-  "title": "Satınalma Talepleri",
-  "icon": "shopping_bag",
-  "path": "/workflow/purchase-request"
-}
-```
+### Adım 4: Durum Ekranını Tanımla (`Layouts/`)
+1. `demo/Middt.Demo.Api/Layouts/purchase-detail.json` dosyasını oluşturun (veya `/workflow-admin` içinden **"+ Yeni Ekran Oluştur & Tasarla"** butonuyla oluşturun; `data.*`, `instance.agents.*` ve `instance.toolCalls` alanlarını gösteren `section`, `fields`, `list` bileşenleriyle).
+2. İş akışı `Workflows/purchase-request.json` olarak kaydedildiğinde sol menüdeki **İş Akışları** grubunun altında (`title` ve `icon` bilgileriyle) otomatik olarak görünür; ayrıca bir menü dosyası düzenlemenize gerek yoktur. (Bağımsız `kind: "page"` ekranlarının sol menüde görünmesi için ise layout JSON'una `"menu": { "title": "...", "icon": "...", "order": 10 }` eklenir.)
 
 ### Adım 5: Çalıştır ve Görüntüle
 `docker compose up -d --build` komutuyla (veya yerel geliştirmede API'yi başlatarak) hem Blazor (`http://localhost:8080/workflow/purchase-request`) hem Angular (`http://localhost:8081/workflow/purchase-request`) üzerinde yeni modülünüzü anında kullanmaya başlayabilirsiniz.

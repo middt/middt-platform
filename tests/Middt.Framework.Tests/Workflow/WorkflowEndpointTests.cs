@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Middt.Framework.Common.Model.Data;
 using Middt.Framework.Model.Enumerations;
 using Middt.Framework.Model.Workflow;
+using Middt.Framework.Workflow.Definitions;
 
 namespace Middt.Framework.Tests.Workflow;
 
@@ -35,6 +37,13 @@ public sealed class WorkflowEndpointTests
     {
         using var response = await SendAsync(host, HttpMethod.Post, $"{Base}/{workflow}/instances", body ?? new { data = new { name = "widget" } });
         response.StatusCode.Should().Be(HttpStatusCode.Created);
+        return (await EnvelopeAsync<WorkflowInstanceModel>(response)).Data!;
+    }
+
+    private static async Task<WorkflowInstanceModel> TransitionAsync(WorkflowTestHost host, string workflow, Guid id, string transition, object? body = null, params string[] roles)
+    {
+        using var response = await SendAsync(host, HttpMethod.Post, $"{Base}/{workflow}/instances/{id}/transitions/{transition}", body, roles: roles);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
         return (await EnvelopeAsync<WorkflowInstanceModel>(response)).Data!;
     }
 
@@ -576,5 +585,294 @@ public sealed class WorkflowEndpointTests
         var instance = await StartAsync(host, "custom-flow", new { });
         instance.State.Should().Be("active");
         instance.Data["ready"]!.GetValue<bool>().Should().BeTrue();
+
+        // B-02: Saving an existing workflow again (even with version = 1 in payload) creates a new immutable version (v2)
+        // and keeps v1 intact for the already-running instance.
+        var updatedDef = new
+        {
+            key = "custom-flow",
+            version = 1,
+            title = "Custom Runtime Flow v2",
+            start = new { key = "start", target = "active" },
+            states = new object[]
+            {
+                new
+                {
+                    key = "active",
+                    title = "Active v2",
+                    type = "Intermediate",
+                    subType = "Human",
+                    onEntry = new object[]
+                    {
+                        new { key = "init-flag", task = "set", config = new { values = new { ready = "true", v2Flag = "true" } } }
+                    },
+                    transitions = new object[]
+                    {
+                        new { key = "complete-v2", title = "Complete v2", target = "done", trigger = "Manual" }
+                    }
+                },
+                new { key = "done", title = "Done", type = "Finish", subType = "Success" }
+            }
+        };
+
+        using var saveV2 = await SendAsync(host, HttpMethod.Put, $"{Base}/custom-flow/definition", updatedDef, roles: "ui-admin");
+        saveV2.StatusCode.Should().Be(HttpStatusCode.OK);
+        var savedV2Json = (await EnvelopeAsync<System.Text.Json.Nodes.JsonObject>(saveV2)).Data!;
+        savedV2Json["version"]!.GetValue<int>().Should().Be(2);
+
+        var registry = host.Services.GetRequiredService<WorkflowRegistry>();
+        registry.Get("custom-flow", 1).Title.Should().Be("Custom Runtime Flow");
+        registry.Get("custom-flow", 2).Title.Should().Be("Custom Runtime Flow v2");
+        registry.GetLatest("custom-flow").Version.Should().Be(2);
+
+        // Existing v1 instance still has v1 transition 'complete'
+        var completedV1 = await TransitionAsync(host, "custom-flow", instance.Id, "complete");
+        completedV1.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        completedV1.WorkflowVersion.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Save_workflow_definition_does_not_mutate_registry_when_database_write_fails()
+    {
+        await using var host = await Host();
+
+        // Install a SQLite trigger that aborts inserts on WorkflowDefinitions (B-01 reproduction)
+        await host.WithDbAsync(async db =>
+        {
+            await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRawAsync(
+                db.Database,
+                "CREATE TRIGGER reject_def_write BEFORE INSERT ON WorkflowDefinitions BEGIN SELECT RAISE(ABORT, 'simulated db failure'); END;",
+                Ct);
+            return 0;
+        });
+
+        var updatedPipeline = new
+        {
+            key = "pipeline",
+            version = 1,
+            title = "Should Not Persist",
+            start = new { key = "start", target = "draft" },
+            states = new object[]
+            {
+                new { key = "draft", title = "Draft", type = "Finish", subType = "Success" }
+            }
+        };
+
+        using var saveResp = await SendAsync(host, HttpMethod.Put, $"{Base}/pipeline/definition", updatedPipeline, roles: "ui-admin");
+        saveResp.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+
+        var registry = host.Services.GetRequiredService<WorkflowRegistry>();
+        registry.GetLatest("pipeline").Version.Should().Be(1);
+        registry.GetLatest("pipeline").Title.Should().NotBe("Should Not Persist");
+    }
+
+    [Fact]
+    public async Task Persisted_definitions_restore_when_AutoCreateSchema_is_false_and_sync_across_nodes()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"middt-wf-defs-{Guid.NewGuid():N}.db");
+        try
+        {
+            var connString = $"DataSource={dbPath}";
+            const string v1Json = """
+                {
+                  "key": "shared-flow",
+                  "version": 1,
+                  "title": "Shared v1",
+                  "start": { "key": "start", "target": "done" },
+                  "states": [ { "key": "done", "type": "Finish" } ]
+                }
+                """;
+
+            await using var nodeA = await WorkflowTestHost.StartAsync(
+                [v1Json],
+                configureDb: db => Microsoft.EntityFrameworkCore.SqliteDbContextOptionsBuilderExtensions.UseSqlite(db, connString));
+            await using var nodeB = await WorkflowTestHost.StartAsync(
+                [v1Json],
+                configure: o => o.AutoCreateSchema = false,
+                configureDb: db => Microsoft.EntityFrameworkCore.SqliteDbContextOptionsBuilderExtensions.UseSqlite(db, connString));
+
+            var v2Payload = new
+            {
+                key = "shared-flow",
+                version = 1,
+                title = "Shared v2",
+                start = new { key = "start", target = "done" },
+                states = new object[] { new { key = "done", type = "Finish" } }
+            };
+
+            // Save v2 on Node A
+            using var saveOnA = await SendAsync(nodeA, HttpMethod.Put, $"{Base}/shared-flow/definition", v2Payload, roles: "ui-admin");
+            saveOnA.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            // B-04: Running Node B immediately observes v2 from the shared database without restarting
+            var nodeBRegistry = nodeB.Services.GetRequiredService<WorkflowRegistry>();
+            nodeBRegistry.GetLatest("shared-flow").Version.Should().Be(2);
+            nodeBRegistry.Get("shared-flow", 2).Title.Should().Be("Shared v2");
+
+            // B-03: A newly started Node C with AutoCreateSchema = false restores v2 at startup
+            await using var nodeC = await WorkflowTestHost.StartAsync(
+                [v1Json],
+                configure: o => o.AutoCreateSchema = false,
+                configureDb: db => Microsoft.EntityFrameworkCore.SqliteDbContextOptionsBuilderExtensions.UseSqlite(db, connString));
+
+            var nodeCRegistry = nodeC.Services.GetRequiredService<WorkflowRegistry>();
+            nodeCRegistry.GetLatest("shared-flow").Version.Should().Be(2);
+            nodeCRegistry.GetLatest("shared-flow").Title.Should().Be("Shared v2");
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(dbPath))
+            {
+                File.Delete(dbPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Version_lifecycle_lists_versions_computes_diff_and_rolls_back_to_new_version()
+    {
+        await using var host = await Host();
+
+        var v2Payload = new
+        {
+            key = "pipeline",
+            version = 1,
+            title = "Pipeline v2",
+            start = new { key = "start", target = "draft" },
+            states = new object[]
+            {
+                new
+                {
+                    key = "draft",
+                    title = "Draft v2",
+                    type = "Intermediate",
+                    subType = "Human",
+                    transitions = new object[]
+                    {
+                        new { key = "escalate", title = "Escalate", target = "done", trigger = "Manual" }
+                    }
+                },
+                new { key = "audit", title = "Audit", type = "Intermediate", subType = "Human" },
+                new { key = "done", title = "Done", type = "Finish", subType = "Success" }
+            }
+        };
+
+        using var saveV2 = await SendAsync(host, HttpMethod.Put, $"{Base}/pipeline/definition", v2Payload, user: "alice", roles: "ui-admin");
+        saveV2.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // List versions (F-01)
+        using var versionsResp = await SendAsync(host, HttpMethod.Get, $"{Base}/pipeline/versions");
+        versionsResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var versions = (await EnvelopeAsync<List<WorkflowVersionSummaryModel>>(versionsResp)).Data!;
+        versions.Should().HaveCount(2);
+        versions[0].Version.Should().Be(2);
+        versions[0].IsLatest.Should().BeTrue();
+        versions[0].UpdatedBy.Should().Be("alice");
+        versions[1].Version.Should().Be(1);
+        versions[1].IsLatest.Should().BeFalse();
+
+        // Diff v1 -> v2 (F-01)
+        using var diffResp = await SendAsync(host, HttpMethod.Get, $"{Base}/pipeline/diff?fromVersion=1&toVersion=2");
+        diffResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var diff = (await EnvelopeAsync<WorkflowVersionDiffModel>(diffResp)).Data!;
+        diff.FromVersion.Should().Be(1);
+        diff.ToVersion.Should().Be(2);
+        diff.AddedStates.Should().Contain("audit");
+        diff.AddedTransitions.Should().Contain("draft:escalate");
+        diff.Patch.Should().NotBeEmpty();
+
+        // Rollback to v1 publishes v3 (F-01)
+        using var rollbackResp = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/versions/1/rollback", roles: "ui-admin");
+        rollbackResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var rolledBack = (await EnvelopeAsync<System.Text.Json.Nodes.JsonObject>(rollbackResp)).Data!;
+        rolledBack["version"]!.GetValue<int>().Should().Be(3);
+
+        var registry = host.Services.GetRequiredService<WorkflowRegistry>();
+        registry.GetLatest("pipeline").Version.Should().Be(3);
+        registry.GetLatest("pipeline").States.Select(s => s.Key).Should().NotContain("audit");
+    }
+
+    [Fact]
+    public async Task Inbox_operations_center_simulation_bundle_and_purge_endpoints_work_end_to_end()
+    {
+        await using var host = await Host();
+
+        // Start an active human task instance and verify unified inbox (F-03) + built-in trace/correlation metadata (F-04)
+        var created = await StartAsync(host, "pipeline", new { key = "ORD-INBOX-1", data = new { name = "Ada", amount = 150 } });
+        created.State.Should().Be("draft");
+
+        using var inboxResp = await SendAsync(host, HttpMethod.Get, $"{Base}/inbox");
+        inboxResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var inboxEnvelope = await EnvelopeAsync<List<WorkflowInboxItemModel>>(inboxResp);
+        inboxEnvelope.Data.Should().ContainSingle(i => i.InstanceId == created.Id && i.Key == "ORD-INBOX-1");
+        inboxEnvelope.Data![0].AvailableTransitions.Should().NotBeEmpty();
+
+        // Dry-run process simulator (F-05) runs in memory without writing to DB
+        var simReq = new WorkflowSimulationRequest
+        {
+            Key = "SIM-001",
+            Data = new System.Text.Json.Nodes.JsonObject
+            {
+                ["name"] = "Grace",
+                ["amount"] = 40,
+            },
+            Steps =
+            [
+                new WorkflowSimulationStepRequest
+                {
+                    Transition = "submit",
+                    Input = new System.Text.Json.Nodes.JsonObject { ["comment"] = "Fast-track" },
+                },
+            ],
+        };
+        using var simResp = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/simulate", simReq);
+        simResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var simResult = (await EnvelopeAsync<WorkflowSimulationResultModel>(simResp)).Data!;
+        simResult.Success.Should().BeTrue();
+        simResult.VisitedStates.Should().Contain("draft");
+        simResult.ExecutedTransitions.Should().Contain(["start", "submit"]);
+
+        // Operations summary (F-02)
+        using var opsResp = await SendAsync(host, HttpMethod.Get, $"{Base}/operations");
+        opsResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var ops = (await EnvelopeAsync<WorkflowOperationsSummaryModel>(opsResp)).Data!;
+        ops.Should().NotBeNull();
+
+        // Bundle export & dry-run / live import (F-07 & F-10)
+        using var bundleResp = await SendAsync(host, HttpMethod.Get, $"{Base}/bundle");
+        bundleResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var bundle = (await EnvelopeAsync<WorkflowBundleModel>(bundleResp)).Data!;
+        bundle.Items.Should().NotBeEmpty();
+        bundle.Checksum.Should().NotBeNullOrWhiteSpace();
+
+        var importDryRun = new WorkflowBundleImportRequest
+        {
+            DryRun = true,
+            ExpectedChecksum = bundle.Checksum,
+            Items = bundle.Items,
+        };
+        using var importResp = await SendAsync(host, HttpMethod.Post, $"{Base}/bundle/import", importDryRun);
+        importResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var importResult = (await EnvelopeAsync<WorkflowBundleImportResultModel>(importResp)).Data!;
+        importResult.IsValid.Should().BeTrue();
+        importResult.ImportedWorkflows.Should().Contain("pipeline");
+
+        // Complete the instance and test retention purge (F-09)
+        var submitted = await TransitionAsync(host, "pipeline", created.Id, "submit", new { comment = "Ship" });
+        if (submitted.Status != WorkflowInstanceStatus.Completed)
+        {
+            await TransitionAsync(host, "pipeline", created.Id, "approve", roles: "manager");
+        }
+
+        using var purgeDryResp = await SendAsync(host, HttpMethod.Post, $"{Base}/maintenance/purge", new WorkflowPurgeRequest { RetentionDays = 0, DryRun = true }, roles: "ui-admin");
+        purgeDryResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var purgeDry = (await EnvelopeAsync<WorkflowPurgeResultModel>(purgeDryResp)).Data!;
+        purgeDry.PurgedInstancesCount.Should().BeGreaterThanOrEqualTo(1);
+
+        using var purgeLiveResp = await SendAsync(host, HttpMethod.Post, $"{Base}/maintenance/purge", new WorkflowPurgeRequest { RetentionDays = 0, DryRun = false }, roles: "ui-admin");
+        purgeLiveResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var purgeLive = (await EnvelopeAsync<WorkflowPurgeResultModel>(purgeLiveResp)).Data!;
+        purgeLive.PurgedInstancesCount.Should().BeGreaterThanOrEqualTo(1);
     }
 }

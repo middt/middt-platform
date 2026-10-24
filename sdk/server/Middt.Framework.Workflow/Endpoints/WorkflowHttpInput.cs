@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -68,6 +69,41 @@ public static class WorkflowHttpInput
                         headerObj[stripped] = parsed?.DeepClone();
                     }
                 }
+            }
+
+            // 3. Built-in correlation, trace, and request origin metadata
+            var correlationId = headerObj["correlationId"]?.GetValue<string>()
+                ?? headerObj["requestId"]?.GetValue<string>()
+                ?? Activity.Current?.TraceId.ToString()
+                ?? http.TraceIdentifier;
+            var traceId = Activity.Current?.TraceId.ToString() ?? http.TraceIdentifier;
+            var spanId = Activity.Current?.SpanId.ToString();
+            var clientIp = http.Connection.RemoteIpAddress?.ToString();
+            var userAgent = http.Request.Headers.UserAgent.ToString();
+
+            if (!string.IsNullOrEmpty(correlationId) && headerObj["correlationId"] is null)
+            {
+                headerObj["correlationId"] = correlationId;
+            }
+
+            if (!string.IsNullOrEmpty(traceId) && headerObj["traceId"] is null)
+            {
+                headerObj["traceId"] = traceId;
+            }
+
+            if (!string.IsNullOrEmpty(spanId) && headerObj["spanId"] is null)
+            {
+                headerObj["spanId"] = spanId;
+            }
+
+            if (!string.IsNullOrEmpty(clientIp) && headerObj["clientIp"] is null)
+            {
+                headerObj["clientIp"] = clientIp;
+            }
+
+            if (!string.IsNullOrEmpty(userAgent) && headerObj["userAgent"] is null)
+            {
+                headerObj["userAgent"] = userAgent;
             }
         }
 

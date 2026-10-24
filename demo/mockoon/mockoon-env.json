@@ -55,7 +55,7 @@
       "responses": [
         {
           "uuid": "11111111-2222-4333-8444-555555555504",
-          "body": "{\n  \"status\": \"Approved\",\n  \"gateway\": \"{{urlParam 'entity'}}\",\n  \"verified\": true,\n  \"referenceCode\": \"GW-{{faker 'string.alphanumeric' length=8 casing='upper'}}\",\n  \"processedAt\": \"{{now}}\",\n  \"echo\": {{{bodyRaw}}}\n}",
+          "body": "{\n  \"status\": \"Approved\",\n  \"gateway\": \"{{urlParam 'entity'}}\",\n  \"verified\": true,\n  \"referenceCode\": \"GW-{{faker 'string.alphanumeric' length=8 casing='upper'}}\",\n  \"processedAt\": \"{{now}}\",\n  \"echo\": {\n    \"orderCode\": \"{{body 'orderCode' ''}}\",\n    \"invoiceNo\": \"{{body 'invoiceNo' ''}}\",\n    \"amount\": {{bodyRaw 'amount' 0}},\n    \"paymentMethod\": \"{{body 'paymentMethod' ''}}\"\n  }\n}",
           "latency": 0,
           "statusCode": 200,
           "label": "Gateway Approved",

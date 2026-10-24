@@ -1,0 +1,80 @@
+{
+  "$schema": "../../../spec/ui-layout.schema.json",
+  "key": "limit-revision-detail",
+  "title": "Ticari Limit Revizyonu & Portföy Özeti",
+  "kind": "view",
+  "version": 1,
+  "body": [
+    {
+      "widget": "alert",
+      "severity": "success",
+      "text": "Ticari limit revizyonu tamamlandı ve müşteri kartına yeni limit tanımlandı.",
+      "visibleWhen": "instance.state == \"completed\""
+    },
+    {
+      "widget": "alert",
+      "severity": "warning",
+      "text": "4-Göz İlkesi: 2. Onay aşaması 1. onayı veren yetkiliden farklı bir yönetici tarafından onaylanmalıdır.",
+      "visibleWhen": "instance.state == \"checker-approval\""
+    },
+    {
+      "widget": "alert",
+      "severity": "danger",
+      "text": "Limit revizyon talebi reddedildi: {{ data.reason }}",
+      "visibleWhen": "instance.state == \"rejected\""
+    },
+    {
+      "widget": "columns",
+      "widths": [ "2", "1" ],
+      "children": [
+        {
+          "widget": "section",
+          "title": "{{ data.customerName }} — Limit & Portföy Analizi",
+          "children": [
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "Müşteri Anahtarı", "value": "{{ data.customerKey }}" },
+                { "label": "Revizyon Türü", "value": "{{ data.revisionType }}" },
+                { "label": "Talep Edilen Yeni Limit (₺)", "value": "{{ data.requestedLimit }}", "format": "N2" },
+                { "label": "Mevcut Kredi Riski / Toplam Tahsis (₺)", "value": "{{ data.currentExposure }}", "format": "N2", "visibleWhen": "data.currentExposure != null" },
+                { "label": "Net Ek Limit Kapasitesi (₺)", "value": "{{ data.netAvailableLimit }}", "format": "N2", "visibleWhen": "data.netAvailableLimit != null" },
+                { "label": "Aktif Kredi Dosyası Adedi", "value": "{{ data.activeLoanCount }}", "visibleWhen": "data.activeLoanCount != null" },
+                { "label": "Talep Gerekçesi", "value": "{{ data.justification }}", "visibleWhen": "data.justification != null" },
+                { "label": "Talep Eden", "value": "{{ data.requestedBy }}", "visibleWhen": "data.requestedBy != null" },
+                { "label": "Korelasyon No", "value": "{{ data.correlationId }}", "visibleWhen": "data.correlationId != null" }
+              ]
+            }
+          ]
+        },
+        {
+          "widget": "section",
+          "title": "Onay & Komite Durumu",
+          "children": [
+            { "widget": "badge", "color": "info", "text": "1. Onay Bekleniyor", "visibleWhen": "instance.state == \"maker-review\"" },
+            { "widget": "badge", "color": "warning", "text": "2. Onay (4-Göz Komite)", "visibleWhen": "instance.state == \"checker-approval\"" },
+            { "widget": "badge", "color": "success", "text": "Limit Aktif", "visibleWhen": "instance.state == \"completed\"" },
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "1. Onaycı", "value": "{{ data.makerApprovedBy }}", "visibleWhen": "data.makerApprovedBy != null" },
+                { "label": "1. Onaycı Görüşü", "value": "{{ data.makerComment }}", "visibleWhen": "data.makerComment != null" },
+                { "label": "2. Onaycı (4-Göz)", "value": "{{ data.checkerApprovedBy }}", "visibleWhen": "data.checkerApprovedBy != null" },
+                { "label": "2. Onaycı Görüşü", "value": "{{ data.checkerComment }}", "visibleWhen": "data.checkerComment != null" },
+                { "label": "Komite Gizli Notu", "value": "{{ data.committeeNote }}", "visibleWhen": "user.IsInRole(\"manager\") && data.committeeNote != null" },
+                { "label": "Aktifleştirme Zamanı", "value": "{{ data.activatedAt }}", "format": "g", "visibleWhen": "data.activatedAt != null" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "widget": "layout",
+      "key": "customer-summary-card",
+      "data": "data.customer",
+      "visibleWhen": "data.customer != null && data.customer.fullName != null"
+    },
+    { "widget": "layout", "key": "workflow-footer" }
+  ]
+}

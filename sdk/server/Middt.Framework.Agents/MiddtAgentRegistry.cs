@@ -77,6 +77,7 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
                     McpServer = server.Name,
                     McpTool = mcpTool.Name,
                     Parameters = mcpTool.Parameters,
+                    Roles = [.. mcpTool.Roles],
                 };
                 var fn = new DeclarativeAiFunction(boundTool, services, mcpClient);
                 _tools.TryAdd(mcpTool.Name, fn);
@@ -200,7 +201,7 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         {
             if (GetTool(toolName) is { } tool)
             {
-                if (seenToolNames.Add(tool.Name))
+                if (IsToolAllowedForAmbientCaller(tool) && seenToolNames.Add(tool.Name))
                 {
                     resolvedTools.Add(tool);
                 }
@@ -217,7 +218,7 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
                 ?? throw new InvalidOperationException($"Agent '{agentName}' references unknown MCP server '{serverName}'.");
             foreach (var mcpTool in server.Tools)
             {
-                if (GetTool(mcpTool.Name) is { } tool && seenToolNames.Add(tool.Name))
+                if (GetTool(mcpTool.Name) is { } tool && IsToolAllowedForAmbientCaller(tool) && seenToolNames.Add(tool.Name))
                 {
                     resolvedTools.Add(tool);
                 }
@@ -309,6 +310,29 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
             doc.RootElement.Clone(),
             schemaName: sanitizedName,
             schemaDescription: schemaNode["description"]?.GetValue<string>());
+    }
+
+    private static bool IsToolAllowedForAmbientCaller(AITool tool)
+    {
+        if (tool is not DeclarativeAiFunction { Definition.Roles.Count: > 0 } declFn)
+        {
+            return true;
+        }
+
+        var ambient = WorkflowTaskAmbientContext.Current;
+        if (ambient is null)
+        {
+            return true;
+        }
+
+        var caller = ambient.Scope.User;
+        if (string.Equals(caller.Id, Middt.Framework.Workflow.Expressions.WorkflowUser.System.Id, StringComparison.Ordinal)
+            || caller.IsInRole("ui-admin"))
+        {
+            return true;
+        }
+
+        return declFn.Definition.Roles.Any(caller.IsInRole);
     }
 
     private static Microsoft.Agents.AI.Workflows.Workflow BuildHandoffWorkflow(IReadOnlyList<AIAgent> agents)

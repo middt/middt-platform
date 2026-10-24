@@ -74,5 +74,14 @@
       "checkType": "Kurumsal Ticari Limit Analizi",
       "requireUnderwriting": true
     }
+  },
+  {
+    "workflow": "commercial-limit-revision",
+    "data": {
+      "customerKey": "CUST-12345678901",
+      "requestedLimit": 1500000,
+      "revisionType": "Ek Limit Artırımı",
+      "justification": "Artan ihracat ve lojistik hacmi doğrultusunda ticari kredi limit artışı talebi."
+    }
   }
 ]

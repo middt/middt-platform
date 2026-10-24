@@ -56,7 +56,8 @@ public sealed class UiTestHost : IAsyncDisposable
     public static async Task<UiTestHost> StartAsync(
         IEnumerable<string>? seeds = null,
         Action<MiddtUiOptions>? configure = null,
-        SqliteConnection? connection = null)
+        SqliteConnection? connection = null,
+        Action<IServiceCollection>? services = null)
     {
         var seedList = seeds?.ToList() ?? [];
         var directory = seedList.Count > 0 ? WriteSeeds(seedList) : null;
@@ -90,6 +91,7 @@ public sealed class UiTestHost : IAsyncDisposable
 
             configure?.Invoke(o);
         });
+        services?.Invoke(builder.Services);
         builder.Services.AddAuthentication(TestAuthHandler.SchemeName)
             .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, null);
         builder.Services.AddAuthorization();

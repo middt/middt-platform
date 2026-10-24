@@ -289,3 +289,189 @@ public sealed class WorkflowValidationResultModel
     public bool IsValid => Errors.Count == 0;
     public List<string> Errors { get; set; } = [];
 }
+
+/// <summary>Metadata summary of one immutable version of a workflow definition (<c>GET /api/workflows/{workflow}/versions</c>).</summary>
+public sealed class WorkflowVersionSummaryModel
+{
+    public int Version { get; set; }
+    public string? Title { get; set; }
+    public int StatesCount { get; set; }
+    public int TransitionsCount { get; set; }
+    public bool IsLatest { get; set; }
+    public string? UpdatedBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+}
+
+/// <summary>Structural and RFC 6902 JSON Patch diff between two versions of a workflow definition (<c>GET /api/workflows/{workflow}/diff</c>).</summary>
+public sealed class WorkflowVersionDiffModel
+{
+    public string Key { get; set; } = string.Empty;
+    public int FromVersion { get; set; }
+    public int ToVersion { get; set; }
+    public List<string> AddedStates { get; set; } = [];
+    public List<string> RemovedStates { get; set; } = [];
+    public List<string> ChangedStates { get; set; } = [];
+    public List<string> AddedTransitions { get; set; } = [];
+    public List<string> RemovedTransitions { get; set; } = [];
+    public JsonArray Patch { get; set; } = [];
+}
+
+/// <summary>Summary of a scheduled or background workflow job in the operations center.</summary>
+public sealed class WorkflowPendingJobModel
+{
+    public Guid Id { get; set; }
+    public string Workflow { get; set; } = string.Empty;
+    public Guid InstanceId { get; set; }
+    public string Kind { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string? TransitionKey { get; set; }
+    public DateTime DueAt { get; set; }
+    public int Attempts { get; set; }
+    public string? LastError { get; set; }
+}
+
+/// <summary>Operational overview of faulted instances, stuck/busy instances, pending jobs, and recent incidents (<c>GET /api/workflows/operations</c>).</summary>
+public sealed class WorkflowOperationsSummaryModel
+{
+    public int FaultedCount { get; set; }
+    public int BusyCount { get; set; }
+    public int PendingJobCount { get; set; }
+    public int UnresolvedIncidentCount { get; set; }
+    public List<WorkflowInstanceModel> FaultedInstances { get; set; } = [];
+    public List<WorkflowPendingJobModel> PendingJobs { get; set; } = [];
+    public List<WorkflowIncidentModel> RecentIncidents { get; set; } = [];
+}
+
+/// <summary>Single instance entry in a batch retry request.</summary>
+public sealed class WorkflowBatchRetryItemRequest
+{
+    public string Workflow { get; set; } = string.Empty;
+    public Guid InstanceId { get; set; }
+    public JsonObject? Input { get; set; }
+}
+
+/// <summary>Request payload for retrying multiple faulted workflow instances (<c>POST /api/workflows/operations/retry-batch</c>).</summary>
+public sealed class WorkflowBatchRetryRequest
+{
+    public List<WorkflowBatchRetryItemRequest> Items { get; set; } = [];
+}
+
+/// <summary>Failure details for a single instance in a batch operation.</summary>
+public sealed class WorkflowBatchRetryFailureModel
+{
+    public Guid InstanceId { get; set; }
+    public string Workflow { get; set; } = string.Empty;
+    public string Error { get; set; } = string.Empty;
+}
+
+/// <summary>Result of a batch workflow operation (<c>POST /api/workflows/operations/retry-batch</c>).</summary>
+public sealed class WorkflowBatchOperationResultModel
+{
+    public List<Guid> SucceededIds { get; set; } = [];
+    public List<WorkflowBatchRetryFailureModel> Failed { get; set; } = [];
+}
+
+/// <summary>Actionable human task item across all accessible workflows (<c>GET /api/workflows/inbox</c>).</summary>
+public sealed class WorkflowInboxItemModel
+{
+    public Guid InstanceId { get; set; }
+    public string? Key { get; set; }
+    public string Workflow { get; set; } = string.Empty;
+    public int WorkflowVersion { get; set; }
+    public string? WorkflowTitle { get; set; }
+    public string? WorkflowIcon { get; set; }
+    public string State { get; set; } = string.Empty;
+    public string? StateTitle { get; set; }
+    public string? StartedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public DateTime? DueAt { get; set; }
+    public List<AvailableTransitionModel> AvailableTransitions { get; set; } = [];
+}
+
+/// <summary>Single transition step in a dry-run workflow simulation.</summary>
+public sealed class WorkflowSimulationStepRequest
+{
+    public string Transition { get; set; } = string.Empty;
+    public JsonObject? Input { get; set; }
+}
+
+/// <summary>Dry-run simulation request for testing a workflow without database side effects (<c>POST /api/workflows/{workflow}/simulate</c>).</summary>
+public sealed class WorkflowSimulationRequest
+{
+    public string? Key { get; set; }
+    public int? Version { get; set; }
+    public JsonObject? Definition { get; set; }
+    public JsonObject? Data { get; set; }
+    public List<WorkflowSimulationStepRequest> Steps { get; set; } = [];
+    public Dictionary<string, JsonObject>? TaskMocks { get; set; }
+}
+
+/// <summary>Outcome of a dry-run workflow simulation (<c>POST /api/workflows/{workflow}/simulate</c>).</summary>
+public sealed class WorkflowSimulationResultModel
+{
+    public bool Success { get; set; }
+    public string FinalState { get; set; } = string.Empty;
+    public WorkflowInstanceStatus FinalStatus { get; set; }
+    public List<string> VisitedStates { get; set; } = [];
+    public List<string> ExecutedTransitions { get; set; } = [];
+    public JsonObject FinalData { get; set; } = [];
+    public List<AvailableTransitionModel> AvailableTransitions { get; set; } = [];
+    public string? Error { get; set; }
+}
+
+/// <summary>Single workflow definition entry in an environment export/import bundle.</summary>
+public sealed class WorkflowBundleItemModel
+{
+    public string Key { get; set; } = string.Empty;
+    public int Version { get; set; }
+    public string? Title { get; set; }
+    public string Checksum { get; set; } = string.Empty;
+    public JsonObject Definition { get; set; } = [];
+}
+
+/// <summary>Portable bundle of workflow definitions and UI layouts with integrity checksums (<c>GET /api/workflows/bundle</c>).</summary>
+public sealed class WorkflowBundleModel
+{
+    public DateTime ExportedAt { get; set; } = DateTime.UtcNow;
+    public string Checksum { get; set; } = string.Empty;
+    public List<WorkflowBundleItemModel> Items { get; set; } = [];
+    public Dictionary<string, JsonObject> Layouts { get; set; } = [];
+}
+
+/// <summary>Request to validate or import a workflow/layout bundle (<c>POST /api/workflows/bundle/import</c>).</summary>
+public sealed class WorkflowBundleImportRequest
+{
+    public bool DryRun { get; set; }
+    public string? ExpectedChecksum { get; set; }
+    public List<WorkflowBundleItemModel> Items { get; set; } = [];
+    public Dictionary<string, JsonObject>? Layouts { get; set; }
+}
+
+/// <summary>Result of validating or importing a workflow/layout bundle (<c>POST /api/workflows/bundle/import</c>).</summary>
+public sealed class WorkflowBundleImportResultModel
+{
+    public bool IsValid => Errors.Count == 0;
+    public bool DryRun { get; set; }
+    public List<string> ImportedWorkflows { get; set; } = [];
+    public List<string> ImportedLayouts { get; set; } = [];
+    public List<string> Errors { get; set; } = [];
+}
+
+/// <summary>Request to purge completed/cancelled workflow instances older than a retention threshold (<c>POST /api/workflows/maintenance/purge</c>).</summary>
+public sealed class WorkflowPurgeRequest
+{
+    public int RetentionDays { get; set; } = 90;
+    public bool DryRun { get; set; }
+    public string? Workflow { get; set; }
+}
+
+/// <summary>Result of a workflow data retention purge (<c>POST /api/workflows/maintenance/purge</c>).</summary>
+public sealed class WorkflowPurgeResultModel
+{
+    public bool DryRun { get; set; }
+    public DateTime CutoffUtc { get; set; }
+    public int PurgedInstancesCount { get; set; }
+    public int PurgedHistoryCount { get; set; }
+    public int PurgedIncidentsCount { get; set; }
+}

@@ -278,6 +278,8 @@ public sealed partial class WorkflowJobProcessor(
         var threshold = now - options.Value.BusyTimeout;
         var candidates = await db.Instances.AsNoTracking()
             .Where(i => i.Status == WorkflowInstanceStatus.Busy && i.BusySince < threshold)
+            .OrderBy(i => i.BusySince)
+            .Take(100)
             .Select(i => new { i.Id, i.WorkflowKey, i.State, i.PendingTransition })
             .ToListAsync(cancellationToken);
         if (candidates.Count == 0)
