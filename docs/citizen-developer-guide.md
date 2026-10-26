@@ -615,11 +615,12 @@ Başka bir akış kaydını `key`, `id` veya **`where`** (instance data koşulu)
 
 ---
 
-#### 4. `http` — Dış Servis Çağrısı
+#### 4. `http` — Dış Servis Çağrısı ve Yanıttan Seçmeli Alan Yazma (`select` / `output`)
 > [!IMPORTANT]
 > `http` görevlerinde her zaman `http://` veya `https://` ile başlayan **tam (absolute) URL** kullanılmalıdır. Güvenlik (SSRF koruması) gereği URL'nin `host` (alan adı) kısmında `{{ }}` şablonu kullanılamaz; şablonlar yalnızca yol (path) ve `queryParams` içinde kullanılabilir.
 
 ```json
+// Örnek 1: Yanıtın yalnızca belirli alanlarını seçerek (select: nesne veya dizi) into alanına yazma
 {
   "key": "charge-http",
   "task": "http",
@@ -647,7 +648,29 @@ Başka bir akış kaydını `key`, `id` veya **`where`** (instance data koşulu)
     "acceptedStatusCodes": [200, 201],
     "failOnError": true,
     "timeoutSeconds": 30,
+    "select": {
+      "body.referenceCode": "result.body.referenceCode",
+      "body.status": "result.body.status",
+      "statusCode": "result.statusCode",
+      "isSuccess": "result.isSuccess"
+    },
     "into": "gatewayResponse"
+  }
+}
+```
+```json
+// Örnek 2: into kullanmadan doğrudan instance.data içindeki hedef yollara yazma (output / select eşlemesi)
+{
+  "key": "fetch-fx-rate",
+  "task": "http",
+  "config": {
+    "method": "GET",
+    "url": "http://mockoon:3000/api/v1/fx/rates",
+    "output": {
+      "paymentTxId": "result.body.referenceCode",
+      "convertedAmount": "data.amount * result.body.rate",
+      "audit.gatewayStatus": "result.statusCode"
+    }
   }
 }
 ```
@@ -659,10 +682,11 @@ Başka bir akış kaydını `key`, `id` veya **`where`** (instance data koşulu)
 | `headers` | `object` | İsteğe eklenecek HTTP başlıkları (`{{ }}` şablonu destekler). |
 | `body` | `any` | Gönderilecek JSON gövdesi veya metin (`{{ }}` şablonu destekler). |
 | `contentType` | `string` | Gövde içerik tipi (varsayılan `"application/json"`). |
-| `acceptedStatusCodes` | `number[]` veya `string[]` | Başarılı kabul edilecek HTTP durum kodları (ör. `[200, 201, 404]` veya `["2xx", "404"]`). Belirtilmezse tüm `2xx` kodları başarılı sayılır. |
-| `failOnError` | `boolean` | `true` (varsayılan) \| `false`:<br>• **`true`**: Kabul edilmeyen durum kodlarında veya ağ hatalarında `WorkflowTaskException` fırlatır (`onError` devreye girer).<br>• **`false`**: Hata fırlatmaz; akışı kesmeden `into` içerisine `{ "statusCode": 503, "isSuccess": false, "error": "...", "body": ... }` yazar. |
+| `acceptedStatusCodes` | `number[]` veya `string[]` | Başarılı kabul edilecek HTTP durum kodları (ör. `[200, 201, 404]`). Belirtilmezse tüm `2xx` kodları başarılı sayılır. |
+| `failOnError` | `boolean` | `true` (varsayılan) \| `false`:<br>• **`true`**: Kabul edilmeyen durum kodlarında veya ağ hatalarında `WorkflowTaskException` fırlatır (`onError` devreye girer).<br>• **`false`**: Hata fırlatmaz; akışı kesmeden `into` / `select` / `output` içerisine `{ "statusCode": 503, "isSuccess": false, "error": "...", "body": ... }` yazar. |
 | `timeoutSeconds` | `number` | İstek zaman aşımı süresi (saniye, varsayılan `30`, üst sınır `300`). |
-| `into` | `string` | Yanıtın (`{ statusCode, isSuccess, headers, body }` ve üst düzeyde gövde alanlarının) yazılacağı alan yolu. |
+| `select` *(veya `output`)* | `string[]` veya `object` | Tüm HTTP yanıt zarfı ve başlıkları yerine **yalnızca seçili alanları** `instance.data` içine yazar (`loadWorkflow.select` ve `subFlow.output` ile aynı yapıda):<br>• **Dizi (`string[]`)**: `["body.referenceCode", "statusCode"]` veya doğrudan JSON gövde alanları `["referenceCode", "status"]`.<br>• **Eşleme nesnesi (`object`)**: `{ "hedefAlan": "result.body.referenceCode", "tutar": "result.body.amount * 1.2" }`. `into` belirtilmişse `data.<into>` altına, `into` belirtilmemişse doğrudan `instance.data` içindeki hedef yollara yazar. İfadelerde `result.*` (`result.body`, `result.headers`, `result.statusCode`, `result.isSuccess`) ve `target.*` kullanılabilir. |
+| `into` | `string` | Yanıtın yazılacağı alan yolu (`select` / `output` kullanılmazsa tüm `{ statusCode, isSuccess, headers, body }` zarfını yazar; `select` / `output` nesnesi kullanıldığında isteğe bağlıdır). |
 
 ---
 

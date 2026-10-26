@@ -364,6 +364,11 @@
               "amount": "{{ data.payment.amount }}",
               "reference": "{{ data.payment.reference }}"
             },
+            "select": [
+              "body.referenceCode",
+              "body.status",
+              "statusCode"
+            ],
             "into": "ledgerResponse"
           }
         },

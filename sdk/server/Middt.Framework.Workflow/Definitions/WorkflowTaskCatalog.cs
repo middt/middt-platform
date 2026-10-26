@@ -275,7 +275,8 @@ public static class WorkflowTaskCatalog
                 new() { Name = "acceptedStatusCodes", Label = "Kabul Edilen Durum Kodları (acceptedStatusCodes)", Type = "json", Description = "Başarılı sayılacak HTTP kodları dizisi (ör. [200, 201, 404])." },
                 new() { Name = "failOnError", Label = "Hata Kodunda Exception Fırlat (failOnError)", Type = "boolean", DefaultValue = "true", Description = "false ise hata fırlatmadan yanıtı { isSuccess: false, statusCode: ... } olarak into alanına yazar." },
                 new() { Name = "timeoutSeconds", Label = "Zaman Aşımı Saniye (timeoutSeconds)", Type = "number", DefaultValue = "30", Description = "İstek zaman aşımı süresi (1..300 sn)." },
-                new() { Name = "into", Label = "Yanıt Alanı (into)", Type = "string", Description = "HTTP yanıtının yazılacağı alan yolu." },
+                new() { Name = "select", Label = "Alan Seçimi / Dönüşüm (select / output)", Type = "json", Description = "Yanıtın yalnızca seçili alanlarını yazar: dizi [\"body.referenceCode\", \"statusCode\"] veya eşleme nesnesi { \"paymentTxId\": \"result.body.referenceCode\" }." },
+                new() { Name = "into", Label = "Yanıt Alanı (into)", Type = "string", Description = "HTTP yanıtının yazılacağı alan yolu (select/output eşleme nesnesi kullanıldığında isteğe bağlıdır)." },
             ],
         },
         new()

@@ -126,6 +126,12 @@
               "amount": "{{ data.amount }}",
               "paymentMethod": "{{ data.paymentMethod }}"
             },
+            "select": {
+              "body.referenceCode": "result.body.referenceCode",
+              "body.status": "result.body.status",
+              "statusCode": "result.statusCode",
+              "isSuccess": "result.isSuccess"
+            },
             "into": "gatewayResponse"
           }
         },

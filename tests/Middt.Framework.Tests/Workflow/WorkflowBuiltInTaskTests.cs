@@ -846,4 +846,92 @@ public sealed class WorkflowBuiltInTaskTests
         reloadedCustomer.Data["usedLimit"]!.GetValue<decimal>().Should().Be(200000m);
         reloadedCustomer.Data["disbursedAmount"]!.GetValue<decimal>().Should().Be(150000m);
     }
+
+    [Fact]
+    public async Task Http_task_supports_select_array_and_output_mapping_with_or_without_into()
+    {
+        const string selectHttpWorkflow = """
+            {
+              "key": "http-select-wf",
+              "start": { "key": "start", "target": "calling",
+                         "input": { "schema": { "type": "object", "properties": { "id": { "type": "string" } } } } },
+              "states": [
+                {
+                  "key": "calling",
+                  "type": "Finish",
+                  "subType": "Success",
+                  "onEntry": [
+                    {
+                      "key": "select-array-with-into",
+                      "task": "http",
+                      "config": {
+                        "method": "GET",
+                        "url": "https://scoring.test/api/customers/{{ data.id }}",
+                        "select": ["referenceCode", "statusCode"],
+                        "into": "picked"
+                      }
+                    },
+                    {
+                      "key": "output-map-without-into",
+                      "task": "http",
+                      "config": {
+                        "method": "GET",
+                        "url": "https://scoring.test/api/customers/{{ data.id }}",
+                        "output": {
+                          "txRef": "result.body.referenceCode",
+                          "doubleScore": "result.body.score * 2",
+                          "audit.httpStatus": "result.statusCode"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        var handler = new FakeHttpHandler
+        {
+            StatusCode = HttpStatusCode.OK,
+            ResponseBody = """{ "referenceCode": "REF-7788", "score": 45, "ignoredBigPayload": "should-not-be-saved" }""",
+        };
+
+        await using var host = await WorkflowTestHost.StartAsync(
+            [selectHttpWorkflow],
+            services: s => s.AddHttpClient(HttpTask.DefaultClientName).ConfigurePrimaryHttpMessageHandler(() => handler));
+
+        var instance = await host.StartInstanceAsync("http-select-wf", new { id = "c-99" });
+
+        instance.Status.Should().Be(WorkflowInstanceStatus.Completed);
+
+        // 1. select array with 'into' writes only the requested fields
+        var picked = instance.Data["picked"]!.AsObject();
+        picked["referenceCode"]!.GetValue<string>().Should().Be("REF-7788");
+        picked["statusCode"]!.GetValue<int>().Should().Be(200);
+        picked.ContainsKey("headers").Should().BeFalse();
+        picked.ContainsKey("ignoredBigPayload").Should().BeFalse();
+
+        // 2. output mapping without 'into' writes mapped expressions directly to instance.Data paths
+        instance.Data["txRef"]!.GetValue<string>().Should().Be("REF-7788");
+        instance.Data["doubleScore"]!.GetValue<int>().Should().Be(90);
+        instance.Data["audit"]!["httpStatus"]!.GetValue<int>().Should().Be(200);
+        instance.Data.ContainsKey("ignoredBigPayload").Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("""{ "url": "https://scoring.test/a", "select": [], "into": "r" }""", "http: 'select' array must contain at least one field path.")]
+    [InlineData("""{ "url": "https://scoring.test/a", "select": ["a"], "output": { "x": "result.statusCode" } }""", "http: specify either 'select' or 'output', not both.")]
+    [InlineData("""{ "url": "https://scoring.test/a", "output": { "x": "result.statusCode +" } }""", "http: mapping 'x':")]
+    public async Task Http_task_validates_select_and_output_configuration(string config, string expectedError)
+    {
+        var definition = $$"""
+            { "key": "bad-http-select", "start": { "key": "start", "target": "a" },
+              "states": [ { "key": "a", "onEntry": [ { "task": "http", "config": {{config}} } ] } ] }
+            """;
+
+        var act = () => WorkflowTestHost.StartAsync(definition);
+
+        (await act.Should().ThrowAsync<Middt.Framework.Workflow.Runtime.WorkflowDefinitionException>())
+            .Which.Errors.Should().Contain(e => e.Contains(expectedError, StringComparison.Ordinal));
+    }
 }
