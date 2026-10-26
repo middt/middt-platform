@@ -934,4 +934,114 @@ public sealed class WorkflowBuiltInTaskTests
         (await act.Should().ThrowAsync<Middt.Framework.Workflow.Runtime.WorkflowDefinitionException>())
             .Which.Errors.Should().Contain(e => e.Contains(expectedError, StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task Unified_keywords_work_across_set_loadWorkflow_updateWorkflow_and_startWorkflow()
+    {
+        const string targetWorkflow = """
+            {
+              "key": "target-wf",
+              "start": {
+                "key": "start",
+                "target": "active",
+                "input": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "customerNo": { "type": "string" },
+                      "limit": { "type": "number" },
+                      "secretInternal": { "type": "string" }
+                    }
+                  },
+                  "values": {
+                    "computedTag": "input.customerNo + \"-V1\""
+                  }
+                }
+              },
+              "states": [
+                { "key": "active", "type": "Intermediate" }
+              ]
+            }
+            """;
+
+        const string callerWorkflow = """
+            {
+              "key": "caller-wf",
+              "start": {
+                "key": "start",
+                "target": "done",
+                "onExecute": [
+                  {
+                    "task": "set",
+                    "config": {
+                      "set": {
+                        "customerNo": "\"CUST-42\"",
+                        "bonus": "500"
+                      }
+                    }
+                  },
+                  {
+                    "task": "startWorkflow",
+                    "config": {
+                      "workflow": "target-wf",
+                      "key": "TW-{{ data.customerNo }}",
+                      "input": {
+                        "customerNo": "{{ data.customerNo }}",
+                        "limit": 1000,
+                        "secretInternal": "do-not-copy"
+                      },
+                      "output": {
+                        "startedId": "result.id",
+                        "startedKey": "result.key"
+                      }
+                    }
+                  },
+                  {
+                    "task": "updateWorkflow",
+                    "config": {
+                      "workflow": "target-wf",
+                      "key": "TW-{{ data.customerNo }}",
+                      "set": {
+                        "limit": "target.limit + data.bonus"
+                      },
+                      "data": {
+                        "updatedByCaller": true
+                      },
+                      "output": {
+                        "updatedLimit": "result.limit"
+                      }
+                    }
+                  },
+                  {
+                    "task": "loadWorkflow",
+                    "config": {
+                      "workflow": "target-wf",
+                      "key": "TW-{{ data.customerNo }}",
+                      "output": {
+                        "loadedTag": "result.computedTag",
+                        "loadedUpdatedFlag": "target.updatedByCaller"
+                      }
+                    }
+                  }
+                ]
+              },
+              "states": [
+                { "key": "done", "type": "Finish", "subType": "Success" }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync([targetWorkflow, callerWorkflow]);
+
+        var instance = await host.StartInstanceAsync("caller-wf");
+
+        instance.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        instance.Data["customerNo"]!.GetValue<string>().Should().Be("CUST-42");
+        instance.Data["startedKey"]!.GetValue<string>().Should().Be("TW-CUST-42");
+        instance.Data["startedId"]!.GetValue<string>().Should().NotBeNullOrWhiteSpace();
+        instance.Data["updatedLimit"]!.GetValue<decimal>().Should().Be(1500m);
+        instance.Data["loadedTag"]!.GetValue<string>().Should().Be("CUST-42-V1");
+        instance.Data["loadedUpdatedFlag"]!.GetValue<bool>().Should().BeTrue();
+        instance.Data.ContainsKey("secretInternal").Should().BeFalse();
+    }
 }

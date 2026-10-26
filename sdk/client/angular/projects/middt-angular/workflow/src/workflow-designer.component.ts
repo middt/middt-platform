@@ -543,7 +543,7 @@ interface CanvasEdge {
                     <small class="middt-ui-text-muted">
                       🔗 Alt Akış:
                       <code>{{ getNestedString(stateObj, 'subFlow', 'workflow') || '(seçilmedi)' }}</code>
-                      @if (getNestedString(stateObj, 'subFlow', 'outputInto'); as sfOut) {
+                      @if (getNestedString(stateObj, 'subFlow', 'into'); as sfOut) {
                         → <code>{{ sfOut }}</code>
                       }
                     </small>
@@ -1176,12 +1176,12 @@ interface CanvasEdge {
                       </select>
                     </div>
                     <div class="middt-ui-input">
-                      <label>Sonucun Yazılacağı Alan (subFlow.outputInto)</label>
+                      <label>Sonucun Yazılacağı Alan (subFlow.into)</label>
                       <input
                         class="middt-wf-input"
                         placeholder="Ör: riskResult (boşsa kök veriye birleştirir)"
-                        [value]="getString(subFlowObj, 'outputInto')"
-                        (change)="setString(subFlowObj, 'outputInto', $any($event.target).value)" />
+                        [value]="getString(subFlowObj, 'into')"
+                        (change)="setString(subFlowObj, 'into', $any($event.target).value)" />
                     </div>
                   </div>
 
@@ -2861,7 +2861,7 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     if (type === 'SubFlow') {
       created['subFlow'] = {
         workflow: this.otherWorkflows()[0]?.key ?? '',
-        outputInto: 'subFlowResult',
+        into: 'subFlowResult',
         forwardTransitions: true,
       };
     }

@@ -87,9 +87,11 @@ public sealed class McpTask : IWorkflowTask
                      .Concat(expressions.ValidateTemplate(config["resource"]))
                      .Concat(expressions.ValidateTemplate(config["prompt"]))
                      .Concat(expressions.ValidateTemplate(config["arguments"]))
-                     .Concat(expressions.ValidateTemplate(config["args"])))
+                     .Concat(expressions.ValidateTemplate(config["args"]))
+                     .Concat(expressions.ValidateTemplate(config["input"]))
+                     .Concat(WorkflowOutputProjection.ValidateSelectOrOutput(config, expressions, "mcp")))
         {
-            yield return "mcp: " + error;
+            yield return error.StartsWith("mcp:", StringComparison.Ordinal) ? error : "mcp: " + error;
         }
     }
 
@@ -103,7 +105,7 @@ public sealed class McpTask : IWorkflowTask
         var server = context.RenderText("server")
             ?? throw new WorkflowTaskException("mcp: 'server' resolved to empty.");
         var action = DetermineAction(context);
-        var argsNode = (context.Render("arguments") ?? context.Render("args")) as JsonObject ?? [];
+        var argsNode = (context.Render("arguments") ?? context.Render("args") ?? context.Render("input")) as JsonObject ?? [];
 
         JsonNode? output;
         try
@@ -240,10 +242,8 @@ public sealed class McpTask : IWorkflowTask
             }
         }
 
-        if (config["into"]?.GetValue<string>() is { Length: > 0 } into)
-        {
-            JsonPath.Set(context.Data, into, output?.DeepClone());
-        }
+        var sourceObj = output as JsonObject ?? new JsonObject { ["value"] = output?.DeepClone() };
+        WorkflowOutputProjection.ApplyToContextData(context, sourceObj, output);
 
         if (config["metaInto"]?.GetValue<string>() is { Length: > 0 } metaInto)
         {

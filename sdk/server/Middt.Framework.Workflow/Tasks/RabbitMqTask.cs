@@ -59,7 +59,8 @@ public sealed class RabbitMqTask : IWorkflowTask
             yield return "rabbitmq: either 'exchange' or 'routingKey' (or 'queue') is required.";
         }
 
-        if (config["payload"] is null && config["message"] is null && config["body"] is null)
+        var rawPayload = config["payload"] ?? config["message"] ?? config["body"] ?? config["input"] ?? config["data"];
+        if (rawPayload is null)
         {
             yield return "rabbitmq: 'payload' (or 'message' / 'body') is required.";
         }
@@ -67,9 +68,7 @@ public sealed class RabbitMqTask : IWorkflowTask
         foreach (var error in expressions.ValidateTemplate(config["exchange"])
                      .Concat(expressions.ValidateTemplate(config["routingKey"]))
                      .Concat(expressions.ValidateTemplate(config["queue"]))
-                     .Concat(expressions.ValidateTemplate(config["payload"]))
-                     .Concat(expressions.ValidateTemplate(config["message"]))
-                     .Concat(expressions.ValidateTemplate(config["body"]))
+                     .Concat(expressions.ValidateTemplate(rawPayload))
                      .Concat(expressions.ValidateTemplate(config["headers"])))
         {
             yield return "rabbitmq: " + error;
@@ -84,9 +83,8 @@ public sealed class RabbitMqTask : IWorkflowTask
                          ?? context.RenderText("queue")
                          ?? string.Empty;
 
-        var payloadNode = context.Render("payload")
-                          ?? context.Render("message")
-                          ?? context.Render("body");
+        var rawPayload = config["payload"] ?? config["message"] ?? config["body"] ?? config["input"] ?? config["data"];
+        var payloadNode = context.Expressions.Render(rawPayload, context.Scope);
 
         string payloadString;
         if (payloadNode is JsonValue jv && jv.TryGetValue<string>(out var s))

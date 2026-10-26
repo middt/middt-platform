@@ -308,6 +308,12 @@ public sealed class InputDefinition
     /// <summary>Extra values computed with expressions after the merge, e.g. <c>{ "approvedBy": "user.name" }</c>.</summary>
     public Dictionary<string, string> Set { get; set; } = [];
 
+    /// <summary>Alias for <see cref="Set"/> so <c>values</c> and <c>set</c> work interchangeably.</summary>
+    public Dictionary<string, string>? Values { get; set; }
+
+    [JsonIgnore]
+    public Dictionary<string, string> EffectiveSet => Set.Count > 0 ? Set : (Values ?? Set);
+
     /// <summary>
     /// Top-level input properties that must never be persisted (passwords, one-time codes): tasks and expressions of the
     /// transition see them (<c>input.password</c>), but they are not merged into instance data and are removed from
@@ -407,7 +413,19 @@ public sealed class SubFlowDefinition
     public Dictionary<string, string> Input { get; set; } = [];
 
     /// <summary>Parent data path the child's final data is stored under (empty = merge into root).</summary>
-    public string? OutputInto { get; set; }
+    public string? Into { get; set; }
+
+    /// <summary>
+    /// Optional projection/mapping of child data when the subflow finishes: either a field list (<c>["score", "limit"]</c>)
+    /// or a target-path → expression/field map (<c>{ "creditScore": "child.data.score" }</c>).
+    /// </summary>
+    public JsonNode? Output { get; set; }
+
+    /// <summary>Alias for <see cref="Output"/> so <c>select</c> and <c>output</c> work interchangeably.</summary>
+    public JsonNode? Select { get; set; }
+
+    [JsonIgnore]
+    public JsonNode? EffectiveOutput => Output ?? Select;
 
     /// <summary>Forwards non-cancellation manual transitions executed on the parent directly to the active child subflow (default <c>true</c>).</summary>
     public bool ForwardTransitions { get; set; } = true;

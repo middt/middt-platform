@@ -430,7 +430,7 @@
                             @if (stateType == "SubFlow")
                             {
                                 var sfWorkflow = GetNestedString(stateObj, "subFlow", "workflow");
-                                var sfOut = GetNestedString(stateObj, "subFlow", "outputInto");
+                                var sfOut = GetNestedString(stateObj, "subFlow", "into");
                                 <small class="middt-ui-text-muted">
                                     🔗 Alt Akış: <code>@(string.IsNullOrWhiteSpace(sfWorkflow) ? "(Seçilmedi)" : sfWorkflow)</code>@(!string.IsNullOrWhiteSpace(sfOut) ? $" → {sfOut}" : null)
                                 </small>
@@ -2022,10 +2022,10 @@
                             </select>
                         </div>
                         <div class="middt-ui-input">
-                            <label>Sonucun Yazılacağı Alan (subFlow.outputInto)</label>
-                            <input class="middt-wf-input" value="@GetString(subFlowObj, "outputInto")"
+                            <label>Sonucun Yazılacağı Alan (subFlow.into)</label>
+                            <input class="middt-wf-input" value="@GetString(subFlowObj, "into")"
                                    placeholder="Ör: riskResult (boşsa kök veriye birleştirir)"
-                                   @onchange="@(e => { SetString(subFlowObj, "outputInto", e.Value?.ToString()); SyncJsonFromDoc(); })" />
+                                   @onchange="@(e => { SetString(subFlowObj, "into", e.Value?.ToString()); SyncJsonFromDoc(); })" />
                         </div>
                     </div>
 
@@ -2460,7 +2460,7 @@
             newState["subFlow"] = new JsonObject
             {
                 ["workflow"] = firstOther,
-                ["outputInto"] = "subFlowResult",
+                ["into"] = "subFlowResult",
                 ["forwardTransitions"] = true,
             };
         }

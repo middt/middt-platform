@@ -609,6 +609,39 @@ internal static class WorkflowDefinitionValidator
                             yield return $"{where}: subFlow.input '{path}': {error}";
                         }
                     }
+
+                    if (state.SubFlow.EffectiveOutput is { } subFlowOutput)
+                    {
+                        var propName = state.SubFlow.Output is not null ? "subFlow.output" : "subFlow.select";
+                        if (subFlowOutput is JsonArray outArr)
+                        {
+                            foreach (var item in outArr)
+                            {
+                                if (item?.GetValue<string>() is not { Length: > 0 })
+                                {
+                                    yield return $"{where}: {propName} array items must be non-empty field path strings.";
+                                }
+                            }
+                        }
+                        else if (subFlowOutput is JsonObject outObj)
+                        {
+                            foreach (var (targetKey, exprNode) in outObj)
+                            {
+                                if (exprNode?.GetValue<string>() is not { Length: > 0 } expr)
+                                {
+                                    yield return $"{where}: {propName}['{targetKey}'] must be a field path or expression string.";
+                                }
+                                else if (!IsSimpleFieldPath(expr) && expressions.Validate(expr) is { } exprErr)
+                                {
+                                    yield return $"{where}: {propName}['{targetKey}']: {exprErr}";
+                                }
+                            }
+                        }
+                        else
+                        {
+                            yield return $"{where}: {propName} must be an array of field paths or an object mapping target keys to expressions/field paths.";
+                        }
+                    }
                 }
             }
 
@@ -870,7 +903,7 @@ internal static class WorkflowDefinitionValidator
             }
         }
 
-        foreach (var (path, expression) in t.Input?.Set ?? [])
+        foreach (var (path, expression) in t.Input?.EffectiveSet ?? [])
         {
             if (expressions.Validate(expression) is { } error)
             {
@@ -964,4 +997,17 @@ internal static class WorkflowDefinitionValidator
             yield return $"{where}: transition '{policy.Transition}' is not defined in this workflow.";
         }
     }
+
+    private static bool IsSimpleFieldPath(string expr) =>
+        expr.All(c => char.IsLetterOrDigit(c) || c is '_' or '.')
+        && !expr.StartsWith("data.", StringComparison.Ordinal)
+        && !expr.StartsWith("input.", StringComparison.Ordinal)
+        && !expr.StartsWith("args.", StringComparison.Ordinal)
+        && !expr.StartsWith("target.", StringComparison.Ordinal)
+        && !expr.StartsWith("item.", StringComparison.Ordinal)
+        && !expr.StartsWith("result.", StringComparison.Ordinal)
+        && !expr.StartsWith("child.", StringComparison.Ordinal)
+        && !expr.StartsWith("user.", StringComparison.Ordinal)
+        && !expr.StartsWith("instance.", StringComparison.Ordinal)
+        && !expr.StartsWith("now.", StringComparison.Ordinal);
 }

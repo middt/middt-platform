@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using Middt.Framework.Expressions;
 using Middt.Framework.Model.Workflow;
 using Middt.Framework.Workflow.Definitions;
 using Middt.Framework.Workflow.Expressions;
@@ -74,4 +75,141 @@ public sealed class WorkflowTaskContext
 public interface IWorkflowMessagePublisher
 {
     Task PublishAsync(string messageType, JsonObject payload, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Shared validation and projection helper for <c>into</c>, <c>select</c>, and <c>output</c> across workflow tasks.
+/// </summary>
+public static class WorkflowOutputProjection
+{
+    public static bool HasSelectOrOutput(JsonObject config) =>
+        config["select"] is not null || config["output"] is not null;
+
+    public static JsonNode? GetSelectOrOutput(JsonObject config) =>
+        config["select"] ?? config["output"];
+
+    public static IEnumerable<string> ValidateSelectOrOutput(
+        JsonObject config,
+        WorkflowExpressionEngine expressions,
+        string taskName)
+    {
+        var selectNode = GetSelectOrOutput(config);
+        if (selectNode is null)
+        {
+            yield break;
+        }
+
+        var propName = config["select"] is not null ? "select" : "output";
+        if (selectNode is JsonArray selectArr)
+        {
+            foreach (var item in selectArr)
+            {
+                if (item?.GetValue<string>() is not { Length: > 0 })
+                {
+                    yield return $"{taskName}: '{propName}' array items must be non-empty field path strings.";
+                }
+            }
+        }
+        else if (selectNode is JsonObject selectObj)
+        {
+            foreach (var (targetKey, exprNode) in selectObj)
+            {
+                if (exprNode?.GetValue<string>() is not { Length: > 0 } expr)
+                {
+                    yield return $"{taskName}: '{propName}[\"{targetKey}\"]' must be a field path or expression string.";
+                }
+                else if (!IsSimpleFieldPath(expr) && expressions.Validate(expr) is { } exprErr)
+                {
+                    yield return $"{taskName}: '{propName}[\"{targetKey}\"]': {exprErr}";
+                }
+            }
+        }
+        else
+        {
+            yield return $"{taskName}: '{propName}' must be an array of field paths or an object mapping target keys to expressions/field paths.";
+        }
+    }
+
+    public static void ApplyToContextData(
+        WorkflowTaskContext context,
+        JsonObject sourcePayload,
+        JsonNode? rawResult = null,
+        string? intoOverride = null)
+    {
+        var into = intoOverride ?? context.Config["into"]?.GetValue<string>();
+        var selectNode = GetSelectOrOutput(context.Config);
+
+        if (selectNode is null)
+        {
+            if (!string.IsNullOrEmpty(into))
+            {
+                JsonPath.Set(context.Data, into, (rawResult ?? sourcePayload).DeepClone());
+            }
+
+            return;
+        }
+
+        var projected = new JsonObject();
+        var writeToInto = !string.IsNullOrEmpty(into);
+        var destination = writeToInto ? projected : context.Data;
+
+        if (selectNode is JsonArray fieldList)
+        {
+            foreach (var item in fieldList)
+            {
+                if (item?.GetValue<string>() is { Length: > 0 } fieldPath)
+                {
+                    var val = JsonPath.Get(sourcePayload, fieldPath);
+                    JsonPath.Set(destination, fieldPath, val?.DeepClone());
+                }
+            }
+        }
+        else if (selectNode is JsonObject mapObj)
+        {
+            var evalScope = new ExpressionScope
+            {
+                Data = context.Scope.Data,
+                Input = context.Scope.Input,
+                Args = context.Scope.Args,
+                Result = sourcePayload,
+                Child = context.Scope.Child,
+                User = context.Scope.User,
+                Instance = context.Scope.Instance,
+                Item = sourcePayload,
+                Target = sourcePayload,
+                Index = context.Scope.Index,
+                Now = context.Scope.Now,
+            };
+
+            foreach (var (targetKey, sourceExprNode) in mapObj)
+            {
+                if (sourceExprNode?.GetValue<string>() is not { Length: > 0 } sourceExpr)
+                {
+                    continue;
+                }
+
+                var val = JsonPath.Get(sourcePayload, sourceExpr)?.DeepClone()
+                          ?? context.Expressions.EvaluateToNode(sourceExpr, evalScope);
+                JsonPath.Set(destination, targetKey, val);
+            }
+        }
+
+        if (writeToInto)
+        {
+            JsonPath.Set(context.Data, into!, projected);
+        }
+    }
+
+    public static bool IsSimpleFieldPath(string expr) =>
+        expr.All(c => char.IsLetterOrDigit(c) || c is '_' or '.')
+        && !expr.StartsWith("data.", StringComparison.Ordinal)
+        && !expr.StartsWith("input.", StringComparison.Ordinal)
+        && !expr.StartsWith("args.", StringComparison.Ordinal)
+        && !expr.StartsWith("target.", StringComparison.Ordinal)
+        && !expr.StartsWith("item.", StringComparison.Ordinal)
+        && !expr.StartsWith("result.", StringComparison.Ordinal)
+        && !expr.StartsWith("child.", StringComparison.Ordinal)
+        && !expr.StartsWith("user.", StringComparison.Ordinal)
+        && !expr.StartsWith("instance.", StringComparison.Ordinal)
+        && !expr.StartsWith("now.", StringComparison.Ordinal);
 }

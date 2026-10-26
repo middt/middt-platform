@@ -44,13 +44,15 @@ public sealed class LoadWorkflowTask : IWorkflowTask
         }
 
         var hasInto = task.Config["into"]?.GetValue<string>() is { Length: > 0 };
-        var hasSelectObject = task.Config["select"] is JsonObject { Count: > 0 };
-        if (!hasInto && !hasSelectObject)
+        var selectOrOutput = WorkflowOutputProjection.GetSelectOrOutput(task.Config);
+        var hasSelectOrOutput = selectOrOutput is JsonObject { Count: > 0 } or JsonArray { Count: > 0 };
+        if (!hasInto && !hasSelectOrOutput)
         {
             yield return "loadWorkflow: 'into' is required (unless 'select' is a mapping object).";
         }
 
-        foreach (var error in CrossWorkflowTaskHelpers.ValidateTargetSelector(task.Config, expressions, "loadWorkflow"))
+        foreach (var error in CrossWorkflowTaskHelpers.ValidateTargetSelector(task.Config, expressions, "loadWorkflow")
+                     .Concat(WorkflowOutputProjection.ValidateSelectOrOutput(task.Config, expressions, "loadWorkflow")))
         {
             yield return error;
         }
@@ -113,7 +115,7 @@ public sealed class LoadWorkflowTask : IWorkflowTask
             await CrossWorkflowTaskHelpers.AttachHistorySummaryAsync(db, instance.Id, instance.WorkflowKey, loaded, cancellationToken);
         }
 
-        if (context.Config["select"] is { } selectNode)
+        if (WorkflowOutputProjection.GetSelectOrOutput(context.Config) is { } selectNode)
         {
             var projected = CrossWorkflowTaskHelpers.ApplySelectProjection(loaded, selectNode, context, includeMetadata: !string.IsNullOrEmpty(into));
             if (!string.IsNullOrEmpty(into))
@@ -169,7 +171,8 @@ public sealed class QueryWorkflowTask : IWorkflowTask
             yield return "queryWorkflow: 'into' is required.";
         }
 
-        foreach (var error in CrossWorkflowTaskHelpers.ValidateTargetSelector(task.Config, expressions, "queryWorkflow"))
+        foreach (var error in CrossWorkflowTaskHelpers.ValidateTargetSelector(task.Config, expressions, "queryWorkflow")
+                     .Concat(WorkflowOutputProjection.ValidateSelectOrOutput(task.Config, expressions, "queryWorkflow")))
         {
             yield return error;
         }
@@ -223,7 +226,7 @@ public sealed class QueryWorkflowTask : IWorkflowTask
         var aggregates = CrossWorkflowTaskHelpers.ComputeAggregates(matchedPayloads, context.Config["aggregate"] as JsonObject);
 
         var limited = matchedPayloads.Take(take).ToList();
-        var selectNode = context.Config["select"];
+        var selectNode = WorkflowOutputProjection.GetSelectOrOutput(context.Config);
         var finalItems = new JsonArray();
         foreach (var item in limited)
         {
@@ -306,17 +309,19 @@ public sealed class UpdateWorkflowTask : IWorkflowTask
             yield return "updateWorkflow: one of 'key', 'id', or 'where' is required.";
         }
 
-        var hasValues = task.Config["values"] is JsonObject { Count: > 0 };
-        var hasMerge = task.Config["merge"] is JsonObject { Count: > 0 };
+        var valuesObj = (task.Config["values"] ?? task.Config["set"]) as JsonObject;
+        var mergeObj = (task.Config["merge"] ?? task.Config["data"] ?? task.Config["input"]) as JsonObject;
+        var hasValues = valuesObj is { Count: > 0 };
+        var hasMerge = mergeObj is { Count: > 0 };
         var hasPatch = task.Config["patch"] is JsonArray { Count: > 0 };
         if (!hasValues && !hasMerge && !hasPatch)
         {
             yield return "updateWorkflow: at least one of 'values', 'merge', or 'patch' is required.";
         }
 
-        if (task.Config["values"] is JsonObject values)
+        if (valuesObj is not null)
         {
-            foreach (var (path, exprNode) in values)
+            foreach (var (path, exprNode) in valuesObj)
             {
                 if (exprNode?.GetValue<string>() is not { } exprText || expressions.Validate(exprText) is { } err)
                 {
@@ -326,8 +331,9 @@ public sealed class UpdateWorkflowTask : IWorkflowTask
         }
 
         foreach (var error in CrossWorkflowTaskHelpers.ValidateTargetSelector(task.Config, expressions, "updateWorkflow")
-                     .Concat(expressions.ValidateTemplate(task.Config["merge"]))
-                     .Concat(expressions.ValidateTemplate(task.Config["patch"])))
+                     .Concat(expressions.ValidateTemplate(mergeObj))
+                     .Concat(expressions.ValidateTemplate(task.Config["patch"]))
+                     .Concat(WorkflowOutputProjection.ValidateSelectOrOutput(task.Config, expressions, "updateWorkflow")))
         {
             yield return error.StartsWith("updateWorkflow:", StringComparison.Ordinal) ? error : "updateWorkflow: " + error;
         }
@@ -401,12 +407,13 @@ public sealed class UpdateWorkflowTask : IWorkflowTask
             var targetScopePayload = CrossWorkflowTaskHelpers.BuildInstancePayload(instance, registry, context.Scope.User);
             var evalScope = CrossWorkflowTaskHelpers.CreateTargetScope(context.Scope, targetScopePayload);
 
-            if (context.Config["merge"] is not null && context.Expressions.Render(context.Config["merge"], evalScope) is JsonObject mergedObj)
+            var rawMerge = context.Config["merge"] ?? context.Config["data"] ?? context.Config["input"];
+            if (rawMerge is not null && context.Expressions.Render(rawMerge, evalScope) is JsonObject mergedObj)
             {
                 JsonPath.Merge(targetData, mergedObj, targetInto);
             }
 
-            if (context.Config["values"] is JsonObject values)
+            if ((context.Config["values"] ?? context.Config["set"]) is JsonObject values)
             {
                 foreach (var (path, exprNode) in values)
                 {
@@ -467,22 +474,55 @@ public sealed class UpdateWorkflowTask : IWorkflowTask
 
         await db.SaveChangesAsync(cancellationToken);
 
-        if (!string.IsNullOrEmpty(into))
+        var selectNode = WorkflowOutputProjection.GetSelectOrOutput(context.Config);
+        if (!string.IsNullOrEmpty(into) || selectNode is not null)
         {
             if (updateAll)
             {
-                JsonPath.Set(context.Data, into, new JsonObject
+                var finalItems = new JsonArray();
+                foreach (var item in updatedPayloads)
                 {
-                    ["workflow"] = workflow,
-                    ["found"] = true,
-                    ["updatedCount"] = updatedPayloads.Count,
-                    ["items"] = updatedPayloads,
-                    ["first"] = updatedPayloads.Count > 0 ? updatedPayloads[0]?.DeepClone() : null,
-                });
+                    if (item is JsonObject obj)
+                    {
+                        finalItems.Add(selectNode is not null
+                            ? CrossWorkflowTaskHelpers.ApplySelectProjection(obj, selectNode, context, includeMetadata: true)
+                            : obj.DeepClone());
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(into))
+                {
+                    JsonPath.Set(context.Data, into, new JsonObject
+                    {
+                        ["workflow"] = workflow,
+                        ["found"] = true,
+                        ["updatedCount"] = finalItems.Count,
+                        ["items"] = finalItems,
+                        ["first"] = finalItems.Count > 0 ? finalItems[0]?.DeepClone() : null,
+                    });
+                }
             }
             else if (updatedPayloads.Count > 0 && updatedPayloads[0] is JsonObject singlePayload)
             {
-                JsonPath.Set(context.Data, into, singlePayload.DeepClone());
+                if (selectNode is not null)
+                {
+                    var projected = CrossWorkflowTaskHelpers.ApplySelectProjection(singlePayload, selectNode, context, includeMetadata: !string.IsNullOrEmpty(into));
+                    if (!string.IsNullOrEmpty(into))
+                    {
+                        JsonPath.Set(context.Data, into, projected);
+                    }
+                    else
+                    {
+                        foreach (var (targetPath, val) in projected)
+                        {
+                            JsonPath.Set(context.Data, targetPath, val?.DeepClone());
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(into))
+                {
+                    JsonPath.Set(context.Data, into, singlePayload.DeepClone());
+                }
             }
         }
     }
@@ -530,11 +570,12 @@ public sealed class TriggerWorkflowTask : IWorkflowTask
             yield return "triggerWorkflow: 'bufferFor' is not a valid duration.";
         }
 
+        var payloadTemplate = task.Config["input"] ?? task.Config["data"] ?? task.Config["payload"];
         foreach (var error in CrossWorkflowTaskHelpers.ValidateTargetSelector(task.Config, expressions, "triggerWorkflow")
                      .Concat(expressions.ValidateTemplate(task.Config["transition"]))
                      .Concat(expressions.ValidateTemplate(task.Config["event"]))
-                     .Concat(expressions.ValidateTemplate(task.Config["input"]))
-                     .Concat(expressions.ValidateTemplate(task.Config["data"])))
+                     .Concat(expressions.ValidateTemplate(payloadTemplate))
+                     .Concat(WorkflowOutputProjection.ValidateSelectOrOutput(task.Config, expressions, "triggerWorkflow")))
         {
             yield return error.StartsWith("triggerWorkflow:", StringComparison.Ordinal) ? error : "triggerWorkflow: " + error;
         }
@@ -553,7 +594,8 @@ public sealed class TriggerWorkflowTask : IWorkflowTask
         var runAsync = context.Config["runAsync"]?.GetValue<bool>() == true;
         var triggerAll = context.Config["all"]?.GetValue<bool>() == true;
         var failIfNotFound = context.Config["failIfNotFound"]?.GetValue<bool>() ?? true;
-        var payload = (context.Render("input") ?? context.Render("data")) as JsonObject;
+        var payloadNode = context.Config["input"] ?? context.Config["data"] ?? context.Config["payload"];
+        var payload = context.Expressions.Render(payloadNode, context.Scope) as JsonObject;
 
         await using var scope = context.Services.CreateAsyncScope();
         var engine = scope.ServiceProvider.GetRequiredService<WorkflowEngine>();
@@ -660,22 +702,55 @@ public sealed class TriggerWorkflowTask : IWorkflowTask
             }
         }
 
-        if (!string.IsNullOrEmpty(into))
+        var selectNode = WorkflowOutputProjection.GetSelectOrOutput(context.Config);
+        if (!string.IsNullOrEmpty(into) || selectNode is not null)
         {
             if (triggerAll)
             {
-                JsonPath.Set(context.Data, into, new JsonObject
+                var finalItems = new JsonArray();
+                foreach (var item in resultsArray)
                 {
-                    ["workflow"] = workflow,
-                    ["found"] = true,
-                    ["triggeredCount"] = resultsArray.Count,
-                    ["items"] = resultsArray,
-                    ["first"] = resultsArray.Count > 0 ? resultsArray[0]?.DeepClone() : null,
-                });
+                    if (item is JsonObject obj)
+                    {
+                        finalItems.Add(selectNode is not null
+                            ? CrossWorkflowTaskHelpers.ApplySelectProjection(obj, selectNode, context, includeMetadata: true)
+                            : obj.DeepClone());
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(into))
+                {
+                    JsonPath.Set(context.Data, into, new JsonObject
+                    {
+                        ["workflow"] = workflow,
+                        ["found"] = true,
+                        ["triggeredCount"] = finalItems.Count,
+                        ["items"] = finalItems,
+                        ["first"] = finalItems.Count > 0 ? finalItems[0]?.DeepClone() : null,
+                    });
+                }
             }
             else if (resultsArray.Count > 0 && resultsArray[0] is JsonObject singleResult)
             {
-                JsonPath.Set(context.Data, into, singleResult.DeepClone());
+                if (selectNode is not null)
+                {
+                    var projected = CrossWorkflowTaskHelpers.ApplySelectProjection(singleResult, selectNode, context, includeMetadata: !string.IsNullOrEmpty(into));
+                    if (!string.IsNullOrEmpty(into))
+                    {
+                        JsonPath.Set(context.Data, into, projected);
+                    }
+                    else
+                    {
+                        foreach (var (targetPath, val) in projected)
+                        {
+                            JsonPath.Set(context.Data, targetPath, val?.DeepClone());
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(into))
+                {
+                    JsonPath.Set(context.Data, into, singleResult.DeepClone());
+                }
             }
         }
     }
@@ -1283,7 +1358,7 @@ internal static class CrossWorkflowTaskHelpers
             Data = current.Data,
             Input = current.Input,
             Args = current.Args,
-            Result = current.Result,
+            Result = targetPayload,
             Child = current.Child,
             User = current.User,
             Instance = current.Instance,

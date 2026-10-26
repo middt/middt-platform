@@ -193,7 +193,7 @@ internal static class TestWorkflows
                      "input": { "schema": { "type": "object", "properties": { "amount": { "type": "number" }, "name": { "type": "string" } } } } },
           "states": [
             { "key": "check", "type": "SubFlow",
-              "subFlow": { "workflow": "child-auto", "input": { "amount": "data.amount" }, "outputInto": "credit" },
+              "subFlow": { "workflow": "child-auto", "input": { "amount": "data.amount" }, "into": "credit" },
               "transitions": [
                 { "key": "ok", "target": "approved", "trigger": "Automatic", "rule": "child.subType == \"Success\"" },
                 { "key": "ko", "target": "rejected", "trigger": "Automatic", "default": true } ] },

@@ -55,7 +55,7 @@ jobs:
         run: npm ci && npm run build
 
       - name: Test
-        run: node --test test/
+        run: npm test
 
   # Angular: build the SDK packages (@middt/ui-core, @middt/angular) and the demo app that consumes them.
   angular:

@@ -1490,7 +1490,7 @@ public sealed partial class WorkflowEngine(
         }
 
         AttachEnumFromLabels(definition.Schema, Scope(run, scopeInput));
-        foreach (var (path, expression) in definition.Set)
+        foreach (var (path, expression) in definition.EffectiveSet)
         {
             var value = expressions.EvaluateToNode(expression, Scope(run, scopeInput));
             if (value is JsonArray updatedArr && JsonDynamic.GetRemovedItems(updatedArr) is { Count: > 0 } removedByExpr)
@@ -1621,17 +1621,8 @@ public sealed partial class WorkflowEngine(
         return await StartChildAsync(subFlow.Workflow, childData, null, run.Instance.Id, run.User, cancellationToken);
     }
 
-    private static void ApplyChildResult(Run run, StateDefinition state, Guid childId, string childState, WorkflowInstanceStatus childStatus, string childSubType, JsonObject childData)
+    private void ApplyChildResult(Run run, StateDefinition state, Guid childId, string childState, WorkflowInstanceStatus childStatus, string childSubType, JsonObject childData)
     {
-        if (state.SubFlow?.OutputInto is { Length: > 0 } into)
-        {
-            JsonPath.Set(run.Data, into, childData);
-        }
-        else
-        {
-            JsonPath.Merge(run.Data, childData);
-        }
-
         run.Child = new JsonObject
         {
             ["id"] = childId,
@@ -1640,6 +1631,81 @@ public sealed partial class WorkflowEngine(
             ["subType"] = childSubType,
             ["data"] = childData.DeepClone(),
         };
+
+        var into = state.SubFlow?.Into;
+        var outputSpec = state.SubFlow?.EffectiveOutput;
+
+        if (outputSpec is JsonArray fieldList)
+        {
+            var projected = new JsonObject();
+            foreach (var item in fieldList)
+            {
+                if (item?.GetValue<string>() is { Length: > 0 } fieldPath)
+                {
+                    var val = JsonPath.Get(childData, fieldPath);
+                    JsonPath.Set(projected, fieldPath, val?.DeepClone());
+                }
+            }
+
+            if (!string.IsNullOrEmpty(into))
+            {
+                JsonPath.Set(run.Data, into, projected);
+            }
+            else
+            {
+                JsonPath.Merge(run.Data, projected);
+            }
+        }
+        else if (outputSpec is JsonObject mapObj)
+        {
+            var baseScope = Scope(run, null);
+            var childScope = new ExpressionScope
+            {
+                Data = baseScope.Data,
+                Child = run.Child,
+                Target = childData,
+                Item = childData,
+                Result = childData,
+                User = baseScope.User,
+                Instance = baseScope.Instance,
+                Now = baseScope.Now,
+            };
+
+            var projected = new JsonObject();
+            foreach (var (targetKey, exprNode) in mapObj)
+            {
+                if (exprNode?.GetValue<string>() is not { Length: > 0 } sourceExpr)
+                {
+                    continue;
+                }
+
+                var val = JsonPath.Get(childData, sourceExpr)?.DeepClone()
+                          ?? expressions.EvaluateToNode(sourceExpr, childScope);
+
+                if (!string.IsNullOrEmpty(into))
+                {
+                    JsonPath.Set(projected, targetKey, val);
+                }
+                else
+                {
+                    JsonPath.Set(run.Data, targetKey, val);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(into))
+            {
+                JsonPath.Set(run.Data, into, projected);
+            }
+        }
+        else if (!string.IsNullOrEmpty(into))
+        {
+            JsonPath.Set(run.Data, into, childData);
+        }
+        else
+        {
+            JsonPath.Merge(run.Data, childData);
+        }
+
         run.Instance.WaitingForInstanceId = null;
     }
 

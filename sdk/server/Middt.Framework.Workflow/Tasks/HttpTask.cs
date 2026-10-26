@@ -73,8 +73,9 @@ public sealed class HttpTask : IWorkflowTask
             }
         }
 
+        var bodyNode = task.Config["body"] ?? task.Config["payload"] ?? task.Config["input"];
         foreach (var error in expressions.ValidateTemplate(task.Config["url"])
-                     .Concat(expressions.ValidateTemplate(task.Config["body"]))
+                     .Concat(expressions.ValidateTemplate(bodyNode))
                      .Concat(expressions.ValidateTemplate(task.Config["headers"]))
                      .Concat(expressions.ValidateTemplate(task.Config["queryParams"]))
                      .Concat(expressions.ValidateTemplate(task.Config["query"])))
@@ -134,11 +135,12 @@ public sealed class HttpTask : IWorkflowTask
             request.Headers.TryAddWithoutValidation("Idempotency-Key", context.IdempotencyKey);
         }
 
-        // Apply request body
+        // Apply request body (body, payload, or input)
         var contentType = config["contentType"]?.GetValue<string>() ?? "application/json";
-        if (config["body"] is not null)
+        var rawBodyNode = config["body"] ?? config["payload"] ?? config["input"];
+        if (rawBodyNode is not null)
         {
-            var renderedBody = context.Render("body");
+            var renderedBody = context.Expressions.Render(rawBodyNode, context.Scope);
             string bodyString;
 
             if (renderedBody is JsonValue jv && jv.TryGetValue<string>(out var strVal))
@@ -275,7 +277,7 @@ public sealed class HttpTask : IWorkflowTask
                     continue;
                 }
 
-                if (!IsSimpleDotPath(exprText) && expressions.Validate(NormalizeResponseExpression(exprText)) is { } exprError)
+                if (!IsSimpleDotPath(exprText) && expressions.Validate(exprText) is { } exprError)
                 {
                     yield return $"http: mapping '{targetPath}': {exprError}";
                 }
@@ -286,9 +288,6 @@ public sealed class HttpTask : IWorkflowTask
 
         yield return "http: 'select'/'output' must be a field array or a mapping object.";
     }
-
-    private static string NormalizeResponseExpression(string expression) =>
-        System.Text.RegularExpressions.Regex.Replace(expression, @"\bresult\.", "target.");
 
     private static void WriteResponse(WorkflowTaskContext context, string? into, JsonNode? selectNode, JsonObject resultObj)
     {
@@ -379,11 +378,11 @@ public sealed class HttpTask : IWorkflowTask
 
                     val = (JsonPath.Get(resultObj, normalizedPath)
                            ?? JsonPath.Get(targetPayload, normalizedPath))?.DeepClone()
-                          ?? context.Expressions.EvaluateToNode(NormalizeResponseExpression(sourceExpr), responseScope);
+                          ?? context.Expressions.EvaluateToNode(sourceExpr, responseScope);
                 }
                 else
                 {
-                    val = context.Expressions.EvaluateToNode(NormalizeResponseExpression(sourceExpr), responseScope);
+                    val = context.Expressions.EvaluateToNode(sourceExpr, responseScope);
                 }
 
                 if (!string.IsNullOrEmpty(into))

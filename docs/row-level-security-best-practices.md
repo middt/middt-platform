@@ -250,7 +250,7 @@ Herhangi bir ana iş akışında (müşteri açılışı, transfer onayı, vb.) 
     "input": {
       "branchId": "data.branchId"
     },
-    "outputInto": "availableStaff"
+    "into": "availableStaff"
   },
   "transitions": [
     {
@@ -347,7 +347,7 @@ Alt akış çağrısında (`subFlow.input`) da aynı ifade doğrudan kullanılab
   "input": {
     "branchId": "input.header.branchId ?? input.query.branchId ?? input.body.branchId ?? data.branchId"
   },
-  "outputInto": "availableStaff"
+  "into": "availableStaff"
 }
 ```
 *Açıklama: HTTP başlığında şube varsa o kullanılır; yoksa URL query'deki şube; yoksa formdan girilen; o da yoksa akışın hafızasındaki şube devreye girer.*

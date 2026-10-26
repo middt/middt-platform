@@ -11,12 +11,13 @@ using Middt.Framework.Workflow.Runtime;
 
 namespace Middt.Framework.Workflow.Tasks;
 
-/// <summary><c>set</c>: <c>{ "values": { "path": "expression" } }</c> – computes values into the instance data.</summary>
+/// <summary><c>set</c>: <c>{ "values": { "path": "expression" } }</c> (or <c>{ "set": { "path": "expression" } }</c>) – computes values into the instance data.</summary>
 public sealed class SetTask : IWorkflowTask
 {
     public IEnumerable<string> Validate(TaskDefinition task, WorkflowExpressionEngine expressions)
     {
-        if (task.Config["values"] is not JsonObject values || values.Count == 0)
+        var valuesNode = task.Config["values"] ?? task.Config["set"];
+        if (valuesNode is not JsonObject values || values.Count == 0)
         {
             yield return "set: 'values' object is required.";
             yield break;
@@ -33,7 +34,8 @@ public sealed class SetTask : IWorkflowTask
 
     public Task ExecuteAsync(WorkflowTaskContext context, CancellationToken cancellationToken)
     {
-        foreach (var (path, expression) in (JsonObject)context.Config["values"]!)
+        var values = (JsonObject)(context.Config["values"] ?? context.Config["set"])!;
+        foreach (var (path, expression) in values)
         {
             JsonPath.Set(context.Data, path, context.Expressions.EvaluateToNode(expression!.GetValue<string>(), context.Scope));
         }
@@ -61,7 +63,7 @@ public sealed partial class LogTask : IWorkflowTask
 
 
 
-/// <summary><c>publish</c>: <c>{ "type": "OrderApproved", "payload": { ... } }</c> via <see cref="IWorkflowMessagePublisher"/>.</summary>
+/// <summary><c>publish</c>: <c>{ "type": "OrderApproved", "payload": { ... } }</c> (or <c>body</c>/<c>message</c>/<c>input</c>/<c>data</c>) via <see cref="IWorkflowMessagePublisher"/>.</summary>
 public sealed class PublishTask : IWorkflowTask
 {
     public IEnumerable<string> Validate(TaskDefinition task, WorkflowExpressionEngine expressions)
@@ -71,7 +73,8 @@ public sealed class PublishTask : IWorkflowTask
             yield return "publish: 'type' is required.";
         }
 
-        foreach (var error in expressions.ValidateTemplate(task.Config["payload"]))
+        var payloadNode = task.Config["payload"] ?? task.Config["body"] ?? task.Config["message"] ?? task.Config["input"] ?? task.Config["data"];
+        foreach (var error in expressions.ValidateTemplate(payloadNode))
         {
             yield return "publish: " + error;
         }
@@ -82,7 +85,8 @@ public sealed class PublishTask : IWorkflowTask
         var publisher = context.Services.GetService<IWorkflowMessagePublisher>()
             ?? throw new InvalidOperationException("publish task requires an IWorkflowMessagePublisher registration.");
 
-        var payload = context.Render("payload") as JsonObject ?? [];
+        var payloadNode = context.Config["payload"] ?? context.Config["body"] ?? context.Config["message"] ?? context.Config["input"] ?? context.Config["data"];
+        var payload = context.Expressions.Render(payloadNode, context.Scope) as JsonObject ?? [];
         payload["workflow"] ??= context.Workflow;
         payload["instanceId"] ??= context.InstanceId;
         return publisher.PublishAsync(context.Config["type"]!.GetValue<string>(), payload, cancellationToken);
@@ -92,6 +96,7 @@ public sealed class PublishTask : IWorkflowTask
 /// <summary>
 /// <c>startWorkflow</c>: starts another workflow without waiting for it (sub-process).
 /// <code>{ "workflow": "shipping", "key": "ship-{{ data.orderId }}", "data": { "orderId": "{{ data.orderId }}" }, "into": "shippingInstanceId" }</code>
+/// (<c>input</c> is accepted as an alias for <c>data</c>; <c>select</c>/<c>output</c> is also supported).
 /// </summary>
 public sealed class StartWorkflowTask : IWorkflowTask
 {
@@ -102,19 +107,33 @@ public sealed class StartWorkflowTask : IWorkflowTask
             yield return "startWorkflow: 'workflow' is required.";
         }
 
-        foreach (var error in expressions.ValidateTemplate(task.Config["data"]).Concat(expressions.ValidateTemplate(task.Config["key"])))
+        var dataNode = task.Config["data"] ?? task.Config["input"];
+        foreach (var error in expressions.ValidateTemplate(dataNode)
+                     .Concat(expressions.ValidateTemplate(task.Config["key"]))
+                     .Concat(WorkflowOutputProjection.ValidateSelectOrOutput(task.Config, expressions, "startWorkflow")))
         {
-            yield return "startWorkflow: " + error;
+            yield return error.StartsWith("startWorkflow:", StringComparison.Ordinal) ? error : "startWorkflow: " + error;
         }
     }
 
     public async Task ExecuteAsync(WorkflowTaskContext context, CancellationToken cancellationToken)
     {
-        var data = context.Render("data") as JsonObject ?? [];
+        var workflow = context.Config["workflow"]!.GetValue<string>();
+        var dataNode = context.Config["data"] ?? context.Config["input"];
+        var data = context.Expressions.Render(dataNode, context.Scope) as JsonObject ?? [];
         var key = context.RenderText("key");
-        var id = await context.StartWorkflow!(context.Config["workflow"]!.GetValue<string>(), data, string.IsNullOrEmpty(key) ? null : key, cancellationToken);
+        var effectiveKey = string.IsNullOrEmpty(key) ? null : key;
+        var id = await context.StartWorkflow!(workflow, data, effectiveKey, cancellationToken);
 
-        if (context.Config["into"]?.GetValue<string>() is { Length: > 0 } into)
+        if (WorkflowOutputProjection.HasSelectOrOutput(context.Config))
+        {
+            var resultPayload = (JsonObject)data.DeepClone();
+            resultPayload["id"] = id.ToString("D");
+            resultPayload["key"] = effectiveKey;
+            resultPayload["workflow"] = workflow;
+            WorkflowOutputProjection.ApplyToContextData(context, resultPayload);
+        }
+        else if (context.Config["into"]?.GetValue<string>() is { Length: > 0 } into)
         {
             JsonPath.Set(context.Data, into, JsonValue.Create(id));
         }

@@ -10,7 +10,7 @@ namespace Middt.Framework.Workflow.Expressions;
 /// </summary>
 public sealed class WorkflowExpressionEngine
 {
-    private readonly ExpressionEvaluator evaluator = new(["data", "input", "args", "child", "instance", "item", "target"], ["result", "index"]);
+    private readonly ExpressionEvaluator evaluator = new(["data", "input", "args", "result", "child", "instance", "item", "target"], ["index"]);
 
     /// <summary>Compiles <paramref name="expression"/> and returns the error message, or <c>null</c> when it is valid.</summary>
     public string? Validate(string expression) => evaluator.Validate(expression);

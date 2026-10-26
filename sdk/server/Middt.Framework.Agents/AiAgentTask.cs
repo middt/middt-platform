@@ -73,9 +73,10 @@ public sealed class AiAgentTask : IWorkflowTask
                      .Concat(expressions.ValidateTemplate(config["input"]))
                      .Concat(expressions.ValidateTemplate(config["message"]))
                      .Concat(expressions.ValidateTemplate(config["context"]))
-                     .Concat(expressions.ValidateTemplate(config["messages"])))
+                     .Concat(expressions.ValidateTemplate(config["messages"]))
+                     .Concat(WorkflowOutputProjection.ValidateSelectOrOutput(config, expressions, "agent")))
         {
-            yield return "agent: " + error;
+            yield return error.StartsWith("agent:", StringComparison.Ordinal) ? error : "agent: " + error;
         }
     }
 
@@ -437,10 +438,8 @@ public sealed class AiAgentTask : IWorkflowTask
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(into))
-        {
-            JsonPath.Set(context.Data, into, outputNode?.DeepClone());
-        }
+        var outputSourceObj = outputNode as JsonObject ?? new JsonObject { ["value"] = outputNode?.DeepClone() };
+        WorkflowOutputProjection.ApplyToContextData(context, outputSourceObj, outputNode, into);
 
         if (config["toolCallsInto"]?.GetValue<string>() is { Length: > 0 } toolCallsInto)
         {

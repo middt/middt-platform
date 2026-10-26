@@ -395,7 +395,15 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
 ```
 | `config` Ayarı | Tip | Alabileceği Değerler / Açıklama |
 |---|---|---|
-| `values` | `object` | `{ "hedefAlanYolu": "C# İfadesi" }` çiftlerinden oluşur. Noktalı yol (`"risk.score"`) verilirse iç içe JSON nesnesi oluşturur. |
+| `values` *(veya `set`)* | `object` | `{ "hedefAlanYolu": "C# İfadesi" }` çiftlerinden oluşur (`values` ve `set` birbirinin yerine kullanılabilir). Noktalı yol (`"risk.score"`) verilirse iç içe JSON nesnesi oluşturur. |
+
+> [!TIP]
+> **Standart Anahtar Kelime Sözleşmesi (`input` / `output` / `select` / `set` / `into`)**:
+> Proje genelinde geçişler (`transitions`), alt akışlar (`subFlow`) ve tüm görevler (`tasks`) aynı anahtar kelime sözleşmesini paylaşır:
+> - **Girdi (`input` / `data` / `body` / `payload` / `arguments`)**: Karşı tarafa gönderilen veri (`transition.input`, `subFlow.input`, `startWorkflow` (`data`/`input`), `triggerWorkflow` (`input`/`data`/`payload`), `http` (`body`/`payload`/`input`), `operation` (`input`/`args`/`payload`), `mcp` (`arguments`/`args`/`input`), `publish` & `rabbitmq` (`payload`/`body`/`message`/`input`/`data`)).
+> - **C# İfadesiyle Atama (`set` / `values`)**: Hedef yol -> C# ifadesi eşlemesi (`transition.input.set` (veya `values`), `set` görevi (`values` veya `set`), `updateWorkflow` (`values` veya `set`)).
+> - **Hedef Kök Yol (`into`)**: Dönen yanıtın veya alt akış verisinin `instance.data` içinde yazılacağı alt nesne yolu (`transition.input.into`, `subFlow.into`, tüm görevlerde `config.into`).
+> - **Seçmeli Alan / Dönüşüm (`select` / `output`)**: Dönen yanıttan veya alt akıştan yalnızca seçilen alanları (`["field1", "field2"]`) veya C# ifadeleriyle dönüştürülen alanları (`{ "hedefAlan": "result.body.score * 2" }`) `instance.data` içine yazar (`subFlow`, `http`, `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `startWorkflow`, `operation`, `mcp`, `agent`). `select` ve `output` tüm bu yapılarda birbirinin yerine kullanılabilir.
 
 ---
 
@@ -454,7 +462,7 @@ Başka bir iş akışı kaydını `key`, `id` veya `where` (instance data filtre
 ```
 | `loadWorkflow` Ayarı | Tip | Alabileceği Değerler / Açıklama |
 |---|---|---|
-| `select` | `string[]` veya `object` | • **Belirtilmezse**: Hedef kaydın tüm `data` alanlarını ve üst verilerini (`id`, `key`, `state`, `status`, `found`) kopyalar.<br>• **Dizi (`["companyName", "creditScore"]`)**: Yalnızca listedeki alanları ve üst verileri kopyalar.<br>• **Nesne (`{ "hedefAlan": "ifade" }`)**: Hedef akışın verisi (`target.*`) ve mevcut akışın verisi (`data.*`) üzerinden C# ifadesi hesaplayarak alanı dönüştürür. |
+| `select` *(veya `output`)* | `string[]` veya `object` | • **Belirtilmezse**: Hedef kaydın tüm `data` alanlarını ve üst verilerini (`id`, `key`, `state`, `status`, `found`) kopyalar.<br>• **Dizi (`["companyName", "creditScore"]`)**: Yalnızca listedeki alanları ve üst verileri kopyalar.<br>• **Nesne (`{ "hedefAlan": "ifade" }`)**: Hedef akışın verisi (`target.*` veya `result.*`) ve mevcut akışın verisi (`data.*`) üzerinden C# ifadesi hesaplayarak alanı dönüştürür. |
 | `includeAgents` | `boolean` | `false` (varsayılan) \| `true`. `true` ise hedef akışta çalışmış AI ajanlarının çıktılarını `target.agents.<ajanKey>` ve `target.agentRuns` altında getirir. |
 | `includeHistory` | `boolean` | `false` (varsayılan) \| `true`. `true` ise hedef akışın durum geçiş tarihçesini `target.history` dizisi olarak getirir. |
 | `failIfNotFound` | `boolean` | `false` (varsayılan) \| `true`:<br>• **`false`**: Kayıt bulunamazsa akışı durdurmaz; `into` içerisine `{ "found": false, "state": null, "status": null }` yazar.<br>• **`true`**: Kayıt bulunamazsa `WorkflowTaskException` fırlatır (`onError` politikasını tetikler). |
@@ -557,12 +565,13 @@ Mevcut akış içerisinden başka bir akış kaydını (veya `"all": true` ile e
 | `updateWorkflow` Ayarı | Tip | Alabileceği Değerler / Açıklama |
 |---|---|---|
 | `all` | `boolean` | `false` (varsayılan) \| `true`:<br>• **`false`**: `where` koşuluyla eşleşen **en güncel tek kaydı** günceller.<br>• **`true`**: `where` koşulunu sağlayan **tüm aktif/eşleşen kayıtları** tek seferde günceller ve `into` içerisine `{ "updatedCount": N, "items": [...] }` yazar. |
-| `values` | `object` | `{ "hedefAlan": "C# İfadesi" }`. İfade içinde **`target`** (güncellenen karşı akışın mevcut verisi) ve **`data`** (içinde bulunduğumuz akışın verisi) birlikte kullanılabilir. |
-| `merge` *(veya `data`)* | `object` | `{{ }}` şablonları içeren JSON nesnesi; hedef akışın verisiyle derinlemesine birleştirilir (deep-merge). |
+| `values` *(veya `set`)* | `object` | `{ "hedefAlan": "C# İfadesi" }`. İfade içinde **`target`** (güncellenen karşı akışın mevcut verisi) ve **`data`** (içinde bulunduğumuz akışın verisi) birlikte kullanılabilir. |
+| `merge` *(veya `data` / `input`)* | `object` | `{{ }}` şablonları içeren JSON nesnesi; hedef akışın verisiyle derinlemesine birleştirilir (deep-merge). |
 | `patch` | `array` | RFC 6902 JSON Patch operasyon dizisi (`[{ "op": "replace", "path": "/limit", "value": "{{ data.newLimit }}" }]`). |
 | `targetInto` | `string` | `merge` ile gönderilen nesnenin hedef kaydın kök verisi yerine belirli bir alt alanına (ör. `"paymentSummary"`) yazılmasını sağlar. |
 | `validateSchema` | `boolean` | `false` (varsayılan) \| `true`. `true` ise güncelleme sonrası hedef akışın `dataSchema` kurallarını yeniden doğrular. |
 | `failIfNotFound` | `boolean` | `true` (varsayılan) \| `false`. Hedef kayıt bulunamazsa hata fırlatılıp fırlatılmayacağını belirler. |
+| `select` *(veya `output`)* | `string[]` veya `object` | Güncellenen kayıttan yalnızca belirli alanları seçer veya dönüştürür (`into` olmadan verilirse doğrudan `data` içine yazar). |
 | `into` | `string` | Güncelleme sonucunun (`{ updated, id, key, state, status, dataVersion, data }`) yazılacağı alan. |
 
 ##### 3d. `triggerWorkflow` (veya `transitionWorkflow` / `sendWorkflowEvent`) — Başka Bir Akışta Geçiş veya Olay Tetikleme

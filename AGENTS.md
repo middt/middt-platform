@@ -62,7 +62,7 @@ dotnet test --project tests/Middt.Framework.Tests -- --filter-class "*WorkflowPo
 MIDDT_UPDATE_SPEC=1 dotnet test --project tests/Middt.Framework.Tests  # regenerate spec/ui-layout.schema.json
 
 # TypeScript / Angular (order matters: ui-core → library → app)
-(cd sdk/client/ui-core && npm ci && npm run build && node --test test/)
+(cd sdk/client/ui-core && npm ci && npm run build && npm test)
 (cd sdk/client/angular && npm ci && npx ng build middt-angular)
 (cd demo/angular-app && npm ci && npx ng build sample --configuration production)
 

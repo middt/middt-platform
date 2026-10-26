@@ -99,7 +99,7 @@ public sealed class WorkflowSubflowTests
         resumed.State.Should().Be("approved");
         resumed.Status.Should().Be(WorkflowInstanceStatus.Completed);
         resumed.WaitingForInstanceId.Should().BeNull();
-        resumed.Data["answer"]!["ok"]!.GetValue<bool>().Should().BeTrue("without outputInto the child data is merged into the root");
+        resumed.Data["answer"]!["ok"]!.GetValue<bool>().Should().BeTrue("without into the child data is merged into the root");
 
         var history = await host.HistoryAsync(parent.Id);
         history.Select(h => h.TransitionKey).Should().Equal("start", "$subflow-completed", "ok");
@@ -250,7 +250,7 @@ public sealed class WorkflowSubflowTests
                   "subFlow": {
                     "workflow": "get-branch-staff",
                     "input": { "branchId": "data.branchId" },
-                    "outputInto": "availableStaff"
+                    "into": "availableStaff"
                   },
                   "transitions": [
                     { "key": "ok", "target": "assigned", "trigger": "Automatic", "rule": "child.subType == \"Success\"" },
@@ -283,6 +283,84 @@ public sealed class WorkflowSubflowTests
         var failedParent = await host.StartInstanceAsync("onboarding-parent", new { branchId = 0 });
         failedParent.State.Should().Be("failed");
         failedParent.Status.Should().Be(WorkflowInstanceStatus.Completed);
+    }
+
+    [Fact]
+    public async Task Subflow_supports_output_mapping_and_into_alias()
+    {
+        const string parentWithOutputMapping = """
+            {
+              "key": "parent-output-map",
+              "start": {
+                "key": "start",
+                "target": "call-child",
+                "input": { "schema": { "type": "object", "properties": { "amount": { "type": "number" } } } }
+              },
+              "states": [
+                {
+                  "key": "call-child",
+                  "type": "SubFlow",
+                  "subFlow": {
+                    "workflow": "child-auto",
+                    "input": { "amount": "data.amount" },
+                    "output": {
+                      "mappedScore": "child.data.score",
+                      "doubleScore": "result.score * 2",
+                      "childFinalState": "child.state"
+                    }
+                  },
+                  "transitions": [
+                    { "key": "done", "target": "finished", "trigger": "Automatic", "default": true }
+                  ]
+                },
+                { "key": "finished", "type": "Finish", "subType": "Success" }
+              ]
+            }
+            """;
+
+        const string parentWithSelectAndInto = """
+            {
+              "key": "parent-select-into",
+              "start": {
+                "key": "start",
+                "target": "call-child",
+                "input": { "schema": { "type": "object", "properties": { "amount": { "type": "number" } } } }
+              },
+              "states": [
+                {
+                  "key": "call-child",
+                  "type": "SubFlow",
+                  "subFlow": {
+                    "workflow": "child-auto",
+                    "input": { "amount": "data.amount" },
+                    "select": ["score"],
+                    "into": "subflowSummary"
+                  },
+                  "transitions": [
+                    { "key": "done", "target": "finished", "trigger": "Automatic", "default": true }
+                  ]
+                },
+                { "key": "finished", "type": "Finish", "subType": "Success" }
+              ]
+            }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync(
+            TestWorkflows.ChildAuto,
+            parentWithOutputMapping,
+            parentWithSelectAndInto);
+
+        var mapped = await host.StartInstanceAsync("parent-output-map", new { amount = 100 });
+        mapped.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        mapped.Data["mappedScore"]!.GetValue<decimal>().Should().Be(85);
+        mapped.Data["doubleScore"]!.GetValue<decimal>().Should().Be(170);
+        mapped.Data["childFinalState"]!.GetValue<string>().Should().Be("passed");
+        mapped.Data.ContainsKey("score").Should().BeFalse("only mapped output fields should be written to parent data");
+
+        var selected = await host.StartInstanceAsync("parent-select-into", new { amount = 100 });
+        selected.Status.Should().Be(WorkflowInstanceStatus.Completed);
+        selected.Data["subflowSummary"]!["score"]!.GetValue<decimal>().Should().Be(85);
+        selected.Data["subflowSummary"]!.AsObject().ContainsKey("amount").Should().BeFalse("only selected fields should be copied into 'into'");
     }
 
     private static string? JsonNodeString(string json, string property) =>
