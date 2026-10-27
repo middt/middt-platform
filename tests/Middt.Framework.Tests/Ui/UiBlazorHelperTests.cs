@@ -109,6 +109,40 @@ public sealed class UiBlazorHelperTests
     }
 
     [Fact]
+    public void Field_visibleWhen_requiredWhen_and_disabledWhen_evaluate_live_ui_values()
+    {
+        var taxOffice = Field("""
+            {
+              "field": "taxOffice",
+              "visibleWhen": "ui.segment != \"Bireysel\"",
+              "requiredWhen": "ui.segment == \"Kurumsal\"",
+              "disabledWhen": "ui.segment == \"KOBİ\""
+            }
+            """);
+
+        taxOffice.VisibleWhen.Should().Be("ui.segment != \"Bireysel\"");
+        taxOffice.RequiredWhen.Should().Be("ui.segment == \"Kurumsal\"");
+        taxOffice.DisabledWhen.Should().Be("ui.segment == \"KOBİ\"");
+
+        var bireysel = new JsonObject { ["segment"] = "Bireysel" };
+        taxOffice.IsVisible(bireysel).Should().BeFalse();
+        taxOffice.IsRequired(bireysel).Should().BeFalse();
+        taxOffice.Validate(bireysel).Should().BeNull();
+
+        var kobi = new JsonObject { ["segment"] = "KOBİ" };
+        taxOffice.IsVisible(kobi).Should().BeTrue();
+        taxOffice.IsRequired(kobi).Should().BeFalse();
+        taxOffice.IsDisabled(kobi).Should().BeTrue();
+        taxOffice.Validate(kobi).Should().BeNull();
+
+        var kurumsal = new JsonObject { ["segment"] = "Kurumsal" };
+        taxOffice.IsVisible(kurumsal).Should().BeTrue();
+        taxOffice.IsRequired(kurumsal).Should().BeTrue();
+        taxOffice.IsDisabled(kurumsal).Should().BeFalse();
+        taxOffice.Validate(kurumsal).Should().Be("Bu alan zorunludur.");
+    }
+
+    [Fact]
     public void Columns_parse_with_defaults_and_pascal_case_sort_property()
     {
         var columns = UiColumn.ParseAll(JsonNode.Parse("""

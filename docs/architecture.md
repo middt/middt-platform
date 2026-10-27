@@ -42,8 +42,8 @@ backend-for-frontend blocks (`sdk/client/Middt.Framework.Bff`), so no frontend e
    `api/workflows/...`; layouts: `api/ui/...` (incl. `GET api/ui/widgets`, `GET api/ui/schema`).
 2. **Layouts** – JSON documents validated against `spec/ui-layout.schema.json` (generated from the widget catalog)
    and the server validator. A layout names widgets; every frontend has its own implementation of each widget name.
-3. **Portable expressions** – `visibleWhen`, `{{ }}` templates, list sources and filters use a small sandboxed language
-   with identical semantics in .NET (`Middt.Framework.Expressions.Portable`) and TypeScript (`@middt/ui-core`).
+3. **Portable expressions** – `visibleWhen`, `requiredWhen`, `disabledWhen`, `{{ }}` templates, list sources and filters use a small sandboxed language
+   with identical semantics in .NET (`Middt.Framework.Expressions.Portable`) and TypeScript (`@middt/ui-core`) over `data`, `query`, `row`, `record`, `instance`, `ui` (live open-form values before submit), `user`, and `now`.
    `spec/expressions.conformance.json` is executed by both test suites, so they cannot drift apart. Workflow rules and
    mappings run only on the server and keep the richer C# (DynamicExpresso) dialect.
 4. **Formats and CSS** – value formats are limited to a portable set (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`);
@@ -78,7 +78,7 @@ widgets can also be defined in pure JSON (`kind: "view"`) and embedded via `{ "w
 4. **Workflows**: `WorkflowApiClient` (ui-core) + list/detail/wizard components; all workflow states use `view.layout`
    JSON layouts (`kyc-review`, `credit-review`, `limit-revision-detail`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`) rendered by
    the layout host in both frontends (`SubFlow` states delegate rendering to the active child workflow state automatically or use an optional fallback `view.layout`).
-   Transition input schemas are rendered as forms; a property with `x-lookup` (`entity`, `valueField`, `textField`)
+   Transition input schemas are rendered as forms; properties support live `visibleWhen` (`x-visibleWhen`), `requiredWhen` (`x-requiredWhen`), and `disabledWhen` (`x-disabledWhen`) expressions referencing `ui.<field>`, `data.<field>`, and `user` (also enforced by `JsonSchemaValidator` on the server, which strips hidden fields, validates conditional requiredness, and rejects unauthorized changes to disabled fields), and a property with `x-lookup` (`entity`, `valueField`, `textField`)
    becomes a select loaded dynamically from the endpoint – the engine only checks the hint's shape.
 5. **Visual Designers**: both frontends ship a visual drag-and-drop **Screen Designer** (`/ui-admin`, `UiLayoutEditor` / `MiddtLayoutEditorComponent`) and a visual drag-and-drop **Workflow Designer** (`/workflow-admin`, `WorkflowDesigner` / `MiddtWorkflowDesignerComponent`) with bi-directional integration to create or edit state `view.layout` screens directly from workflow states. Saving a workflow definition at runtime (`PUT /api/workflows/{workflow}/definition`) creates a new immutable version (`v2`, `v3`, …) so in-flight instances continue on their original version, and supports version listing (`/versions`), structural + RFC 6902 diff (`/diff`), and rollback (`/rollback`).
 

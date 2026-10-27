@@ -210,6 +210,27 @@ public static class WorkflowHttpInput
         return input;
     }
 
+    /// <summary>
+    /// Synchronizes top-level properties of an HTTP input envelope with its inner <c>body</c> object
+    /// after validation removes hidden (<c>visibleWhen == false</c>) fields.
+    /// </summary>
+    public static void SyncEnvelopeBody(JsonObject? input)
+    {
+        if (input is null || !input.ContainsKey(EnvelopeMarker) || !input.TryGetPropertyValue("body", out var b) || b is not JsonObject bodyObj)
+        {
+            return;
+        }
+
+        var keysToRemove = input
+            .Select(kv => kv.Key)
+            .Where(k => k is not "header" and not "query" and not "body" and not EnvelopeMarker && !bodyObj.ContainsKey(k))
+            .ToList();
+        foreach (var k in keysToRemove)
+        {
+            input.Remove(k);
+        }
+    }
+
     internal static JsonNode? ParseValue(string? text)
     {
         if (text is null)

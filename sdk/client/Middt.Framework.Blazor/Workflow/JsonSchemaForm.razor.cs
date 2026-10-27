@@ -3,9 +3,13 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using Middt.Framework.Blazor.Ui;
+using Middt.Framework.Expressions;
+using Middt.Framework.Expressions.Portable;
 using Middt.Framework.Ui.Model;
+using Middt.Framework.Ui.Rendering;
 using Radzen;
 
 namespace Middt.Framework.Blazor.Workflow;
@@ -32,6 +36,7 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
     private readonly Dictionary<string, IRadzenFormComponent> inputs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LookupState> lookups = new(StringComparer.Ordinal);
     private JsonObject? renderedSchema;
+    private ExpressionUser? resolvedUser;
     private CancellationTokenSource? lookupCancellation;
     private bool validated;
 
@@ -45,6 +50,14 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
     /// <summary>Initial value (read when the schema changes) and the current value via <see cref="ValueChanged"/>.</summary>
     [Parameter]
     public JsonObject? Value { get; set; }
+
+    /// <summary>Optional persisted workflow/page data exposed as <c>data</c> in <c>visibleWhen</c>, <c>requiredWhen</c> and <c>disabledWhen</c> expressions alongside <c>ui</c>.</summary>
+    [Parameter]
+    public JsonObject? Data { get; set; }
+
+    /// <summary>Optional user exposed as <c>user</c> in form condition expressions; resolved from <see cref="AuthenticationStateProvider"/> when omitted.</summary>
+    [Parameter]
+    public ExpressionUser? User { get; set; }
 
     [Parameter]
     public EventCallback<JsonObject> ValueChanged { get; set; }
@@ -65,6 +78,11 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
 
     protected override async Task OnParametersSetAsync()
     {
+        if (User is null && resolvedUser is null && Services.GetService<AuthenticationStateProvider>() is { } auth)
+        {
+            resolvedUser = ExpressionUser.FromPrincipal((await auth.GetAuthenticationStateAsync()).User);
+        }
+
         if (!ReferenceEquals(Schema, renderedSchema))
         {
             renderedSchema = Schema;
@@ -155,13 +173,20 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
 
     private LookupState LookupStateOf(SchemaField field) => lookups.TryGetValue(field.Name, out var state) ? state : LookupState.Empty;
 
-    /// <summary>Validates all fields, shows the errors and returns <c>true</c> when the value is valid.</summary>
+    /// <summary>Validates all visible fields, shows the errors and returns <c>true</c> when the value is valid.</summary>
     public bool Validate()
     {
         validated = true;
+        var visibleFields = GetVisibleFieldNames();
         var valid = true;
         foreach (var field in fields)
         {
+            if (!visibleFields.Contains(field.Name))
+            {
+                field.Error = null;
+                continue;
+            }
+
             field.Error = ValidateField(field);
             valid &= field.Error is null;
         }
@@ -170,13 +195,14 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
         return valid;
     }
 
-    /// <summary>Builds the current value (empty optional fields are omitted).</summary>
+    /// <summary>Builds the current value of visible fields (empty optional fields and hidden fields are omitted).</summary>
     public JsonObject GetValue()
     {
+        var visibleFields = GetVisibleFieldNames();
         var result = new JsonObject();
         foreach (var field in fields)
         {
-            if (ToJson(field) is { } node)
+            if (visibleFields.Contains(field.Name) && ToJson(field) is { } node)
             {
                 result[field.Name] = node;
             }
@@ -185,10 +211,12 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
         return result;
     }
 
-    /// <summary>Moves the keyboard focus to the first field (e.g. when a wizard step form is shown).</summary>
+    /// <summary>Moves the keyboard focus to the first visible field (e.g. when a wizard step form is shown).</summary>
     public async Task FocusFirstAsync()
     {
-        if (fields.Count > 0 && inputs.TryGetValue(fields[0].Name, out var input))
+        var visibleFields = GetVisibleFieldNames();
+        var firstVisible = fields.FirstOrDefault(f => visibleFields.Contains(f.Name));
+        if (firstVisible is not null && inputs.TryGetValue(firstVisible.Name, out var input))
         {
             try
             {
@@ -216,12 +244,104 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
     private async Task OnFieldChanged(SchemaField field, Action update)
     {
         update();
-        if (validated)
+        var visibleFields = GetVisibleFieldNames();
+        foreach (var f in fields)
         {
-            field.Error = ValidateField(field);
+            if (!visibleFields.Contains(f.Name))
+            {
+                inputs.Remove(f.Name);
+                f.Error = null;
+            }
+            else if (validated)
+            {
+                f.Error = ValidateField(f);
+            }
         }
 
         await ValueChanged.InvokeAsync(GetValue());
+    }
+
+    private HashSet<string> GetVisibleFieldNames()
+    {
+        var result = new HashSet<string>(fields.Count, StringComparer.Ordinal);
+        if (!fields.Exists(f => !string.IsNullOrWhiteSpace(f.VisibleWhen)))
+        {
+            foreach (var field in fields)
+            {
+                result.Add(field.Name);
+            }
+
+            return result;
+        }
+
+        var ui = new JsonObject();
+        foreach (var field in fields)
+        {
+            if (ToJson(field) is { } node)
+            {
+                ui[field.Name] = node;
+            }
+        }
+
+        for (var pass = 0; pass < fields.Count; pass++)
+        {
+            var changed = false;
+            foreach (var field in fields)
+            {
+                var visible = EvaluateVisibleWhen(field.VisibleWhen, ui);
+                if (!visible && ui.ContainsKey(field.Name))
+                {
+                    ui.Remove(field.Name);
+                    changed = true;
+                }
+                else if (visible && !ui.ContainsKey(field.Name) && ToJson(field) is { } node)
+                {
+                    ui[field.Name] = node;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+            {
+                break;
+            }
+        }
+
+        foreach (var field in fields)
+        {
+            if (EvaluateVisibleWhen(field.VisibleWhen, ui))
+            {
+                result.Add(field.Name);
+            }
+        }
+
+        return result;
+    }
+
+    private ExpressionUser EffectiveUser => User ?? resolvedUser ?? ExpressionUser.Anonymous;
+
+    private bool EvaluateVisibleWhen(string? condition, JsonObject ui) =>
+        string.IsNullOrWhiteSpace(condition) || EvaluateFormCondition(condition, ui);
+
+    private bool IsFieldRequired(SchemaField field) =>
+        !IsFieldDisabled(field) && (field.Required || (!string.IsNullOrWhiteSpace(field.RequiredWhen) && EvaluateFormCondition(field.RequiredWhen, GetValue())));
+
+    private bool IsFieldDisabled(SchemaField field) =>
+        !string.IsNullOrWhiteSpace(field.DisabledWhen) && EvaluateFormCondition(field.DisabledWhen, GetValue());
+
+    private bool EvaluateFormCondition(string condition, JsonObject ui)
+    {
+        try
+        {
+            var context = new ExpressionContext { User = EffectiveUser };
+            context.Set(UiExpressions.Ui, ui);
+            context.Set(UiExpressions.Data, Data ?? ui);
+            return UiExpressions.Evaluator.EvaluateCondition(condition, context);
+        }
+        catch (PortableExpressionException)
+        {
+            return false;
+        }
     }
 
     private void BuildFields(JsonObject? schema, JsonObject? value)
@@ -256,6 +376,9 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
                 Maximum = GetDecimal(property, "maximum"),
                 Pattern = GetString(property, "pattern"),
                 Format = GetString(property, "format"),
+                VisibleWhen = GetString(property, "visibleWhen") ?? GetString(property, "x-visibleWhen"),
+                RequiredWhen = GetString(property, "requiredWhen") ?? GetString(property, "x-requiredWhen"),
+                DisabledWhen = GetString(property, "disabledWhen") ?? GetString(property, "x-disabledWhen"),
             };
 
             var type = GetType(property);
@@ -285,7 +408,10 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
                 };
             }
 
-            SetInitial(field, value?[name] ?? property["default"]);
+            var initialNode = value?[name]
+                ?? (!string.IsNullOrWhiteSpace(field.DisabledWhen) ? Data?[name] : null)
+                ?? property["default"];
+            SetInitial(field, initialNode);
             fields.Add(field);
         }
     }
@@ -324,14 +450,15 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
         }
     }
 
-    private static string? ValidateField(SchemaField field)
+    private string? ValidateField(SchemaField field)
     {
+        var isRequired = IsFieldRequired(field);
         switch (field.Kind)
         {
             case FieldKind.Number or FieldKind.Integer:
                 if (field.NumberValue is not { } number)
                 {
-                    return field.Required ? "Bu alan zorunludur." : null;
+                    return isRequired ? "Bu alan zorunludur." : null;
                 }
 
                 if (field.Kind == FieldKind.Integer && decimal.Truncate(number) != number)
@@ -355,15 +482,15 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
                 return null;
 
             case FieldKind.DateTime or FieldKind.Date:
-                return field.Required && field.DateValue is null ? "Bu alan zorunludur." : null;
+                return isRequired && field.DateValue is null ? "Bu alan zorunludur." : null;
 
             case FieldKind.Lookup:
-                return field.Required && string.IsNullOrEmpty(field.TextValue) ? "Bu alan zorunludur." : null;
+                return isRequired && string.IsNullOrEmpty(field.TextValue) ? "Bu alan zorunludur." : null;
 
             case FieldKind.Json:
                 if (string.IsNullOrWhiteSpace(field.TextValue))
                 {
-                    return field.Required ? "Bu alan zorunludur." : null;
+                    return isRequired ? "Bu alan zorunludur." : null;
                 }
 
                 try
@@ -380,7 +507,7 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
                 var text = field.TextValue;
                 if (string.IsNullOrEmpty(text))
                 {
-                    return field.Required ? "Bu alan zorunludur." : null;
+                    return isRequired ? "Bu alan zorunludur." : null;
                 }
 
                 if (field.MinLength is { } minLength && text.Length < minLength)
@@ -523,6 +650,9 @@ public partial class JsonSchemaForm : ComponentBase, IDisposable
         public decimal? Maximum { get; init; }
         public string? Pattern { get; init; }
         public string? Format { get; init; }
+        public string? VisibleWhen { get; init; }
+        public string? RequiredWhen { get; init; }
+        public string? DisabledWhen { get; init; }
         public IReadOnlyList<string> EnumValues { get; set; } = [];
 
         public string? TextValue { get; set; }

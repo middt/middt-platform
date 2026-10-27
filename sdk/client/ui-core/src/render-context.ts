@@ -18,9 +18,11 @@ export const UiExpressions = {
   record: 'record',
   /** Workflow instance (`instance.state`, `instance.key`, ...). */
   instance: 'instance',
+  /** Live in-memory values of an active form before submission (`ui.segment`, `ui.amount`, ...). */
+  ui: 'ui',
 } as const;
 
-/** All layout variables (`data`, `query`, `row`, `record`, `instance`). */
+/** All layout variables (`data`, `query`, `row`, `record`, `instance`, `ui`). */
 export const UI_VARIABLES: readonly string[] = Object.freeze(Object.values(UiExpressions));
 
 /** Shared evaluator of layouts (parsed expressions are cached). */

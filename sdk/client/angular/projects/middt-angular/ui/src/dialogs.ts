@@ -62,8 +62,11 @@ export interface UiFormDialogData {
       <mat-dialog-content>
         <div class="middt-ui-form">
           @for (field of data.fields; track field.field) {
-            <middt-ui-field-editor [field]="field" [target]="data.model" [context]="data.context" idPrefix="ui-form" [disabled]="busy()"
-                                   [error]="errors()[field.field] ?? null" (changed)="revalidate(field)" />
+            @if (isFieldVisible(field)) {
+              <middt-ui-field-editor [field]="field" [target]="data.model" [context]="data.context" idPrefix="ui-form"
+                                     [required]="isFieldRequired(field)" [disabled]="busy() || isFieldDisabled(field)"
+                                     [error]="errors()[field.field] ?? null" (changed)="revalidate(field)" />
+            }
           }
           @if (serverError()) {
             <div class="middt-ui-alert middt-ui-alert-danger" role="alert">{{ serverError() }}</div>
@@ -85,24 +88,43 @@ export class UiFormDialogComponent {
   protected readonly errors = signal<Record<string, string>>({});
   protected readonly busy = signal(false);
   protected readonly serverError = signal<string | null>(null);
+  readonly #revision = signal(0);
   #validated = false;
 
+  protected isFieldVisible(field: UiField): boolean {
+    this.#revision();
+    return field.isVisible(this.data.model, this.data.context);
+  }
+
+  protected isFieldRequired(field: UiField): boolean {
+    this.#revision();
+    return field.isRequired(this.data.model, this.data.context);
+  }
+
+  protected isFieldDisabled(field: UiField): boolean {
+    this.#revision();
+    return field.isDisabled(this.data.model, this.data.context);
+  }
+
   protected revalidate(field: UiField): void {
+    this.#revision.update(r => r + 1);
     if (!this.#validated) {
       return;
     }
 
-    const error = field.validate(this.data.model, this.data.context.locale);
-    this.errors.update(errors => {
-      const next = { ...errors };
-      if (error === null) {
-        delete next[field.field];
-      } else {
-        next[field.field] = error;
+    const next: Record<string, string> = {};
+    for (const f of this.data.fields) {
+      if (!f.isVisible(this.data.model, this.data.context)) {
+        continue;
       }
 
-      return next;
-    });
+      const error = f.validate(this.data.model, this.data.context.locale, this.data.context);
+      if (error !== null) {
+        next[f.field] = error;
+      }
+    }
+
+    this.errors.set(next);
   }
 
   protected async submit(): Promise<void> {
@@ -113,7 +135,12 @@ export class UiFormDialogComponent {
     this.#validated = true;
     const errors: Record<string, string> = {};
     for (const field of this.data.fields) {
-      const error = field.validate(this.data.model, this.data.context.locale);
+      if (!field.isVisible(this.data.model, this.data.context)) {
+        delete this.data.model[field.field];
+        continue;
+      }
+
+      const error = field.validate(this.data.model, this.data.context.locale, this.data.context);
       if (error !== null) {
         errors[field.field] = error;
       }

@@ -3,7 +3,7 @@
   "key": "kyc-review",
   "title": "Müşteri KYC & Uyum Özeti",
   "kind": "view",
-  "version": 3,
+  "version": 4,
   "body": [
     {
       "widget": "alert",
@@ -16,6 +16,12 @@
       "severity": "warning",
       "text": "Uyum ve MASAK incelemesi bekleniyor ({{ data.riskLevel }} Risk · Skor: {{ data.kycScore }}).",
       "visibleWhen": "instance.state == \"kyc-review\""
+    },
+    {
+      "widget": "alert",
+      "severity": "info",
+      "text": "Şartlı Onay Modu Aktif (Canlı Form Önizlemesi): {{ ui.conditionDetails ?? 'Henüz koşul metni girilmedi...' }}",
+      "visibleWhen": "instance.state == \"kyc-review\" && ui.conditionalApproval == true"
     },
     {
       "widget": "alert",

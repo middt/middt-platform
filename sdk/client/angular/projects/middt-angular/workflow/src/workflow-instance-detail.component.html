@@ -136,8 +136,8 @@
           <form class="middt-wf-step-form" [attr.aria-labelledby]="idPrefix() + '-state-title'" novalidate [attr.data-transition]="stepTr.key"
                 (submit)="$event.preventDefault(); submitStep()">
             @for (key of stepFormKey(); track key) {
-              <middt-json-schema-form #stepForm [schema]="stepTr.inputSchema" [value]="stepPrefill()" [idPrefix]="idPrefix() + '-step-' + stepTr.key"
-                                      [disabled]="executing()" />
+              <middt-json-schema-form #stepForm [schema]="stepTr.inputSchema" [value]="stepPrefill()" [data]="displayData()" [idPrefix]="idPrefix() + '-step-' + stepTr.key"
+                                      [disabled]="executing()" (valueChange)="onStepFormValueChange($event)" />
             }
             @if (stepErrors().length > 0) {
               <ul class="middt-wf-errors" role="alert">
@@ -212,7 +212,7 @@
                 }
               </div>
               @for (key of retryFormKey(); track key) {
-                <middt-json-schema-form #retryForm [schema]="rSchema" [value]="retryPrefill()" [idPrefix]="idPrefix() + '-retry'"
+                <middt-json-schema-form #retryForm [schema]="rSchema" [value]="retryPrefill()" [data]="displayData()" [idPrefix]="idPrefix() + '-retry'"
                                         [disabled]="retrying()" />
               }
               @if (retryErrors().length > 0) {
@@ -372,7 +372,7 @@
   @if (pendingTransition(); as pending) {
     <form [id]="idPrefix() + '-transition-form'" novalidate (submit)="$event.preventDefault(); executePending()">
       @if (pendingHasInput()) {
-        <middt-json-schema-form #transitionForm [schema]="pending.inputSchema" [value]="pendingPrefill()" [idPrefix]="idPrefix() + '-tr-' + pending.key" [disabled]="executing()" />
+        <middt-json-schema-form #transitionForm [schema]="pending.inputSchema" [value]="pendingPrefill()" [data]="displayData()" [idPrefix]="idPrefix() + '-tr-' + pending.key" [disabled]="executing()" />
       } @else {
         <p>"{{ transitionText(pending) }}" işlemi uygulanacak. Onaylıyor musunuz?</p>
       }

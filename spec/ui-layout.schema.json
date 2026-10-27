@@ -576,6 +576,21 @@
               "placeholder": {
                 "type": "string"
               },
+              "visibleWhen": {
+                "type": "string",
+                "x-middt": "expression",
+                "description": "Condition controlling whether the field is shown, e.g. ui.segment == \"Kurumsal\"."
+              },
+              "requiredWhen": {
+                "type": "string",
+                "x-middt": "expression",
+                "description": "Condition controlling whether the field is dynamically required, e.g. ui.amount > 500000."
+              },
+              "disabledWhen": {
+                "type": "string",
+                "x-middt": "expression",
+                "description": "Condition controlling whether the field is disabled, e.g. !user.IsInRole(\"manager\")."
+              },
               "options": {
                 "type": "array",
                 "items": {
@@ -718,6 +733,21 @@
                         },
                         "placeholder": {
                           "type": "string"
+                        },
+                        "visibleWhen": {
+                          "type": "string",
+                          "x-middt": "expression",
+                          "description": "Condition controlling whether the field is shown, e.g. ui.segment == \"Kurumsal\"."
+                        },
+                        "requiredWhen": {
+                          "type": "string",
+                          "x-middt": "expression",
+                          "description": "Condition controlling whether the field is dynamically required, e.g. ui.amount > 500000."
+                        },
+                        "disabledWhen": {
+                          "type": "string",
+                          "x-middt": "expression",
+                          "description": "Condition controlling whether the field is disabled, e.g. !user.IsInRole(\"manager\")."
                         },
                         "options": {
                           "type": "array",
@@ -843,6 +873,21 @@
               "placeholder": {
                 "type": "string"
               },
+              "visibleWhen": {
+                "type": "string",
+                "x-middt": "expression",
+                "description": "Condition controlling whether the field is shown, e.g. ui.segment == \"Kurumsal\"."
+              },
+              "requiredWhen": {
+                "type": "string",
+                "x-middt": "expression",
+                "description": "Condition controlling whether the field is dynamically required, e.g. ui.amount > 500000."
+              },
+              "disabledWhen": {
+                "type": "string",
+                "x-middt": "expression",
+                "description": "Condition controlling whether the field is disabled, e.g. !user.IsInRole(\"manager\")."
+              },
               "options": {
                 "type": "array",
                 "items": {
@@ -985,6 +1030,21 @@
                         },
                         "placeholder": {
                           "type": "string"
+                        },
+                        "visibleWhen": {
+                          "type": "string",
+                          "x-middt": "expression",
+                          "description": "Condition controlling whether the field is shown, e.g. ui.segment == \"Kurumsal\"."
+                        },
+                        "requiredWhen": {
+                          "type": "string",
+                          "x-middt": "expression",
+                          "description": "Condition controlling whether the field is dynamically required, e.g. ui.amount > 500000."
+                        },
+                        "disabledWhen": {
+                          "type": "string",
+                          "x-middt": "expression",
+                          "description": "Condition controlling whether the field is disabled, e.g. !user.IsInRole(\"manager\")."
                         },
                         "options": {
                           "type": "array",

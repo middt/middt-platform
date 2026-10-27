@@ -39,7 +39,7 @@ public sealed partial class WorkflowEngine
             throw new WorkflowConflictException("The instance is waiting for a subflow to finish.");
         }
 
-        ValidateInput(transition, input);
+        ValidateInput(transition, input, data, user);
 
         var body = Endpoints.WorkflowHttpInput.ExtractBody(input, transition.Input?.Schema) ?? input ?? [];
         if (!IsRuleSatisfied(transition, definition, instance, data, user, body)

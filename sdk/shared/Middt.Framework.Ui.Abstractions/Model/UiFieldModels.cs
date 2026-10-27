@@ -80,6 +80,15 @@ public sealed class UiField
 
     public UiLookup? Lookup { get; init; }
 
+    /// <summary>Optional portable expression controlling whether the field is shown (e.g. <c>ui.segment == "Kurumsal"</c>).</summary>
+    public string? VisibleWhen { get; init; }
+
+    /// <summary>Optional portable expression controlling whether the field is dynamically required (e.g. <c>ui.amount > 500000</c>).</summary>
+    public string? RequiredWhen { get; init; }
+
+    /// <summary>Optional portable expression controlling whether the field is disabled/read-only (e.g. <c>!user.IsInRole("manager")</c>).</summary>
+    public string? DisabledWhen { get; init; }
+
     public static List<UiField> ParseAll(JsonArray? fields) => [.. (fields ?? []).OfType<JsonObject>().Select(Parse)];
 
     public static UiField Parse(JsonObject f) => new()
@@ -92,6 +101,9 @@ public sealed class UiField
         Max = UiFieldJson.GetDecimal(f, "max"),
         MaxLength = UiFieldJson.GetDecimal(f, "maxLength") is { } maxLength ? (int)maxLength : null,
         Placeholder = UiFieldJson.GetString(f, "placeholder"),
+        VisibleWhen = UiFieldJson.GetString(f, "visibleWhen"),
+        RequiredWhen = UiFieldJson.GetString(f, "requiredWhen"),
+        DisabledWhen = UiFieldJson.GetString(f, "disabledWhen"),
         Options = [.. (f["options"] as JsonArray ?? []).Select(o => o switch
         {
             JsonObject obj => new UiOption(obj["value"]?.DeepClone(), UiFieldJson.GetString(obj, "text") ?? UiFieldJson.Key(obj["value"])),
@@ -110,14 +122,56 @@ public sealed class UiField
             : null,
     };
 
-    /// <summary>Validates the value of this field in <paramref name="target"/>; returns the error or <c>null</c>.</summary>
-    public string? Validate(JsonObject target)
+    /// <summary>Evaluates <see cref="VisibleWhen"/> with <paramref name="target"/> bound as <c>ui</c>; failing expressions hide the field.</summary>
+    public bool IsVisible(JsonObject target, Rendering.UiRenderContext? context = null) =>
+        string.IsNullOrWhiteSpace(VisibleWhen) || EvaluateCondition(VisibleWhen, target, context);
+
+    /// <summary>Returns <c>true</c> when <see cref="Required"/> is set or <see cref="RequiredWhen"/> evaluates to <c>true</c>.</summary>
+    public bool IsRequired(JsonObject target, Rendering.UiRenderContext? context = null) =>
+        Required || (!string.IsNullOrWhiteSpace(RequiredWhen) && EvaluateCondition(RequiredWhen, target, context));
+
+    /// <summary>Returns <c>true</c> when <see cref="DisabledWhen"/> is set and evaluates to <c>true</c>.</summary>
+    public bool IsDisabled(JsonObject target, Rendering.UiRenderContext? context = null) =>
+        !string.IsNullOrWhiteSpace(DisabledWhen) && EvaluateCondition(DisabledWhen, target, context);
+
+    private static bool EvaluateCondition(string condition, JsonObject target, Rendering.UiRenderContext? context)
     {
+        if (context is not null)
+        {
+            var evalCtx = context.With(Rendering.UiExpressions.Ui, target);
+            if (evalCtx[Rendering.UiExpressions.Data] is null)
+            {
+                evalCtx = evalCtx.With(Rendering.UiExpressions.Data, target);
+            }
+
+            return evalCtx.IsVisible(condition);
+        }
+
+        try
+        {
+            var exprContext = new Expressions.ExpressionContext { User = Expressions.ExpressionUser.Anonymous };
+            exprContext.Set(Rendering.UiExpressions.Ui, target);
+            exprContext.Set(Rendering.UiExpressions.Data, target);
+            return Rendering.UiExpressions.Evaluator.EvaluateCondition(condition, exprContext);
+        }
+        catch (Expressions.Portable.PortableExpressionException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Validates the value of this field in <paramref name="target"/>; returns the error or <c>null</c> (hidden fields are valid).</summary>
+    public string? Validate(JsonObject target, Rendering.UiRenderContext? context = null)
+    {
+        if (!IsVisible(target, context))
+        {
+            return null;
+        }
         var value = target[Field];
         var empty = value is null || (value is JsonValue v && v.GetValueKind() == JsonValueKind.String && string.IsNullOrWhiteSpace(v.GetValue<string>()));
         if (empty)
         {
-            return Required && Type != "checkbox" ? "Bu alan zorunludur." : null;
+            return !IsDisabled(target, context) && IsRequired(target, context) && Type != "checkbox" ? "Bu alan zorunludur." : null;
         }
 
         if (Type is "number" or "integer" && UiFieldJson.ToDecimal(value) is { } number)

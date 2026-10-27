@@ -5,6 +5,9 @@ namespace Middt.Framework.Expressions;
 /// <summary>The caller as seen by expressions: <c>user.Name</c>, <c>user.Id</c>, <c>user.IsInRole("manager")</c>.</summary>
 public class ExpressionUser
 {
+    /// <summary>Unauthenticated user with no roles.</summary>
+    public static ExpressionUser Anonymous { get; } = new() { Name = "anonymous" };
+
     public string? Id { get; init; }
 
     public string? Name { get; init; }
@@ -25,7 +28,7 @@ public class ExpressionUser
                 Name = principal.Identity.Name,
                 Roles = [.. principal.FindAll(ClaimTypes.Role).Select(c => c.Value)],
             }
-            : new ExpressionUser { Name = "anonymous" };
+            : Anonymous;
 
     public override string ToString() => Name ?? Id ?? string.Empty;
 }

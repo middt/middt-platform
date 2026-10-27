@@ -182,7 +182,7 @@ public sealed partial class WorkflowEngine
             return null;
         }
 
-        ValidateInput(transition, input);
+        ValidateInput(transition, input, data, user);
         try
         {
             var run = await RunClaimedAsync(snapshot.Id, WorkflowInstanceStatus.Active, user, run =>

@@ -8,11 +8,14 @@ import {
   schemaFields,
   schemaLookup,
   schemaLookupOptions,
+  schemaDisabledFields,
   schemaFormValue,
   schemaHasInput,
   schemaInitialValues,
   schemaQueryValue,
+  schemaRequiredFields,
   schemaValuesFromQuery,
+  schemaVisibleFields,
   UNAVAILABLE_MESSAGE,
   validateSchemaField,
   validateSchemaFields,
@@ -343,6 +346,8 @@ test('layout variables and data helpers', () => {
   });
   assert.deepEqual(variables['data'], model.data);
   assert.notEqual(variables['data'], model.data, 'data is a copy');
+  assert.deepEqual(variables['ui'], {});
+  assert.deepEqual(workflowLayoutVariables(model, { segment: 'Kurumsal' })['ui'], { segment: 'Kurumsal' });
   assert.equal(workflowDataGet(model.data, 'credit.score'), 42);
   assert.equal(workflowDataGet(model.data, 'credit.score.x'), null);
 });
@@ -763,6 +768,89 @@ test('workflow operations, versions, inbox, simulation, bundle, and purge API me
     'POST https://api.example.com/api/workflows/maintenance/purge',
   ]);
 });
+
+test('schema visibleWhen, requiredWhen, and disabledWhen with live ui.<field> and data.<field>', () => {
+  const schema = {
+    type: 'object',
+    required: ['segment', 'tradeRegistryNo'],
+    properties: {
+      segment: { type: 'string', enum: ['Bireysel', 'KOBİ', 'Kurumsal'], default: 'Bireysel' },
+      taxOffice: {
+        type: 'string',
+        visibleWhen: 'ui.segment != "Bireysel"',
+        requiredWhen: 'ui.segment == "Kurumsal"',
+        disabledWhen: 'ui.locked == true',
+      },
+      locked: { type: 'boolean', default: false },
+      hasBranch: { type: 'boolean', default: false, visibleWhen: 'ui.segment == "Kurumsal"' },
+      tradeRegistryNo: { type: 'string', 'x-visibleWhen': 'ui.hasBranch == true && data.country == "TR"' },
+    },
+  };
+  const fields = schemaFields(schema);
+  assert.equal(fields[1]!.visibleWhen, 'ui.segment != "Bireysel"');
+  assert.equal(fields[1]!.requiredWhen, 'ui.segment == "Kurumsal"');
+  assert.equal(fields[1]!.disabledWhen, 'ui.locked == true');
+
+  const initial = schemaInitialValues(schema, fields, null);
+  // Bireysel: taxOffice, hasBranch, tradeRegistryNo are hidden
+  const valuesBireysel = { ...initial, hasBranch: true, taxOffice: 'Kadıköy', tradeRegistryNo: 'TR-1' };
+  assert.deepEqual([...schemaVisibleFields(fields, valuesBireysel, { country: 'TR' })], ['segment', 'locked']);
+  assert.deepEqual(validateSchemaFields(fields, valuesBireysel, { country: 'TR' }), {});
+  assert.deepEqual(schemaFormValue(fields, valuesBireysel, { country: 'TR' }), { segment: 'Bireysel', locked: false });
+
+  // Switch live ui.segment to KOBİ: taxOffice is visible but NOT required
+  const valuesKobi = { ...initial, segment: 'KOBİ', locked: true };
+  assert.deepEqual([...schemaVisibleFields(fields, valuesKobi, { country: 'TR' })], ['segment', 'taxOffice', 'locked']);
+  assert.deepEqual([...schemaRequiredFields(fields, valuesKobi, { country: 'TR' })], ['segment', 'tradeRegistryNo']);
+  assert.deepEqual([...schemaDisabledFields(fields, valuesKobi, { country: 'TR' })], ['taxOffice']);
+  assert.deepEqual(validateSchemaFields(fields, valuesKobi, { country: 'TR' }), {});
+
+  // Switch live ui.segment to Kurumsal (hasBranch is false): taxOffice becomes dynamically required via requiredWhen
+  const valuesKurumsalNoBranch = { ...initial, segment: 'Kurumsal', hasBranch: false };
+  assert.deepEqual([...schemaVisibleFields(fields, valuesKurumsalNoBranch, { country: 'TR' })], ['segment', 'taxOffice', 'locked', 'hasBranch']);
+  assert.deepEqual([...schemaRequiredFields(fields, valuesKurumsalNoBranch, { country: 'TR' })], ['segment', 'taxOffice', 'tradeRegistryNo']);
+  assert.deepEqual(validateSchemaFields(fields, valuesKurumsalNoBranch, { country: 'TR' }), {
+    taxOffice: 'Bu alan zorunludur.',
+  });
+
+  // Switch live ui.hasBranch to true: tradeRegistryNo also becomes visible & required
+  const valuesKurumsalBranch = { ...valuesKurumsalNoBranch, taxOffice: 'Kadıköy', hasBranch: true };
+  assert.deepEqual([...schemaVisibleFields(fields, valuesKurumsalBranch, { country: 'TR' })], [
+    'segment',
+    'taxOffice',
+    'locked',
+    'hasBranch',
+    'tradeRegistryNo',
+  ]);
+  assert.deepEqual(validateSchemaFields(fields, valuesKurumsalBranch, { country: 'TR' }), {
+    tradeRegistryNo: 'Bu alan zorunludur.',
+  });
+
+  // Role-based disabledWhen and data.<field> prefill: disabled for non-manager, enabled for manager
+  const roleSchema = {
+    type: 'object',
+    properties: {
+      taxOffice: {
+        type: 'string',
+        default: 'Büyük Mükellefler V.D.',
+        requiredWhen: 'data.segment == "Kurumsal"',
+        disabledWhen: 'data.segment == "Kurumsal" && !user.IsInRole("manager")',
+      },
+    },
+  };
+  const roleFields = schemaFields(roleSchema);
+  const instanceData = { segment: 'Kurumsal', taxOffice: 'Kadıköy V.D.' };
+  const roleInitial = schemaInitialValues(roleSchema, roleFields, null, instanceData);
+  assert.equal(roleInitial['taxOffice'], 'Kadıköy V.D.');
+
+  const standardUser = { name: 'owner@test.com', roles: ['user'], isAuthenticated: true };
+  const managerUser = { name: 'alice@test.com', roles: ['manager'], isAuthenticated: true };
+  assert.deepEqual([...schemaDisabledFields(roleFields, roleInitial, instanceData, standardUser)], ['taxOffice']);
+  assert.deepEqual([...schemaRequiredFields(roleFields, roleInitial, instanceData, standardUser)], []);
+  assert.deepEqual([...schemaDisabledFields(roleFields, roleInitial, instanceData, managerUser)], []);
+  assert.deepEqual([...schemaRequiredFields(roleFields, roleInitial, instanceData, managerUser)], ['taxOffice']);
+});
+
 
 
 

@@ -46,7 +46,10 @@ export interface UiRowActionContext {
             <form class="middt-ui-form" role="search" [attr.aria-label]="(title() ?? entity()) + ' arama'" (submit)="$event.preventDefault(); search()">
               <div class="middt-ui-search">
                 @for (field of searchFields(); track field.field) {
-                  <middt-ui-field-editor [field]="field" [target]="filter()" [context]="context()" [idPrefix]="idPrefix() + '-search'" />
+                  @if (isSearchFieldVisible(field)) {
+                    <middt-ui-field-editor [field]="field" [target]="filter()" [context]="context()" [idPrefix]="idPrefix() + '-search'"
+                                           [disabled]="isSearchFieldDisabled(field)" (changed)="onSearchFieldChanged()" />
+                  }
                 }
               </div>
               <div class="middt-ui-toolbar">
@@ -130,6 +133,7 @@ export class UiDataGridComponent {
 
   protected readonly pageSizeOptions = [10, 20, 50, 100];
   protected readonly filter = signal<JsonObject>({});
+  readonly #searchRevision = signal(0);
   protected readonly rows = signal<JsonObject[]>([]);
   protected readonly count = signal(0);
   protected readonly loading = signal(false);
@@ -155,6 +159,20 @@ export class UiDataGridComponent {
   reload(): Promise<void> {
     this.searched.set(true);
     return this.#load();
+  }
+
+  protected isSearchFieldVisible(field: UiField): boolean {
+    this.#searchRevision();
+    return field.isVisible(this.filter(), this.context());
+  }
+
+  protected isSearchFieldDisabled(field: UiField): boolean {
+    this.#searchRevision();
+    return field.isDisabled(this.filter(), this.context());
+  }
+
+  protected onSearchFieldChanged(): void {
+    this.#searchRevision.update(r => r + 1);
   }
 
   protected search(): void {
@@ -204,6 +222,12 @@ export class UiDataGridComponent {
     this.loading.set(true);
     try {
       const requestFilter = cloneJson(this.filter());
+      for (const field of this.searchFields()) {
+        if (!field.isVisible(requestFilter, this.context())) {
+          delete requestFilter[field.field];
+        }
+      }
+
       const fixedFilter = this.fixedFilter()?.() ?? null;
       for (const [name, value] of Object.entries(fixedFilter ?? {})) {
         requestFilter[name] = cloneJson(value);

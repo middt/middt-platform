@@ -71,6 +71,30 @@ A workflow definition automatically registers:
   }
   ```
 - **`"x-enumFrom": "<arrayPath>.<field>"`**: Populates a transition form property's `enum` and `default` dynamically from an array in the current workflow instance's `data` (e.g. `"x-enumFrom": "partialPayment.reference"` on `delete-payment`).
+- **`"visibleWhen"`, `"requiredWhen"`, `"disabledWhen"` (or `"x-*"` aliases) with `ui.<field>`**: Controls live field visibility, conditional requiredness, and disabled state inside an open start/transition form (`JsonSchemaForm` / `MiddtJsonSchemaFormComponent`) or a layout `grid.form` / `grid.search` (`UiField`) **before** clicking Save/Submit:
+  ```json
+  "segment": {
+    "type": "string",
+    "title": "Müşteri Segmenti",
+    "enum": [ "Bireysel", "KOBİ", "Kurumsal" ],
+    "default": "Bireysel"
+  },
+  "taxOffice": {
+    "type": "string",
+    "maxLength": 100,
+    "title": "Vergi Dairesi",
+    "visibleWhen": "ui.segment != \"Bireysel\"",
+    "requiredWhen": "ui.segment == \"Kurumsal\"",
+    "disabledWhen": "ui.locked == true"
+  }
+  ```
+  - `ui.<field>` reads the live in-memory value of `<field>` in the currently open form.
+  - `data.<field>` reads the persisted workflow instance data (or falls back to `ui` on start forms).
+  - `user` (`user.IsInRole("manager")`, `user.Name`, `user.Id`) reflects the authenticated caller on both frontends and the server (defaulting to an anonymous user with no roles when unauthenticated).
+  - When `visibleWhen` evaluates to `false`, the field is hidden in the UI, omitted from the submitted payload, and stripped by `JsonSchemaValidator` on the server so unvalidated hidden values can never be injected via API.
+  - When `requiredWhen` evaluates to `true` (and the field is neither hidden nor disabled), the field displays the `*` indicator and is enforced as required on both client and server (`JsonSchemaValidator`).
+  - When `disabledWhen` evaluates to `true`, the field is prefilled from `data.<field>` (or schema `default`), rendered as disabled (`read-only`) in the UI, exempted from `required`/`requiredWhen`, and protected on the server (`JsonSchemaValidator` rejects any modified value with `$.<field>: is disabled.`).
+  - On inline wizard step forms, `WorkflowInstanceDetail` also exposes the live step form values as `ui` in the state layout's `UiRenderContext`.
 
 ---
 
@@ -179,7 +203,7 @@ You can build reusable partial layouts (`kind: "view"`) and embed them inside an
 | `layout` | Container / Reusable | `key`, `data` (optional expression), `title` | Embeds another JSON layout by `key` with optional `data` scope |
 | `heading` | Display | `text`, `level` (`1`..`4`) | Section or page heading (`{{ }}` template) |
 | `text` | Display | `text`, `style` (`body`/`lead`/`muted`/`small`/`code`) | Paragraph or inline text (`{{ }}` template) |
-| `alert` | Display | `severity` (`info`/`success`/`warning`/`danger`), `title`, `text` | Callout banner (`{{ }}` template) |
+| `alert` | Display | `severity` (`info`/`success`/`warning`/`danger`), `text` | Callout banner (`{{ }}` template) |
 | `badge` | Display | `text`, `color` (`neutral`/`info`/`success`/`warning`/`danger`) | Colored status pill |
 | `divider` | Display | – | Horizontal separator line |
 | `link` | Display | `text`, `href` (`{{ }}` template, validated by `UiUrl.IsSafe`), `style` (`link`/`button`) | Safe navigation link or action button |

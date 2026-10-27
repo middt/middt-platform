@@ -122,7 +122,22 @@ public sealed class SampleJsonWorkflowTests
         closed.State.Should().Be("closed");
         closed.Status.Should().Be(WorkflowInstanceStatus.Cancelled);
 
-        // 3. Corporate customer goes to manual 'kyc-review', supports $self note, approves to 'active', updates income back to 'kyc-review', and rejects
+        // 3. Corporate customer requires taxOffice via requiredWhen ("ui.segment == \"Kurumsal\"")
+        var missingTaxOffice = () => host.StartInstanceAsync(
+            "customer-onboarding",
+            new
+            {
+                fullName = "Anadolu Lojistik A.Ş.",
+                identityNumber = "98765432109",
+                email = "finans@anadolulojistik.com",
+                phone = "02124440123",
+                segment = "Kurumsal",
+                monthlyIncome = 450000,
+            },
+            user: Owner);
+        await missingTaxOffice.Should().ThrowAsync<WorkflowValidationException>();
+
+        // Corporate customer goes to manual 'kyc-review', supports $self note, approves to 'active', updates income back to 'kyc-review', and rejects
         var corporate = await host.StartInstanceAsync(
             "customer-onboarding",
             new
@@ -132,6 +147,7 @@ public sealed class SampleJsonWorkflowTests
                 email = "finans@anadolulojistik.com",
                 phone = "02124440123",
                 segment = "Kurumsal",
+                taxOffice = "Büyük Mükellefler V.D.",
                 monthlyIncome = 450000,
             },
             user: Owner);
@@ -147,6 +163,30 @@ public sealed class SampleJsonWorkflowTests
         // Manager approves KYC -> 'active'
         corporate = await host.TransitionAsync(corporate.Id, "approve-kyc", new { approvalNote = "MASAK uygun" }, user: Alice);
         corporate.State.Should().Be("active");
+
+        // Non-manager cannot modify disabled taxOffice when data.segment == "Kurumsal"
+        var modifyDisabledTaxOffice = () => host.TransitionAsync(
+            corporate.Id,
+            "update-income",
+            new { monthlyIncome = 500000, segment = "Kurumsal", taxOffice = "Yetkisiz Vergi Dairesi" },
+            user: Owner);
+        await modifyDisabledTaxOffice.Should().ThrowAsync<WorkflowValidationException>();
+
+        // Hidden field (taxOffice when ui.segment == "Bireysel") is stripped even if invalid and does not overwrite persisted data
+        var bireyselWithHiddenInvalidTaxOffice = await host.StartInstanceAsync(
+            "customer-onboarding",
+            new
+            {
+                fullName = "Mehmet Demir",
+                identityNumber = "11122233344",
+                email = "mehmet@ornek.com",
+                phone = "05321112233",
+                segment = "Bireysel",
+                taxOffice = "X",
+                monthlyIncome = 70000,
+            },
+            user: Owner);
+        bireyselWithHiddenInvalidTaxOffice.Data.ContainsKey("taxOffice").Should().BeFalse();
 
         // Update income & segment from 'active' -> re-runs 'kyc-scoring' without failing setKey and lands in 'kyc-review'
         corporate = await host.TransitionAsync(corporate.Id, "update-income", new { monthlyIncome = 15000, segment = "KOBİ" }, user: Owner);
@@ -771,6 +811,7 @@ public sealed class SampleJsonWorkflowTests
                 email = "info@anadolu.com",
                 phone = "05323333333",
                 segment = "Kurumsal",
+                taxOffice = "Büyük Mükellefler V.D.",
                 monthlyIncome = 12000,
             },
             user: Alice);
@@ -972,6 +1013,7 @@ public sealed class SampleJsonWorkflowTests
                 email = "finans@egeihracat.com",
                 phone = "02324445566",
                 segment = "Kurumsal",
+                taxOffice = "Hasan Tahsin V.D.",
                 monthlyIncome = 600000,
             },
             user: Alice);

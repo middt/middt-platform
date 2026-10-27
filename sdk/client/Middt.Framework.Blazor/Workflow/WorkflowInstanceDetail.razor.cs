@@ -38,6 +38,7 @@ public partial class WorkflowInstanceDetail
     // Wizard step form (inline transition)
     private AvailableTransitionModel? stepTransition;
     private JsonObject? stepPrefill;
+    private JsonObject? stepLiveValue;
 
     /// <summary>Initial value of the transition dialog form (the edited data of a <c>jsonPatch</c> transition).</summary>
     private JsonObject? pendingPrefill;
@@ -180,6 +181,7 @@ public partial class WorkflowInstanceDetail
             : null;
         var activeData = instance.ActiveSubFlow?.Data ?? instance.Data;
         stepPrefill = inline is null ? null : WorkflowUi.StepPrefill(activeData, inline.InputInto, inline.InputSchema);
+        stepLiveValue = stepPrefill?.DeepClone() as JsonObject;
         stepTransition = inline;
         stepErrors = [];
         if (instance.Status != WorkflowInstanceStatus.Faulted)
@@ -301,6 +303,7 @@ public partial class WorkflowInstanceDetail
                 layoutVariables = new Dictionary<string, JsonNode?>
                 {
                     ["data"] = mergedData,
+                    ["ui"] = stepLiveValue?.DeepClone() ?? new JsonObject(),
                     ["instance"] = instance is null ? null : new JsonObject
                     {
                         ["id"] = instance.Id.ToString(),
@@ -328,6 +331,12 @@ public partial class WorkflowInstanceDetail
             _ = LayoutVariables;
             return availableTransitionKeys ?? new HashSet<string>(StringComparer.Ordinal);
         }
+    }
+
+    private void OnStepFormValueChanged(JsonObject value)
+    {
+        stepLiveValue = value;
+        layoutVariables = null;
     }
 
     private Task ExecuteLayoutTransitionAsync(string transitionKey, JsonObject? input)

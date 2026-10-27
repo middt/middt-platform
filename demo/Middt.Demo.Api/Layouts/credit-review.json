@@ -3,7 +3,7 @@
   "key": "credit-review",
   "title": "Kredi Tahsis & Komite İnceleme Özeti",
   "kind": "view",
-  "version": 3,
+  "version": 4,
   "body": [
     {
       "widget": "alert",
@@ -31,7 +31,9 @@
                 { "label": "Müşteri Anahtarı", "value": "{{ data.customerKey }}", "visibleWhen": "data.customerKey != null" },
                 { "label": "Talep Edilen Kredi (₺)", "value": "{{ data.amount }}", "format": "N2" },
                 { "label": "Vade (Ay)", "value": "{{ data.termMonths }}", "visibleWhen": "data.termMonths != null" },
+                { "label": "Teminat Türü", "value": "{{ data.collateralType }}", "visibleWhen": "data.collateralType != null" },
                 { "label": "Teminat Değeri (₺)", "value": "{{ data.collateralAmount }}", "format": "N2", "visibleWhen": "data.collateralAmount != null" },
+                { "label": "Ekspertiz Rapor No", "value": "{{ data.appraisalReportNo }}", "visibleWhen": "data.appraisalReportNo != null" },
                 { "label": "Kredi / Teminat Oranı (LTV %)", "value": "{{ data.ltvRatio }}", "format": "N2", "visibleWhen": "data.ltvRatio != null" },
                 { "label": "Aktarım IBAN", "value": "{{ data.iban }}", "visibleWhen": "data.iban != null" },
                 { "label": "Talep Eden", "value": "{{ data.requestedBy }}", "visibleWhen": "data.requestedBy != null" },

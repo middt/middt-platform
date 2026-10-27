@@ -76,7 +76,7 @@ public sealed partial class WorkflowEngine(
             return (await ToModelAsync(existing, user, cancellationToken), false);
         }
 
-        ValidateInput(definition.Start, request.Data);
+        ValidateInput(definition.Start, request.Data, data: null, user: user);
 
         var startBody = WorkflowHttpInput.ExtractBody(request.Data, definition.Start.Input?.Schema);
         var startPending = (definition.Start.Input?.Persistable(startBody)
@@ -316,7 +316,7 @@ public sealed partial class WorkflowEngine(
                 {
                     var candidate = (JsonObject)currentData.DeepClone();
                     JsonPath.Merge(candidate, bgPatch);
-                    var errors = JsonSchemaValidator.Validate(candidate, bgSchema);
+                    var errors = JsonSchemaValidator.Validate(candidate, bgSchema, currentData, user);
                     if (errors.Count > 0)
                     {
                         throw new WorkflowValidationException(errors);
@@ -344,14 +344,15 @@ public sealed partial class WorkflowEngine(
                     }
 
                     var wrappedOverride = WorkflowHttpInput.WithBody(overrideInput, extracted);
-                    ValidateInput(transition, wrappedOverride);
+                    ValidateInput(transition, wrappedOverride, transition.Key == definition.Start.Key ? null : currentData, user);
+                    var sanitizedExtracted = WorkflowHttpInput.ExtractBody(wrappedOverride, transition.Input.Schema) ?? extracted;
 
                     effectiveTransitionInput = wrappedOverride;
-                    claimPendingInput = transition.Input.Persistable(extracted) ?? (JsonObject)extracted.DeepClone();
+                    claimPendingInput = transition.Input.Persistable(sanitizedExtracted) ?? (JsonObject)sanitizedExtracted.DeepClone();
                     if (transition.Input.Schema is null)
                     {
-                        EnsureCanPatchInstanceData(definition, snapshot, extracted, user);
-                        directDataMerge = (JsonObject)extracted.DeepClone();
+                        EnsureCanPatchInstanceData(definition, snapshot, sanitizedExtracted, user);
+                        directDataMerge = (JsonObject)sanitizedExtracted.DeepClone();
                     }
                 }
                 else
@@ -361,7 +362,7 @@ public sealed partial class WorkflowEngine(
                     {
                         var candidate = (JsonObject)currentData.DeepClone();
                         JsonPath.Merge(candidate, extracted);
-                        var errors = JsonSchemaValidator.Validate(candidate, dataSchema);
+                        var errors = JsonSchemaValidator.Validate(candidate, dataSchema, currentData, user);
                         if (errors.Count > 0)
                         {
                             throw new WorkflowValidationException(errors);
@@ -1528,7 +1529,7 @@ public sealed partial class WorkflowEngine(
             throw new WorkflowValidationException([$"JSON Patch {ex.Message}"]);
         }
 
-        var errors = JsonSchemaValidator.Validate(target, definition.Schema!);
+        var errors = JsonSchemaValidator.Validate(target, definition.Schema!, run.Data, run.User);
         if (errors.Count > 0)
         {
             throw new WorkflowValidationException(errors);
@@ -1549,7 +1550,7 @@ public sealed partial class WorkflowEngine(
     /// <summary>Body property that carries a JSON Patch (<c>{ "patch": [...] }</c>; a bare array body is wrapped into it).</summary>
     internal const string PatchProperty = "patch";
 
-    private static void ValidateInput(TransitionDefinition transition, JsonObject? input)
+    private static void ValidateInput(TransitionDefinition transition, JsonObject? input, JsonObject? data = null, ExpressionUser? user = null)
     {
         if (transition.Input is { Format: InputFormat.JsonPatch } patchInput)
         {
@@ -1566,7 +1567,8 @@ public sealed partial class WorkflowEngine(
         if (transition.Input?.Schema is { } schema)
         {
             var target = WorkflowHttpInput.ExtractBody(input, schema);
-            var errors = JsonSchemaValidator.Validate(target ?? [], schema);
+            var errors = JsonSchemaValidator.Validate(target ?? [], schema, data, user);
+            WorkflowHttpInput.SyncEnvelopeBody(input);
             if (errors.Count > 0)
             {
                 throw new WorkflowValidationException(errors);

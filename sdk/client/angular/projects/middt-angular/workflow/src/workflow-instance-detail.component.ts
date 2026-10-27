@@ -9,6 +9,7 @@ import {
   inject,
   Injector,
   input,
+  linkedSignal,
   output,
   signal,
   untracked,
@@ -148,6 +149,7 @@ export class MiddtWorkflowInstanceDetailComponent {
     const step = this.stepTransition();
     return step === null ? null : workflowStepPrefill(this.instance()?.data, step.inputInto, step.inputSchema);
   });
+  protected readonly stepLiveValue = linkedSignal<WorkflowData | null>(() => this.stepPrefill());
   /** Recreates the step form per instance, state, data version and transition (like `@key` in Blazor). */
   protected readonly stepFormKey = computed(() => {
     const instance = this.instance();
@@ -221,7 +223,7 @@ export class MiddtWorkflowInstanceDetailComponent {
 
   protected readonly layoutVariables = computed(() => {
     const instance = this.instance();
-    return instance === null ? {} : workflowLayoutVariables(instance);
+    return instance === null ? {} : workflowLayoutVariables(instance, this.stepLiveValue());
   });
   protected readonly availableTransitionKeys = computed(() => new Set(this.allAvailableTransitions().map(t => t.key)));
   protected readonly executeLayoutTransition = (transitionKey: string, input: Record<string, unknown> | null): void => {
@@ -431,6 +433,10 @@ export class MiddtWorkflowInstanceDetailComponent {
     }
 
     void this.#execute(transition, hasInput ? (form?.getValue() ?? null) : null, false);
+  }
+
+  protected onStepFormValueChange(value: WorkflowData): void {
+    this.stepLiveValue.set(value);
   }
 
   protected submitStep(): void {

@@ -225,6 +225,9 @@ public static partial class UiWidgets
         new("max", UiPropType.Number),
         new("maxLength", UiPropType.Integer),
         new("placeholder", UiPropType.String),
+        new("visibleWhen", UiPropType.Expression, "Condition controlling whether the field is shown, e.g. ui.segment == \"Kurumsal\"."),
+        new("requiredWhen", UiPropType.Expression, "Condition controlling whether the field is dynamically required, e.g. ui.amount > 500000."),
+        new("disabledWhen", UiPropType.Expression, "Condition controlling whether the field is disabled, e.g. !user.IsInRole(\"manager\")."),
         new("options", UiPropType.Options, "Static select options: strings or { value, text }.") { Properties = [new("value", UiPropType.String) { Required = true }, new("text", UiPropType.String)] },
     ];
 

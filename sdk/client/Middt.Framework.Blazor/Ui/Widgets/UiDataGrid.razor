@@ -11,7 +11,12 @@
                 <div class="middt-ui-search">
                     @foreach (var field in SearchFields)
                     {
-                        <UiFieldEditor @key="field.Field" Field="field" Target="filter" Context="Context" IdPrefix="@($"{IdPrefix}-search")" />
+                        if (!field.IsVisible(filter, Context))
+                        {
+                            continue;
+                        }
+
+                        <UiFieldEditor @key="field.Field" Field="field" Target="filter" Context="Context" IdPrefix="@($"{IdPrefix}-search")" OnChange="StateHasChanged" />
                     }
                 </div>
                 <div class="middt-ui-toolbar">

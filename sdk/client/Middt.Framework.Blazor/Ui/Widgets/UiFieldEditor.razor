@@ -4,12 +4,17 @@
 @using Middt.Framework.Ui.Rendering
 @implements IDisposable
 
-@{ var id = $"{IdPrefix}-{Field.Field}"; var errorId = $"{id}-error"; }
+@{
+    var id = $"{IdPrefix}-{Field.Field}";
+    var errorId = $"{id}-error";
+    var isRequired = Field.IsRequired(Target, Context);
+    var isDisabled = Disabled || Field.IsDisabled(Target, Context);
+}
 <div class="middt-ui-input @(Error is null ? null : "middt-ui-invalid")" data-field="@Field.Field">
     @if (Field.Type == "checkbox")
     {
         <div class="middt-ui-check">
-            <RadzenCheckBox TValue="bool" Name="@id" Value="@BoolValue" ValueChanged="@(v => SetAsync(JsonValue.Create(v)))" Disabled="@Disabled"
+            <RadzenCheckBox TValue="bool" Name="@id" Value="@BoolValue" ValueChanged="@(v => SetAsync(JsonValue.Create(v)))" Disabled="@isDisabled"
                             InputAttributes="@(new Dictionary<string, object> { ["aria-label"] = Field.Label })" />
             <label for="@id">@Field.Label</label>
         </div>
@@ -18,7 +23,7 @@
     {
         <label for="@id">
             @Field.Label
-            @if (Field.Required)
+            @if (isRequired)
             {
                 <span class="middt-jsf-required" title="Zorunlu alan">*</span>
             }
@@ -26,39 +31,39 @@
         @switch (Field.Type)
         {
             case "textarea":
-                <RadzenTextArea Name="@id" id="@id" Value="@TextValue" ValueChanged="@(v => SetTextAsync(v))" Disabled="@Disabled" Rows="3" MaxLength="@Field.MaxLength"
+                <RadzenTextArea Name="@id" id="@id" Value="@TextValue" ValueChanged="@(v => SetTextAsync(v))" Disabled="@isDisabled" Rows="3" MaxLength="@Field.MaxLength"
                                 Placeholder="@Field.Placeholder" aria-invalid="@(Error is null ? null : "true")" aria-describedby="@(Error is null ? null : errorId)" />
                 break;
             case "number":
             case "integer":
-                <RadzenNumeric TValue="decimal?" Name="@id" Value="@NumberValue" ValueChanged="@(v => SetNumberAsync(v))" Disabled="@Disabled"
+                <RadzenNumeric TValue="decimal?" Name="@id" Value="@NumberValue" ValueChanged="@(v => SetNumberAsync(v))" Disabled="@isDisabled"
                                Step="@(Field.Type == "integer" ? "1" : "any")" Placeholder="@Field.Placeholder" InputAriaLabel="@Field.Label"
                                UpAriaLabel="Artır" DownAriaLabel="Azalt" aria-describedby="@(Error is null ? null : errorId)" />
                 break;
             case "date":
             case "datetime":
-                <RadzenDatePicker TValue="DateTime?" Name="@id" Value="@DateValue" ValueChanged="@(v => SetDateAsync(v))" Disabled="@Disabled"
+                <RadzenDatePicker TValue="DateTime?" Name="@id" Value="@DateValue" ValueChanged="@(v => SetDateAsync(v))" Disabled="@isDisabled"
                                   ShowTime="@(Field.Type == "datetime")" DateFormat="@(Field.Type == "datetime" ? "dd.MM.yyyy HH:mm" : "dd.MM.yyyy")"
                                   InputAttributes="@(new Dictionary<string, object> { ["aria-label"] = Field.Label })" AllowClear="true" />
                 break;
             case "select":
                 <RadzenDropDown TValue="string" Name="@id" Data="@options" TextProperty="Text" ValueProperty="Key" Value="@SelectedKey"
-                                ValueChanged="@(v => SetOptionAsync(v))" Disabled="@Disabled" AllowClear="true" AllowFiltering="@(options.Count > 10)"
+                                ValueChanged="@(v => SetOptionAsync(v))" Disabled="@isDisabled" AllowClear="true" AllowFiltering="@(options.Count > 10)"
                                 FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive" Placeholder="@(Field.Placeholder ?? (loadError ?? "Seçiniz"))"
                                 InputAttributes="@(new Dictionary<string, object> { ["aria-label"] = Field.Label })" />
                 break;
             case "picker":
                 <div class="middt-ui-picker">
                     <RadzenTextBox id="@id" Value="@(pickerText ?? string.Empty)" ReadOnly="true" Placeholder="@(Field.Placeholder ?? "Seçiniz")" aria-describedby="@(Error is null ? null : errorId)" />
-                    <RadzenButton Icon="search" Size="ButtonSize.Small" Click="PickAsync" Disabled="@Disabled" title="Seç" aria-label="@($"{Field.Label} seç")" />
-                    @if (Target[Field.Field] is not null && !Disabled)
+                    <RadzenButton Icon="search" Size="ButtonSize.Small" Click="PickAsync" Disabled="@isDisabled" title="Seç" aria-label="@($"{Field.Label} seç")" />
+                    @if (Target[Field.Field] is not null && !isDisabled)
                     {
                         <RadzenButton Icon="close" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light" Click="ClearPickAsync" title="Temizle" aria-label="@($"{Field.Label} temizle")" />
                     }
                 </div>
                 break;
             default:
-                <RadzenTextBox Name="@id" id="@id" Value="@TextValue" ValueChanged="@(v => SetTextAsync(v))" Disabled="@Disabled" MaxLength="@Field.MaxLength"
+                <RadzenTextBox Name="@id" id="@id" Value="@TextValue" ValueChanged="@(v => SetTextAsync(v))" Disabled="@isDisabled" MaxLength="@Field.MaxLength"
                                Placeholder="@Field.Placeholder" aria-invalid="@(Error is null ? null : "true")" aria-describedby="@(Error is null ? null : errorId)" />
                 break;
         }

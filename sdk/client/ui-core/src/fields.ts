@@ -1,6 +1,8 @@
 // TypeScript port of Middt.Framework.Ui.Abstractions/Model/UiFieldModels.cs (grid columns, form/search fields and
 // their validation; messages are Turkish like the Blazor renderer).
 
+import { PortableExpressionError } from './expression.ts';
+import { UiExpressions, uiEvaluator, type UiRenderContext } from './render-context.ts';
 import { changeCaseInvariant, DECIMAL_MAX, decimalSeparator, formatDecimalGeneral, isNullOrWhiteSpace } from './text.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -123,6 +125,9 @@ export class UiField {
   max: number | null = null;
   maxLength: number | null = null;
   placeholder: string | null = null;
+  visibleWhen: string | null = null;
+  requiredWhen: string | null = null;
+  disabledWhen: string | null = null;
   options: UiOption[] = [];
   lookup: UiLookup | null = null;
 
@@ -141,6 +146,9 @@ export class UiField {
     const maxLength = UiFieldJson.getDecimal(f, 'maxLength');
     field.maxLength = maxLength === null ? null : Math.trunc(maxLength);
     field.placeholder = UiFieldJson.getString(f, 'placeholder');
+    field.visibleWhen = UiFieldJson.getString(f, 'visibleWhen');
+    field.requiredWhen = UiFieldJson.getString(f, 'requiredWhen');
+    field.disabledWhen = UiFieldJson.getString(f, 'disabledWhen');
     field.options = (Array.isArray(f['options']) ? f['options'] : []).map((o: unknown) =>
       isObject(o)
         ? new UiOption(cloneJson(o['value']), UiFieldJson.getString(o, 'text') ?? UiFieldJson.key(o['value']))
@@ -159,15 +167,74 @@ export class UiField {
     return field;
   }
 
+  /** Evaluates {@link visibleWhen} with `target` bound as `ui`; failing expressions hide the field. */
+  isVisible(target: JsonObject, context?: UiRenderContext | null): boolean {
+    if (this.visibleWhen === null || isNullOrWhiteSpace(this.visibleWhen)) {
+      return true;
+    }
+
+    return this.#evaluateCondition(this.visibleWhen, target, context);
+  }
+
+  /** Returns `true` when {@link required} is set or {@link requiredWhen} evaluates to `true`. */
+  isRequired(target: JsonObject, context?: UiRenderContext | null): boolean {
+    if (this.required) {
+      return true;
+    }
+
+    if (this.requiredWhen === null || isNullOrWhiteSpace(this.requiredWhen)) {
+      return false;
+    }
+
+    return this.#evaluateCondition(this.requiredWhen, target, context);
+  }
+
+  /** Returns `true` when {@link disabledWhen} is set and evaluates to `true`. */
+  isDisabled(target: JsonObject, context?: UiRenderContext | null): boolean {
+    if (this.disabledWhen === null || isNullOrWhiteSpace(this.disabledWhen)) {
+      return false;
+    }
+
+    return this.#evaluateCondition(this.disabledWhen, target, context);
+  }
+
+  #evaluateCondition(condition: string, target: JsonObject, context?: UiRenderContext | null): boolean {
+    if (context !== null && context !== undefined) {
+      let evalCtx = context.with(UiExpressions.ui, target);
+      if (evalCtx.variables[UiExpressions.data] === undefined || evalCtx.variables[UiExpressions.data] === null) {
+        evalCtx = evalCtx.with(UiExpressions.data, target);
+      }
+
+      return evalCtx.isVisible(condition);
+    }
+
+    try {
+      return uiEvaluator.evaluateCondition(condition, {
+        variables: { [UiExpressions.ui]: target, [UiExpressions.data]: target },
+      });
+    } catch (error) {
+      if (error instanceof PortableExpressionError) {
+        return false;
+      }
+
+      throw error;
+    }
+  }
+
   /**
-   * Validates the value of this field in `target`; returns the error or null.
+   * Validates the value of this field in `target`; returns the error or null (hidden fields are valid).
    * @param locale Culture of the numbers in the messages (default `tr-TR`).
+   * @param context Optional render context used when evaluating `visibleWhen` / `requiredWhen`.
    */
-  validate(target: JsonObject, locale = 'tr-TR'): string | null {
+  validate(target: JsonObject, locale = 'tr-TR', context?: UiRenderContext | null): string | null {
+    if (!this.isVisible(target, context)) {
+      return null;
+    }
+
     const value = Object.prototype.hasOwnProperty.call(target, this.field) ? target[this.field] : null;
     const empty = value === null || value === undefined || (typeof value === 'string' && isNullOrWhiteSpace(value));
     if (empty) {
-      return this.required && this.type !== 'checkbox' ? 'Bu alan zorunludur.' : null;
+      return !this.isDisabled(target, context) && this.isRequired(target, context) && this.type !== 'checkbox' ? 'Bu alan zorunludur.' : null;
     }
 
     const number = this.type === 'number' || this.type === 'integer' ? UiFieldJson.toDecimal(value) : null;
@@ -193,11 +260,16 @@ export class UiField {
   }
 }
 
-/** Validates every field; returns the errors by field name (empty when valid). */
-export function validateFields(fields: readonly UiField[], target: JsonObject, locale = 'tr-TR'): Record<string, string> {
+/** Validates every visible field; returns the errors by field name (empty when valid). */
+export function validateFields(
+  fields: readonly UiField[],
+  target: JsonObject,
+  locale = 'tr-TR',
+  context?: UiRenderContext | null,
+): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const field of fields) {
-    const error = field.validate(target, locale);
+    const error = field.validate(target, locale, context);
     if (error !== null) {
       errors[field.field] = error;
     }

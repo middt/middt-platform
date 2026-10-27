@@ -2,6 +2,8 @@
 // WorkflowInstanceDetail.razor.cs, the JSON Schema form of JsonSchemaForm.razor.cs (Turkish messages) and the data helpers of
 // WorkflowViewBase (Middt.Framework.Workflow.Razor/WorkflowViews.cs).
 
+import { PortableExpressionError, type ExpressionUser, type ExpressionUserInfo } from './expression.ts';
+import { UiExpressions, uiEvaluator } from './render-context.ts';
 import type {
   WorkflowJsonPatchOperation,
   AvailableTransitionModel,
@@ -446,8 +448,8 @@ export function workflowIsPending(instance: WorkflowInstanceModel | null | undef
   return !!instance && (instance.status === 'Busy' || (instance.status === 'Active' && (instance.waitingForInstanceId ?? null) !== null));
 }
 
-/** Variables of a state's JSON layout: `data` (instance data, overlaid with activeSubFlow data when waiting on a subflow) and `instance` (id, key, state, workflow, status, …). */
-export function workflowLayoutVariables(instance: WorkflowInstanceModel): Record<string, unknown> {
+/** Variables of a state's JSON layout: `data` (instance data, overlaid with activeSubFlow data when waiting on a subflow), `ui` (live inline form values, if any) and `instance` (id, key, state, workflow, status, …). */
+export function workflowLayoutVariables(instance: WorkflowInstanceModel, ui?: WorkflowData | null): Record<string, unknown> {
   const baseData = cloneJson(instance.data ?? {});
   const mergedData =
     instance.activeSubFlow?.data && isObject(baseData) && isObject(instance.activeSubFlow.data)
@@ -456,6 +458,7 @@ export function workflowLayoutVariables(instance: WorkflowInstanceModel): Record
 
   return {
     data: mergedData,
+    ui: cloneJson(ui ?? {}),
     instance: {
       id: instance.id,
       key: instance.key ?? null,
@@ -501,6 +504,12 @@ export interface SchemaField {
   maximum: number | null;
   pattern: string | null;
   format: string | null;
+  /** Optional portable expression controlling whether the field is shown (e.g. `ui.segment == "Kurumsal"`). */
+  visibleWhen: string | null;
+  /** Optional portable expression controlling whether the field is dynamically required (e.g. `ui.amount > 500000`). */
+  requiredWhen?: string | null;
+  /** Optional portable expression controlling whether the field is disabled (e.g. `!user.IsInRole("manager")`). */
+  disabledWhen?: string | null;
   enumValues: string[];
   /** Options loaded from an entity (`x-lookup`); the field is then shown as a select. */
   lookup: SchemaLookup | null;
@@ -647,6 +656,9 @@ export function schemaFields(schema: WorkflowData | null | undefined): SchemaFie
       maximum: getNumber(node, 'maximum'),
       pattern: getString(node, 'pattern'),
       format,
+      visibleWhen: getString(node, 'visibleWhen') ?? getString(node, 'x-visibleWhen'),
+      requiredWhen: getString(node, 'requiredWhen') ?? getString(node, 'x-requiredWhen'),
+      disabledWhen: getString(node, 'disabledWhen') ?? getString(node, 'x-disabledWhen'),
       enumValues,
       lookup,
     });
@@ -702,11 +714,17 @@ export function schemaFieldInitial(field: SchemaField, node: unknown): SchemaFie
   }
 }
 
-/** Initial editor values: `value[name]`, else the schema `default`. */
-export function schemaInitialValues(schema: WorkflowData | null | undefined, fields: readonly SchemaField[], value: WorkflowData | null | undefined): Record<string, SchemaFieldValue> {
+/** Initial editor values: `value[name]`, else `data[name]` when `disabledWhen` is set, else the schema `default`. */
+export function schemaInitialValues(
+  schema: WorkflowData | null | undefined,
+  fields: readonly SchemaField[],
+  value: WorkflowData | null | undefined,
+  data?: WorkflowData | null,
+): Record<string, SchemaFieldValue> {
   const result: Record<string, SchemaFieldValue> = {};
   for (const field of fields) {
-    const node = value?.[field.name] ?? schemaDefault(schema, field.name);
+    const hasDisabledWhen = field.disabledWhen !== null && field.disabledWhen !== undefined && field.disabledWhen.trim() !== '';
+    const node = value?.[field.name] ?? (hasDisabledWhen ? data?.[field.name] : undefined) ?? schemaDefault(schema, field.name);
     result[field.name] = schemaFieldInitial(field, node);
   }
 
@@ -817,11 +835,165 @@ export function validateSchemaField(field: SchemaField, value: SchemaFieldValue 
   }
 }
 
-/** Validates all fields; returns the messages by field name (empty when valid). */
-export function validateSchemaFields(fields: readonly SchemaField[], values: Record<string, SchemaFieldValue>): Record<string, string> {
+function evaluateFieldCondition(
+  condition: string | null | undefined,
+  ui: WorkflowData,
+  data?: WorkflowData | null,
+  user?: ExpressionUserInfo | ExpressionUser | null,
+): boolean {
+  if (condition === null || condition === undefined || condition.trim() === '') {
+    return true;
+  }
+
+  try {
+    return uiEvaluator.evaluateCondition(condition, {
+      ...(user !== null && user !== undefined ? { user } : {}),
+      variables: {
+        [UiExpressions.ui]: ui,
+        [UiExpressions.data]: data ?? ui,
+      },
+    });
+  } catch (error) {
+    if (error instanceof PortableExpressionError) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Names of the currently visible fields in `fields` given the live editor `values` (bound as `ui.<field>`),
+ * optional workflow/page `data` (bound as `data.<field>`), and optional `user`.
+ */
+export function schemaVisibleFields(
+  fields: readonly SchemaField[],
+  values: Record<string, SchemaFieldValue>,
+  data?: WorkflowData | null,
+  user?: ExpressionUserInfo | ExpressionUser | null,
+): Set<string> {
+  const result = new Set<string>();
+  if (!fields.some(f => f.visibleWhen !== null && f.visibleWhen.trim() !== '')) {
+    for (const field of fields) {
+      result.add(field.name);
+    }
+
+    return result;
+  }
+
+  const ui: WorkflowData = {};
+  for (const field of fields) {
+    const json = schemaFieldToJson(field, values[field.name]);
+    if (json !== undefined) {
+      ui[field.name] = json;
+    }
+  }
+
+  for (let pass = 0; pass < fields.length; pass++) {
+    let changed = false;
+    for (const field of fields) {
+      const visible = evaluateFieldCondition(field.visibleWhen, ui, data, user);
+      if (!visible && Object.prototype.hasOwnProperty.call(ui, field.name)) {
+        delete ui[field.name];
+        changed = true;
+      } else if (visible && !Object.prototype.hasOwnProperty.call(ui, field.name)) {
+        const json = schemaFieldToJson(field, values[field.name]);
+        if (json !== undefined) {
+          ui[field.name] = json;
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed) {
+      break;
+    }
+  }
+
+  for (const field of fields) {
+    if (evaluateFieldCondition(field.visibleWhen, ui, data, user)) {
+      result.add(field.name);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Names of the currently required fields in `fields` (`required: true` or `requiredWhen` evaluating to `true`,
+ * excluding disabled fields) given the live editor `values`, optional workflow/page `data`, and optional `user`.
+ */
+export function schemaRequiredFields(
+  fields: readonly SchemaField[],
+  values: Record<string, SchemaFieldValue>,
+  data?: WorkflowData | null,
+  user?: ExpressionUserInfo | ExpressionUser | null,
+): Set<string> {
+  const ui = schemaFormValue(fields, values, data, user);
+  const disabled = schemaDisabledFields(fields, values, data, user);
+  const result = new Set<string>();
+  for (const field of fields) {
+    if (disabled.has(field.name)) {
+      continue;
+    }
+
+    if (field.required) {
+      result.add(field.name);
+      continue;
+    }
+
+    const reqWhen = field.requiredWhen ?? null;
+    if (reqWhen !== null && reqWhen.trim() !== '' && evaluateFieldCondition(reqWhen, ui, data, user)) {
+      result.add(field.name);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Names of the currently disabled fields in `fields` (`disabledWhen` evaluating to `true`)
+ * given the live editor `values`, optional workflow/page `data`, and optional `user`.
+ */
+export function schemaDisabledFields(
+  fields: readonly SchemaField[],
+  values: Record<string, SchemaFieldValue>,
+  data?: WorkflowData | null,
+  user?: ExpressionUserInfo | ExpressionUser | null,
+): Set<string> {
+  const result = new Set<string>();
+  if (!fields.some(f => f.disabledWhen !== null && f.disabledWhen !== undefined && f.disabledWhen.trim() !== '')) {
+    return result;
+  }
+
+  const ui = schemaFormValue(fields, values, data, user);
+  for (const field of fields) {
+    const disWhen = field.disabledWhen ?? null;
+    if (disWhen !== null && disWhen.trim() !== '' && evaluateFieldCondition(disWhen, ui, data, user)) {
+      result.add(field.name);
+    }
+  }
+
+  return result;
+}
+
+/** Validates all visible fields; returns the messages by field name (empty when valid). */
+export function validateSchemaFields(
+  fields: readonly SchemaField[],
+  values: Record<string, SchemaFieldValue>,
+  data?: WorkflowData | null,
+  user?: ExpressionUserInfo | ExpressionUser | null,
+): Record<string, string> {
+  const visible = schemaVisibleFields(fields, values, data, user);
+  const required = schemaRequiredFields(fields, values, data, user);
   const errors: Record<string, string> = {};
   for (const field of fields) {
-    const error = validateSchemaField(field, values[field.name]);
+    if (!visible.has(field.name)) {
+      continue;
+    }
+
+    const effectiveField = required.has(field.name) === field.required ? field : { ...field, required: required.has(field.name) };
+    const error = validateSchemaField(effectiveField, values[field.name]);
     if (error !== null) {
       errors[field.name] = error;
     }
@@ -867,10 +1039,20 @@ export function schemaFieldToJson(field: SchemaField, value: SchemaFieldValue | 
   }
 }
 
-/** Builds the request body (empty optional fields are omitted). */
-export function schemaFormValue(fields: readonly SchemaField[], values: Record<string, SchemaFieldValue>): WorkflowData {
+/** Builds the request body of visible fields (empty optional fields and hidden fields are omitted). */
+export function schemaFormValue(
+  fields: readonly SchemaField[],
+  values: Record<string, SchemaFieldValue>,
+  data?: WorkflowData | null,
+  user?: ExpressionUserInfo | ExpressionUser | null,
+): WorkflowData {
+  const visible = schemaVisibleFields(fields, values, data, user);
   const result: WorkflowData = {};
   for (const field of fields) {
+    if (!visible.has(field.name)) {
+      continue;
+    }
+
     const json = schemaFieldToJson(field, values[field.name]);
     if (json !== undefined) {
       result[field.name] = json;

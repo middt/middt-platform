@@ -286,7 +286,7 @@ public sealed partial class WorkflowEngine
         try
         {
             var startInput = WorkflowHttpInput.EnsureEnvelope(request.Data);
-            ValidateInput(definition.Start, startInput);
+            ValidateInput(definition.Start, startInput, data: null, user: user);
             ApplySimulatedInput(definition.Start, workingData, startInput);
             await ExecuteSimulatedTasksAsync(definition.Start.OnExecute, definition, simInstance, workingData, startInput, user, request.TaskMocks, cancellationToken);
             executedTransitions.Add(definition.Start.Key);

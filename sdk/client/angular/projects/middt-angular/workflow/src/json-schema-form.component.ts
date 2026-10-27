@@ -4,8 +4,18 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInput, MatInputModule } from '@angular/material/input';
 import { MatSelect, MatSelectModule } from '@angular/material/select';
-import { schemaFields, schemaFormValue, schemaInitialValues, schemaLookupOptions, validateSchemaField, validateSchemaFields } from '@middt/ui-core';
-import type { SchemaField, SchemaFieldValue, SchemaLookupOption, WorkflowData } from '@middt/ui-core';
+import {
+  schemaDisabledFields,
+  schemaFields,
+  schemaFormValue,
+  schemaInitialValues,
+  schemaLookupOptions,
+  schemaRequiredFields,
+  schemaVisibleFields,
+  validateSchemaFields,
+} from '@middt/ui-core';
+import type { ExpressionUser, ExpressionUserInfo, SchemaField, SchemaFieldValue, SchemaLookupOption, WorkflowData } from '@middt/ui-core';
+import { AuthService } from '@middt/angular/core';
 import { UiLookupCache } from '@middt/angular/ui';
 import { JSF_STYLES } from './workflow-styles';
 
@@ -31,12 +41,15 @@ export const LOOKUP_LOAD_ERROR = 'Liste yüklenemedi.';
         <p class="middt-jsf-empty">{{ emptyText() }}</p>
       }
       @for (field of fields(); track field.name) {
+        @if (visibleFields().has(field.name)) {
         @let id = idPrefix() + '-' + field.name;
         @let error = errors()[field.name];
+        @let isRequired = requiredFields().has(field.name);
+        @let isDisabled = disabled() || disabledFields().has(field.name);
         <div class="middt-jsf-field" [class.middt-jsf-invalid]="!!error" [attr.data-field]="field.name" [attr.data-lookup]="field.lookup?.entity ?? null">
           @if (field.kind === 'boolean') {
             <div class="middt-jsf-check">
-              <mat-checkbox [id]="id" [checked]="values()[field.name] === true" [disabled]="disabled()"
+              <mat-checkbox [id]="id" [checked]="values()[field.name] === true" [disabled]="isDisabled"
                             [attr.aria-describedby]="error ? id + '-error' : null" (change)="set(field, $event.checked)">
                 <span class="middt-jsf-label">{{ field.title }}</span>
               </mat-checkbox>
@@ -44,15 +57,15 @@ export const LOOKUP_LOAD_ERROR = 'Liste yüklenemedi.';
           } @else {
             <label [for]="id" class="middt-jsf-label">
               {{ field.title }}
-              @if (field.required) {
+              @if (isRequired) {
                 <span class="middt-jsf-required" title="Zorunlu alan">*</span>
               }
             </label>
             <mat-form-field class="middt-jsf-input" subscriptSizing="dynamic">
               @if (field.lookup) {
-                <mat-select [id]="id" [value]="text(field)" [disabled]="disabled()" placeholder="Seçiniz" [aria-label]="field.title"
-                            [required]="field.required" [errorStateMatcher]="matcher(field)" (selectionChange)="set(field, $event.value ?? '')">
-                  @if (!field.required) {
+                <mat-select [id]="id" [value]="text(field)" [disabled]="isDisabled" placeholder="Seçiniz" [aria-label]="field.title"
+                            [required]="isRequired" [errorStateMatcher]="matcher(field)" (selectionChange)="set(field, $event.value ?? '')">
+                  @if (!isRequired) {
                     <mat-option value="">Seçiniz</mat-option>
                   }
                   @for (option of lookupOptions()[field.name]; track option.value) {
@@ -62,17 +75,17 @@ export const LOOKUP_LOAD_ERROR = 'Liste yüklenemedi.';
               } @else {
               @switch (field.kind) {
                 @case ('longText') {
-                  <textarea matInput [id]="id" rows="3" [value]="text(field)" [disabled]="disabled()" [attr.maxlength]="field.maxLength"
-                            [attr.aria-required]="field.required ? 'true' : null" [errorStateMatcher]="matcher(field)" (input)="set(field, $any($event.target).value)"></textarea>
+                  <textarea matInput [id]="id" rows="3" [value]="text(field)" [disabled]="isDisabled" [attr.maxlength]="field.maxLength"
+                            [attr.aria-required]="isRequired ? 'true' : null" [errorStateMatcher]="matcher(field)" (input)="set(field, $any($event.target).value)"></textarea>
                 }
                 @case ('json') {
-                  <textarea matInput [id]="id" rows="4" placeholder="JSON" class="middt-jsf-code" [value]="text(field)" [disabled]="disabled()"
-                            [attr.aria-required]="field.required ? 'true' : null" [errorStateMatcher]="matcher(field)" (input)="set(field, $any($event.target).value)"></textarea>
+                  <textarea matInput [id]="id" rows="4" placeholder="JSON" class="middt-jsf-code" [value]="text(field)" [disabled]="isDisabled"
+                            [attr.aria-required]="isRequired ? 'true' : null" [errorStateMatcher]="matcher(field)" (input)="set(field, $any($event.target).value)"></textarea>
                 }
                 @case ('enum') {
-                  <mat-select [id]="id" [value]="text(field)" [disabled]="disabled()" placeholder="Seçiniz" [aria-label]="field.title"
-                              [required]="field.required" [errorStateMatcher]="matcher(field)" (selectionChange)="set(field, $event.value ?? '')">
-                    @if (!field.required) {
+                  <mat-select [id]="id" [value]="text(field)" [disabled]="isDisabled" placeholder="Seçiniz" [aria-label]="field.title"
+                              [required]="isRequired" [errorStateMatcher]="matcher(field)" (selectionChange)="set(field, $event.value ?? '')">
+                    @if (!isRequired) {
                       <mat-option value="">Seçiniz</mat-option>
                     }
                     @for (option of field.enumValues; track option) {
@@ -81,26 +94,26 @@ export const LOOKUP_LOAD_ERROR = 'Liste yüklenemedi.';
                   </mat-select>
                 }
                 @case ('date') {
-                  <input matInput type="date" [id]="id" [value]="text(field)" [disabled]="disabled()" [attr.aria-required]="field.required ? 'true' : null"
+                  <input matInput type="date" [id]="id" [value]="text(field)" [disabled]="isDisabled" [attr.aria-required]="isRequired ? 'true' : null"
                          [errorStateMatcher]="matcher(field)" (input)="set(field, $any($event.target).value)" (change)="set(field, $any($event.target).value)" />
                 }
                 @case ('dateTime') {
-                  <input matInput type="datetime-local" [id]="id" [value]="text(field)" [disabled]="disabled()" [attr.aria-required]="field.required ? 'true' : null"
+                  <input matInput type="datetime-local" [id]="id" [value]="text(field)" [disabled]="isDisabled" [attr.aria-required]="isRequired ? 'true' : null"
                          [errorStateMatcher]="matcher(field)" (input)="set(field, $any($event.target).value)" (change)="set(field, $any($event.target).value)" />
                 }
                 @case ('number') {
-                  <input matInput type="number" step="any" inputmode="decimal" [id]="id" [value]="text(field)" [disabled]="disabled()"
-                         [attr.min]="field.minimum" [attr.max]="field.maximum" [attr.aria-required]="field.required ? 'true' : null" [errorStateMatcher]="matcher(field)"
+                  <input matInput type="number" step="any" inputmode="decimal" [id]="id" [value]="text(field)" [disabled]="isDisabled"
+                         [attr.min]="field.minimum" [attr.max]="field.maximum" [attr.aria-required]="isRequired ? 'true' : null" [errorStateMatcher]="matcher(field)"
                          (input)="set(field, $any($event.target).value)" />
                 }
                 @case ('integer') {
-                  <input matInput type="number" step="1" inputmode="numeric" [id]="id" [value]="text(field)" [disabled]="disabled()"
-                         [attr.min]="field.minimum" [attr.max]="field.maximum" [attr.aria-required]="field.required ? 'true' : null" [errorStateMatcher]="matcher(field)"
+                  <input matInput type="number" step="1" inputmode="numeric" [id]="id" [value]="text(field)" [disabled]="isDisabled"
+                         [attr.min]="field.minimum" [attr.max]="field.maximum" [attr.aria-required]="isRequired ? 'true' : null" [errorStateMatcher]="matcher(field)"
                          (input)="set(field, $any($event.target).value)" />
                 }
                 @default {
-                  <input matInput [type]="field.format === 'email' ? 'email' : 'text'" [id]="id" [value]="text(field)" [disabled]="disabled()"
-                         [attr.maxlength]="field.maxLength" [attr.aria-required]="field.required ? 'true' : null" [errorStateMatcher]="matcher(field)"
+                  <input matInput [type]="field.format === 'email' ? 'email' : 'text'" [id]="id" [value]="text(field)" [disabled]="isDisabled"
+                         [attr.maxlength]="field.maxLength" [attr.aria-required]="isRequired ? 'true' : null" [errorStateMatcher]="matcher(field)"
                          [attr.autocomplete]="field.format === 'email' ? 'email' : null" (input)="set(field, $any($event.target).value)" />
                 }
               }
@@ -123,6 +136,7 @@ export const LOOKUP_LOAD_ERROR = 'Liste yüklenemedi.';
             <div [id]="id + '-error'" class="middt-jsf-error" role="alert">{{ error }}</div>
           }
         </div>
+        }
       }
     </div>
   `,
@@ -133,6 +147,10 @@ export class MiddtJsonSchemaFormComponent {
   readonly schema = input<WorkflowData | null | undefined>(null);
   /** Initial value (read when the schema changes). */
   readonly value = input<WorkflowData | null | undefined>(null);
+  /** Optional persisted workflow/page data exposed as `data` in `visibleWhen`, `requiredWhen` and `disabledWhen` expressions alongside `ui`. */
+  readonly data = input<WorkflowData | null | undefined>(null);
+  /** Optional user exposed as `user` in form condition expressions; resolved from `AuthService` when omitted. */
+  readonly user = input<ExpressionUserInfo | ExpressionUser | null | undefined>(undefined);
   /** Prefix of the element ids (unique per page when several forms are shown). */
   readonly idPrefix = input('jsf');
   readonly disabled = input(false);
@@ -146,10 +164,24 @@ export class MiddtJsonSchemaFormComponent {
   /** `true` when the schema declares at least one property. */
   readonly hasFields = computed(() => this.fields().length > 0);
 
+  protected readonly effectiveUser = computed<ExpressionUserInfo | ExpressionUser | null>(() => {
+    const explicit = this.user();
+    if (explicit !== undefined) {
+      return explicit;
+    }
+
+    const authUser = this.#auth?.user();
+    return authUser ? { id: authUser.id ?? null, name: authUser.name ?? null, roles: authUser.roles } : null;
+  });
+
   protected readonly values = linkedSignal<SchemaField[], Record<string, SchemaFieldValue>>({
     source: this.fields,
-    computation: fields => untracked(() => schemaInitialValues(this.schema(), fields, this.value())),
+    computation: fields => untracked(() => schemaInitialValues(this.schema(), fields, this.value(), this.data())),
   });
+
+  protected readonly visibleFields = computed<ReadonlySet<string>>(() => schemaVisibleFields(this.fields(), this.values(), this.data(), this.effectiveUser()));
+  protected readonly requiredFields = computed<ReadonlySet<string>>(() => schemaRequiredFields(this.fields(), this.values(), this.data(), this.effectiveUser()));
+  protected readonly disabledFields = computed<ReadonlySet<string>>(() => schemaDisabledFields(this.fields(), this.values(), this.data(), this.effectiveUser()));
 
   protected readonly errors = linkedSignal<SchemaField[], Record<string, string>>({ source: this.fields, computation: () => ({}) });
 
@@ -182,10 +214,12 @@ export class MiddtJsonSchemaFormComponent {
   readonly #matchers = new Map<string, ErrorStateMatcher>();
   readonly #host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly #lookupCache = inject(UiLookupCache);
+  readonly #auth = inject(AuthService, { optional: true });
   private readonly inputs = viewChildren(MatInput);
   private readonly selects = viewChildren(MatSelect);
 
   constructor() {
+    void this.#auth?.load();
     // The inputs are not bound to form controls: refresh their error state (red outline, mat-error, aria-invalid) explicitly.
     afterRenderEffect(() => {
       this.errors();
@@ -199,29 +233,30 @@ export class MiddtJsonSchemaFormComponent {
     });
   }
 
-  /** Validates all fields, shows the errors and returns `true` when the value is valid. */
+  /** Validates all visible fields, shows the errors and returns `true` when the value is valid. */
   validate(): boolean {
     this.#validated.set(true);
-    const errors = validateSchemaFields(this.fields(), this.values());
+    const errors = validateSchemaFields(this.fields(), this.values(), this.data(), this.effectiveUser());
     this.errors.set(errors);
     return Object.keys(errors).length === 0;
   }
 
-  /** Current value (empty optional fields are omitted). */
+  /** Current value of visible fields (empty optional fields and hidden fields are omitted). */
   getValue(): WorkflowData {
-    return schemaFormValue(this.fields(), this.values());
+    return schemaFormValue(this.fields(), this.values(), this.data(), this.effectiveUser());
   }
 
   /** Clears the entered values and errors (back to `value`, else the schema defaults). */
   reset(value: WorkflowData | null = null): void {
     this.#validated.set(false);
-    this.values.set(schemaInitialValues(this.schema(), this.fields(), value));
+    this.values.set(schemaInitialValues(this.schema(), this.fields(), value, this.data()));
     this.errors.set({});
   }
 
-  /** Moves the keyboard focus to the first field (e.g. when a wizard step form is shown). */
+  /** Moves the keyboard focus to the first visible field (e.g. when a wizard step form is shown). */
   focusFirst(): void {
-    const first = this.fields()[0];
+    const visible = this.visibleFields();
+    const first = this.fields().find(f => visible.has(f.name));
     if (first === undefined) {
       return;
     }
@@ -264,16 +299,20 @@ export class MiddtJsonSchemaFormComponent {
   protected set(field: SchemaField, value: SchemaFieldValue): void {
     this.values.update(values => ({ ...values, [field.name]: value }));
     if (this.#validated()) {
-      const error = validateSchemaField(field, value);
+      this.errors.set(validateSchemaFields(this.fields(), this.values(), this.data(), this.effectiveUser()));
+    } else {
+      const visible = this.visibleFields();
       this.errors.update(errors => {
+        let changed = false;
         const next = { ...errors };
-        if (error === null) {
-          delete next[field.name];
-        } else {
-          next[field.name] = error;
+        for (const key of Object.keys(next)) {
+          if (!visible.has(key)) {
+            delete next[key];
+            changed = true;
+          }
         }
 
-        return next;
+        return changed ? next : errors;
       });
     }
 

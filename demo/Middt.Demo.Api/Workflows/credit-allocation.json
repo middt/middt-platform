@@ -13,7 +13,9 @@
       "customerKey": { "type": "string", "title": "Müşteri Anahtarı", "x-search": true },
       "amount": { "type": "number", "title": "Kredi Tutarı", "x-search": true },
       "termMonths": { "type": "integer", "title": "Vade (Ay)", "x-search": true },
+      "collateralType": { "type": "string", "title": "Teminat Türü", "enum": [ "Teminatsız", "Gayrimenkul İpoteği", "Nakdi Blokaj", "KGF Kefaleti" ], "x-list": false },
       "collateralAmount": { "type": "number", "title": "Teminat Tutarı" },
+      "appraisalReportNo": { "type": "string", "title": "Ekspertiz Rapor No", "x-list": false },
       "ltvRatio": { "type": "number", "title": "Kredi / Teminat Oranı (%)" },
       "iban": {
         "type": "string",
@@ -63,7 +65,7 @@
       "schema": {
         "type": "object",
         "additionalProperties": false,
-        "required": [ "customerKey", "amount", "termMonths", "collateralAmount", "iban" ],
+        "required": [ "customerKey", "amount", "termMonths", "iban" ],
         "properties": {
           "customerKey": {
             "type": "string",
@@ -77,7 +79,28 @@
           },
           "amount": { "type": "number", "minimum": 10000, "maximum": 10000000, "title": "Talep Edilen Kredi (₺)", "default": 350000 },
           "termMonths": { "type": "integer", "minimum": 3, "maximum": 60, "title": "Vade (Ay)", "default": 24 },
-          "collateralAmount": { "type": "number", "minimum": 0, "title": "Teminat Değeri (₺)", "default": 500000 },
+          "collateralType": {
+            "type": "string",
+            "title": "Teminat Türü",
+            "enum": [ "Teminatsız", "Gayrimenkul İpoteği", "Nakdi Blokaj", "KGF Kefaleti" ],
+            "default": "Gayrimenkul İpoteği"
+          },
+          "collateralAmount": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Teminat Değeri (₺)",
+            "default": 500000,
+            "disabledWhen": "ui.collateralType == \"Teminatsız\"",
+            "requiredWhen": "ui.collateralType != \"Teminatsız\""
+          },
+          "appraisalReportNo": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Gayrimenkul Ekspertiz Rapor No",
+            "default": "EKS-2026-1042",
+            "visibleWhen": "ui.collateralType == \"Gayrimenkul İpoteği\"",
+            "requiredWhen": "ui.collateralType == \"Gayrimenkul İpoteği\" && ui.amount >= 1000000"
+          },
           "iban": { "type": "string", "minLength": 10, "maxLength": 34, "title": "Aktarım IBAN", "default": "TR330006100519786457841326" },
           "requireUnderwriting": { "type": "boolean", "title": "500.000 ₺ Üzerinde Alt Akış Uzman Onayı Bekle", "default": false }
         }
@@ -209,7 +232,29 @@
               "additionalProperties": false,
               "required": [ "collateralAmount" ],
               "properties": {
-                "collateralAmount": { "type": "number", "minimum": 1, "title": "Yeni Teminat Değeri (₺)", "default": 750000 }
+                "collateralType": {
+                  "type": "string",
+                  "title": "Teminat Türü",
+                  "enum": [ "Teminatsız", "Gayrimenkul İpoteği", "Nakdi Blokaj", "KGF Kefaleti" ],
+                  "default": "Gayrimenkul İpoteği"
+                },
+                "collateralAmount": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "Yeni Teminat Değeri (₺)",
+                  "default": 750000,
+                  "disabledWhen": "ui.collateralType == \"Teminatsız\"",
+                  "requiredWhen": "ui.collateralType != \"Teminatsız\""
+                },
+                "appraisalReportNo": {
+                  "type": "string",
+                  "maxLength": 50,
+                  "title": "Gayrimenkul Ekspertiz Rapor No",
+                  "default": "EKS-2026-1042",
+                  "visibleWhen": "ui.collateralType == \"Gayrimenkul İpoteği\"",
+                  "requiredWhen": "ui.collateralType == \"Gayrimenkul İpoteği\" && data.amount >= 1000000",
+                  "disabledWhen": "data.amount >= 2000000 && !user.IsInRole(\"manager\")"
+                }
               }
             }
           }

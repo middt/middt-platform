@@ -26,7 +26,10 @@ public static class UiExpressions
     /// <summary>Workflow instance (<c>instance.state</c>, <c>instance.key</c>, ...).</summary>
     public const string Instance = "instance";
 
-    public static IReadOnlyList<string> Variables { get; } = [Data, Query, Row, Record, Instance];
+    /// <summary>Live in-memory values of an active form before submission (<c>ui.segment</c>, <c>ui.amount</c>, ...).</summary>
+    public const string Ui = "ui";
+
+    public static IReadOnlyList<string> Variables { get; } = [Data, Query, Row, Record, Instance, Ui];
 
     /// <summary>
     /// Shared evaluator of the <see cref="PortableExpression">portable expression language</see> (parsed expressions are

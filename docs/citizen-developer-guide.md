@@ -253,6 +253,73 @@ Kullanıcı **"Yeni Başlat"** butonuna bastığında açılan form `start.input
 - **`input.rule` & `input.ruleMessage`**: Form gönderildiğinde sunucu tarafında çalışan iş kuralı. Sağlanmazsa kullanıcıya `ruleMessage` gösterilir.
 - **`input.sensitive`**: `["cardPin", "cvv"]` gibi tanımlanan alanlar yalnızca görev çalışırken bellekte kullanılır; veritabanına ve tarihçeye **asla** kaydedilmez.
 
+#### Canlı Form Alanı Kuralları (`visibleWhen`, `requiredWhen`, `disabledWhen` ve `ui.<alan>`)
+
+Hem iş akışı başlangıç/geçiş formlarında (`input.schema.properties`) hem de ekran tasarımlarındaki (`Layouts/*.json`) tablo arama (`grid.search`) ve CRUD formlarında (`grid.form`), form henüz açıkken (**"Kaydet / Gönder"** butonuna basılmadan önce) kullanıcının seçtiği veya yazdığı değerlere göre diğer alanları **anlık olarak** gizleyip gösterebilir, zorunlu yapabilir veya pasifleştirebilirsiniz:
+
+| Özellik | Takma Ad (JSON Schema) | Açıklama |
+|---|---|---|
+| **`visibleWhen`** | `x-visibleWhen` | İfade `true` olduğunda alan ekranda gösterilir; `false` olduğunda alan gizlenir, gönderilen veriden çıkarılır ve doğrudan API çağrısıyla gönderilse bile sunucuda (`JsonSchemaValidator`) otomatik olarak **silinir** (doğrulanmamış gizli veri kayda giremez). |
+| **`requiredWhen`** | `x-requiredWhen` | İfade `true` olduğunda (alan gizli veya pasif değilse) alan dinamik olarak **zorunlu (`*`)** hale gelir; hem arayüzde hem sunucu doğrulamasında zorunlu tutulur. |
+| **`disabledWhen`** | `x-disabledWhen` | İfade `true` olduğunda alan mevcut `data.<alan>` (veya `default`) değeriyle doldurulur, arayüzde salt-okunur / pasif (`disabled`) hale gelir, zorunluluk kontrolünden muaf tutulur ve **sunucuda da korunur** (doğrudan API ile değiştirilmeye çalışılırsa `is disabled` hatasıyla reddedilir). |
+
+> [!TIP]
+> **`ui.<alan>`, `data.<alan>` ve `user` Nasıl Çalışır?**
+> - **`ui.<alan>`**: Açık olan formun içinde kullanıcının **o an seçtiği veya yazdığı anlık (canlı) bileşen değeridir** (henüz "Kaydet / Gönder"e basılmamıştır).
+> - **`data.<alan>`**: İş akışı kaydının veritabanında **kayıtlı olan mevcut verisidir** (henüz kayıt oluşmamış `start` formunda otomatik olarak `ui.<alan>` değerine düşer).
+> - **`user`**: Oturum açmış kullanıcının kimlik ve rol bilgisidir (`user.IsInRole("manager")`, `user.Name`); Blazor, Angular ve sunucu (`JsonSchemaValidator`) katmanlarının tamamında aynı oturum kullanıcısıyla (oturum yoksa anonim kullanıcıyla) değerlendirilir.
+
+**Örnek 1 (`customer-onboarding.json`): Segment seçimine göre "Vergi Dairesi" alanını anlık gösterme ve zorunlu kılma**
+```json
+"segment": {
+  "type": "string",
+  "title": "Müşteri Segmenti",
+  "enum": [ "Bireysel", "KOBİ", "Kurumsal" ],
+  "default": "Bireysel"
+},
+"taxOffice": {
+  "type": "string",
+  "maxLength": 100,
+  "title": "Vergi Dairesi",
+  "default": "Büyük Mükellefler V.D.",
+  "visibleWhen": "ui.segment != \"Bireysel\"",
+  "requiredWhen": "ui.segment == \"Kurumsal\"",
+  "disabledWhen": "data.segment == \"Kurumsal\" && !user.IsInRole(\"manager\")"
+}
+```
+- Kullanıcı formda `segment` açılır kutusunu `"Bireysel"` seçtiğinde `taxOffice` alanı gizlenir (`visibleWhen`).
+- `"KOBİ"` seçtiğinde `taxOffice` alanı anında ekrana gelir fakat isteğe bağlıdır.
+- `"Kurumsal"` seçtiğinde `taxOffice` alanı hem görünür hem de otomatik olarak **zorunlu (`*`)** olur (`requiredWhen`).
+- Mevcut kayıt zaten `"Kurumsal"` ise (`data.segment == "Kurumsal"`) ve kullanıcı `manager` rolünde değilse alan pasif (`disabledWhen`) gelir.
+
+**Örnek 2 (`credit-allocation.json`): Teminat türüne ve kredi tutarına göre dinamik pasifleştirme, görünürlük ve zorunluluk**
+```json
+"collateralType": {
+  "type": "string",
+  "title": "Teminat Türü",
+  "enum": [ "Teminatsız", "Gayrimenkul İpoteği", "Nakdi Blokaj", "KGF Kefaleti" ],
+  "default": "Gayrimenkul İpoteği"
+},
+"collateralAmount": {
+  "type": "number",
+  "minimum": 0,
+  "title": "Teminat Değeri (₺)",
+  "default": 500000,
+  "disabledWhen": "ui.collateralType == \"Teminatsız\"",
+  "requiredWhen": "ui.collateralType != \"Teminatsız\""
+},
+"appraisalReportNo": {
+  "type": "string",
+  "maxLength": 50,
+  "title": "Gayrimenkul Ekspertiz Rapor No",
+  "default": "EKS-2026-1042",
+  "visibleWhen": "ui.collateralType == \"Gayrimenkul İpoteği\"",
+  "requiredWhen": "ui.collateralType == \"Gayrimenkul İpoteği\" && ui.amount >= 1000000"
+}
+```
+- Kullanıcı `collateralType` olarak `"Teminatsız"` seçtiği anda `collateralAmount` kutusu pasifleşir (`disabledWhen`) ve zorunluluğu kalkar.
+- `"Gayrimenkul İpoteği"` seçildiğinde `appraisalReportNo` alanı açılır; eğer talep edilen kredi (`ui.amount`) `1.000.000 ₺` ve üzerine çıkarsa ekspertiz rapor numarası anında zorunlu hale gelir.
+
 ---
 
 ### 3.4. Durumlar (`states`), Sihirbaz Adımları ve Ekran Bağlama
@@ -1159,8 +1226,8 @@ Middt Platform'da iki yerde ifade kullanılır:
 
 | Kapsam | Kullanıldığı Yerler | Erişilebilen Değişkenler | Örnek |
 |---|---|---|---|
-| **Taşınabilir UI İfadeleri** (.NET & TypeScript ortak) | `Layouts/*.json` (`{{ }}` şablonları, `visibleWhen`), `Agents/Tools/*.json` (`output` şablonları) | `data`, `instance` (`id`, `key`, `state`, `stateTitle`, `workflow`, `status`, `agents`, `agentRuns`, `toolCalls`), `row` (liste/tablo satırı), `user` (`name`, `isAuthenticated`, `roles`), `query` | `"visibleWhen": "instance.state == \"approved\" && data.amount > 10000"` |
-| **Sunucu İş Akışı İfadeleri** | `Workflows/*.json` (`transition.rule`, `input.rule`, `set.values`, `http` URL/body şablonları) | `data`, `input`, `instance` (`Id`, `Key`, `State`, `Workflow`, `Creator`, `PreviousUser`, `Agents`), `user` (`Id`, `Name`, `Roles`, `HasRole("manager")`), `now`, `Math` | `"rule": "data.amount > 50000 && user.HasRole(\"manager\")"` |
+| **Taşınabilir UI İfadeleri** (.NET & TypeScript ortak) | `Layouts/*.json` (`{{ }}` şablonları, `visibleWhen`, `requiredWhen`, `disabledWhen`), `Workflows/*.json` form şeması alanları (`visibleWhen`, `requiredWhen`, `disabledWhen`), `Agents/Tools/*.json` (`output` şablonları) | `ui` (açık formdaki veya satır içi sihirbaz adımındaki **anlık bileşen değerleri**: `ui.segment`, `ui.amount`), `data` (kayıtlı akış verisi), `instance` (`id`, `key`, `state`, `stateTitle`, `workflow`, `status`, `agents`, `agentRuns`, `toolCalls`), `row` (liste/tablo satırı), `record`, `user` (`Name`, `Id`, `Roles`, `IsInRole("manager")`), `query`, `now`, `Math` | `"visibleWhen": "ui.segment != \"Bireysel\""`<br>`"requiredWhen": "ui.segment == \"Kurumsal\""`<br>`"disabledWhen": "ui.collateralType == \"Teminatsız\""` |
+| **Sunucu İş Akışı İfadeleri** | `Workflows/*.json` (`transition.rule`, `input.rule`, `set.values`, `http` URL/body şablonları) | `data`, `input`, `instance` (`Id`, `Key`, `State`, `Workflow`, `Creator`, `PreviousUser`, `Agents`), `user` (`Id`, `Name`, `Roles`, `IsInRole("manager")`), `now`, `Math` | `"rule": "data.amount > 50000 && user.IsInRole(\"manager\")"` |
 
 **Sık Kullanılan İfade Örnekleri**:
 - Sayı formatlama (UI): `{"label": "Tutar", "value": "{{ data.amount }}", "format": "N2"}`
@@ -1168,6 +1235,7 @@ Middt Platform'da iki yerde ifade kullanılır:
 - Boş değer kontrolü (Null-coalescing): `{{ data.customerName ?? "Belirtilmedi" }}`
 - Koşullu metin (Ternary): `{{ data.amount > 500000 ? "Yüksek Tutar" : "Standart" }}`
 - Dizi eleman sayısı: `instance.toolCalls != null && instance.toolCalls.Count > 0`
+- Açık formdaki anlık değere göre alan veya uyarı gösterme (`ui.<alan>`): `"visibleWhen": "ui.conditionalApproval == true"`
 
 ---
 
@@ -1188,7 +1256,7 @@ Tüm ekranlar `demo/Middt.Demo.Api/Layouts/*.json` altında tanımlanır ve `spe
 | `text` | Paragraf veya başlık metni | `text`, `variant` (`body`, `lead`, `muted`, `code`) |
 | `action` | İş akışı geçişini tetikleyen buton | `transition` (geçiş `key`'i), `text`, `style`, `confirm` |
 | `kpi-row` | Sayfa üstü özet KPI sayaç kartları | `entity`, `cards`: `[{ "label": "...", "aggregate": "count\|sum\|avg", "field": "amount", "filter": { ... } }]` |
-| `data-grid` | Sunucu sayfalamalı, sıralamalı, aramalı tablo | `entity`, `pageSize`, `columns`, `searchFields`, `createFields`, `editFields`, `deleteConfirm` |
+| `grid` *(veya `data-grid`)* | Sunucu sayfalamalı, sıralamalı, aramalı tablo | `entity`, `pageSize`, `columns`, `search` (`visibleWhen`, `disabledWhen` destekli arama alanları), `form` (`visibleWhen`, `requiredWhen`, `disabledWhen` destekli CRUD form alanları) |
 | `crud-page` | KPI + Arama + Tablo birleşik yönetim ekranı | `title`, `entity`, `kpis`, `columns`, `fields` |
 | `layout` | Başka bir layout'u alt bileşen olarak gömme | `key` (ör. `{"widget": "layout", "key": "workflow-footer"}`) |
 

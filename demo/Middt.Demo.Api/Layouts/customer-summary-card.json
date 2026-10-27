@@ -3,7 +3,7 @@
   "key": "customer-summary-card",
   "title": "Müşteri Kimlik & Profil Kartı (Reusable Widget Grubu)",
   "kind": "view",
-  "version": 1,
+  "version": 2,
   "body": [
     {
       "widget": "section",
@@ -17,7 +17,9 @@
           "items": [
             { "label": "T.C. Kimlik / Vergi No", "value": "{{ data.identityNumber }}", "visibleWhen": "data.identityNumber != null" },
             { "label": "Müşteri Segmenti", "value": "{{ data.segment }}", "visibleWhen": "data.segment != null" },
+            { "label": "Vergi Dairesi", "value": "{{ data.taxOffice }}", "visibleWhen": "data.taxOffice != null" },
             { "label": "Risk Seviyesi", "value": "{{ data.riskLevel }}", "visibleWhen": "data.riskLevel != null" },
+            { "label": "Şartlı Onay Koşulu", "value": "{{ data.conditionDetails }}", "visibleWhen": "data.conditionalApproval == true && data.conditionDetails != null" },
             { "label": "Aylık Gelir / Ciro (₺)", "value": "{{ data.monthlyIncome }}", "format": "N2", "visibleWhen": "data.monthlyIncome != null" },
             { "label": "E-posta", "value": "{{ data.email }}", "visibleWhen": "data.email != null" },
             { "label": "Telefon", "value": "{{ data.phone }}", "visibleWhen": "data.phone != null" },

@@ -69,7 +69,7 @@ that receives the node and its `UiRenderContext`.
 
 ## The expression language
 
-Variables of layouts: `data`, `query`, `row`, `record`, `instance`, plus `user` (`Name`, `Id`, `Roles`, `IsInRole(r)`),
+Variables of layouts and forms: `data`, `query`, `row`, `record`, `instance`, `ui` (live in-memory values of an open form or inline wizard step before submit, used by `visibleWhen`, `requiredWhen`, and `disabledWhen`), plus `user` (`Name`, `Id`, `Roles`, `IsInRole(r)`),
 `now` (ISO UTC text) and `Math`. Operators `! - * / % + < <= > >= == != && || ?? ?:`; methods `Contains StartsWith EndsWith
 ToUpper ToLower Trim`, array `Contains`, `Math.Round(x[, digits]) Abs Floor Ceiling Min Max`. Unknown variables and methods
 are syntax errors (`validate`), evaluation never throws (missing members, wrong types, division by zero → `null`).
@@ -95,4 +95,4 @@ in `timeZone` (default: the browser's), dates without a zone keep their wall clo
 - Numbers without a format: the original JSON text (`12.50`) is not available after `JSON.parse`, so `12,5` is shown.
 - JSON text of objects/arrays is `JSON.stringify` (the C# evaluator matches it; edge cases such as integer-like keys,
   which JavaScript orders first, differ).
-- The default user of an `ExpressionContext` is anonymous here; C# defaults to a system user that passes every role check.
+- `UiRenderContext`, `UiField`, `JsonSchemaForm`, and `JsonSchemaValidator` default to an anonymous user (`ExpressionUser.Anonymous`) in both TypeScript and C# when no user is supplied; raw `new ExpressionContext()` in C# server workflow tasks defaults to a system user (`IsSystem = true`).

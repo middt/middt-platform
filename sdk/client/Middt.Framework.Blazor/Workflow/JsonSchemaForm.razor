@@ -1,6 +1,7 @@
 @namespace Middt.Framework.Blazor.Workflow
 
 <div class="middt-jsf">
+    @{ var visibleFields = GetVisibleFieldNames(); }
     @if (fields.Count == 0)
     {
         @if (!string.IsNullOrEmpty(EmptyText))
@@ -10,13 +11,20 @@
     }
     @foreach (var field in fields)
     {
+        if (!visibleFields.Contains(field.Name))
+        {
+            continue;
+        }
+
         var id = FieldId(field);
         var errorId = $"{id}-error";
+        var isRequired = IsFieldRequired(field);
+        var isDisabled = Disabled || IsFieldDisabled(field);
         <div class="middt-jsf-field @(field.Error is null ? null : "middt-jsf-invalid")" data-field="@field.Name" data-lookup="@field.Lookup?.Entity">
             @if (field.Kind == FieldKind.Boolean)
             {
                 <div class="middt-jsf-check">
-                    <RadzenCheckBox @ref="inputs[field.Name]" TValue="bool" Name="@id" InputAttributes="@AriaLabel(field)" Value="@field.BoolValue" Disabled="@Disabled"
+                    <RadzenCheckBox @ref="inputs[field.Name]" TValue="bool" Name="@id" InputAttributes="@AriaLabel(field)" Value="@field.BoolValue" Disabled="@isDisabled"
                                     ValueChanged="@(v => OnFieldChanged(field, () => field.BoolValue = v))" />
                     <label for="@id" class="middt-jsf-label">@field.Title</label>
                 </div>
@@ -25,7 +33,7 @@
             {
                 <label for="@id" class="middt-jsf-label">
                     @field.Title
-                    @if (field.Required)
+                    @if (isRequired)
                     {
                         <span class="middt-jsf-required" title="Zorunlu alan">*</span>
                     }
@@ -33,18 +41,18 @@
                 @switch (field.Kind)
                 {
                     case FieldKind.LongText:
-                        <RadzenTextArea @ref="inputs[field.Name]" Name="@id" id="@id" Value="@field.TextValue" Disabled="@Disabled" Rows="3" MaxLength="@field.MaxLength"
-                                        aria-required="@(field.Required ? "true" : null)" aria-invalid="@(field.Error is null ? null : "true")" aria-describedby="@(field.Error is null ? null : errorId)"
+                        <RadzenTextArea @ref="inputs[field.Name]" Name="@id" id="@id" Value="@field.TextValue" Disabled="@isDisabled" Rows="3" MaxLength="@field.MaxLength"
+                                        aria-required="@(isRequired ? "true" : null)" aria-invalid="@(field.Error is null ? null : "true")" aria-describedby="@(field.Error is null ? null : errorId)"
                                         ValueChanged="@(v => OnFieldChanged(field, () => field.TextValue = v))" class="middt-jsf-input" />
                         break;
                     case FieldKind.Json:
-                        <RadzenTextArea @ref="inputs[field.Name]" Name="@id" id="@id" Value="@field.TextValue" Disabled="@Disabled" Rows="4" Placeholder="JSON"
-                                        aria-required="@(field.Required ? "true" : null)" aria-invalid="@(field.Error is null ? null : "true")" aria-describedby="@(field.Error is null ? null : errorId)"
+                        <RadzenTextArea @ref="inputs[field.Name]" Name="@id" id="@id" Value="@field.TextValue" Disabled="@isDisabled" Rows="4" Placeholder="JSON"
+                                        aria-required="@(isRequired ? "true" : null)" aria-invalid="@(field.Error is null ? null : "true")" aria-describedby="@(field.Error is null ? null : errorId)"
                                         ValueChanged="@(v => OnFieldChanged(field, () => field.TextValue = v))" class="middt-jsf-input middt-jsf-code" />
                         break;
                     case FieldKind.Enum:
-                        <RadzenDropDown @ref="inputs[field.Name]" TValue="string" Name="@id" InputAttributes="@AriaLabel(field)" Data="@field.EnumValues" Value="@field.TextValue" Disabled="@Disabled"
-                                        AllowClear="@(!field.Required)" Placeholder="Seçiniz"
+                        <RadzenDropDown @ref="inputs[field.Name]" TValue="string" Name="@id" InputAttributes="@AriaLabel(field)" Data="@field.EnumValues" Value="@field.TextValue" Disabled="@isDisabled"
+                                        AllowClear="@(!isRequired)" Placeholder="Seçiniz"
                                         aria-describedby="@(field.Error is null ? null : errorId)"
                                         ValueChanged="@(v => OnFieldChanged(field, () => field.TextValue = v))" class="middt-jsf-input" />
                         break;
@@ -52,7 +60,7 @@
                         var lookup = LookupStateOf(field);
                         var lookupOptions = LookupOptions(field, lookup);
                         <RadzenDropDown @ref="inputs[field.Name]" TValue="string" Name="@id" InputAttributes="@AriaLabel(field)" Data="@lookupOptions" TextProperty="Text" ValueProperty="Key"
-                                        Value="@field.TextValue" Disabled="@Disabled" AllowClear="@(!field.Required)" Placeholder="Seçiniz"
+                                        Value="@field.TextValue" Disabled="@isDisabled" AllowClear="@(!isRequired)" Placeholder="Seçiniz"
                                         AllowFiltering="@(lookupOptions.Count > 10)" FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive"
                                         aria-describedby="@(field.Error is null ? null : errorId)"
                                         ValueChanged="@(v => OnFieldChanged(field, () => field.TextValue = v))" class="middt-jsf-input" />
@@ -63,21 +71,21 @@
                         break;
                     case FieldKind.DateTime:
                     case FieldKind.Date:
-                        <RadzenDatePicker @ref="inputs[field.Name]" TValue="DateTime?" Name="@id" InputAttributes="@AriaLabel(field)" Value="@field.DateValue" Disabled="@Disabled"
+                        <RadzenDatePicker @ref="inputs[field.Name]" TValue="DateTime?" Name="@id" InputAttributes="@AriaLabel(field)" Value="@field.DateValue" Disabled="@isDisabled"
                                           ShowTime="@(field.Kind == FieldKind.DateTime)" DateFormat="@(field.Kind == FieldKind.DateTime ? "dd.MM.yyyy HH:mm" : "dd.MM.yyyy")"
                                           aria-describedby="@(field.Error is null ? null : errorId)"
                                           ValueChanged="@(v => OnFieldChanged(field, () => field.DateValue = v))" class="middt-jsf-input" />
                         break;
                     case FieldKind.Number:
                     case FieldKind.Integer:
-                        <RadzenNumeric @ref="inputs[field.Name]" TValue="decimal?" Name="@id" InputAriaLabel="@field.Title" UpAriaLabel="Artır" DownAriaLabel="Azalt" Value="@field.NumberValue" Disabled="@Disabled"
+                        <RadzenNumeric @ref="inputs[field.Name]" TValue="decimal?" Name="@id" InputAriaLabel="@field.Title" UpAriaLabel="Artır" DownAriaLabel="Azalt" Value="@field.NumberValue" Disabled="@isDisabled"
                                        Step="@(field.Kind == FieldKind.Integer ? "1" : "any")"
                                        aria-describedby="@(field.Error is null ? null : errorId)"
                                        ValueChanged="@(v => OnFieldChanged(field, () => field.NumberValue = v))" class="middt-jsf-input" />
                         break;
                     default:
-                        <RadzenTextBox @ref="inputs[field.Name]" Name="@id" id="@id" Value="@field.TextValue" Disabled="@Disabled" MaxLength="@field.MaxLength"
-                                       aria-required="@(field.Required ? "true" : null)" aria-invalid="@(field.Error is null ? null : "true")" aria-describedby="@(field.Error is null ? null : errorId)"
+                        <RadzenTextBox @ref="inputs[field.Name]" Name="@id" id="@id" Value="@field.TextValue" Disabled="@isDisabled" MaxLength="@field.MaxLength"
+                                       aria-required="@(isRequired ? "true" : null)" aria-invalid="@(field.Error is null ? null : "true")" aria-describedby="@(field.Error is null ? null : errorId)"
                                        ValueChanged="@(v => OnFieldChanged(field, () => field.TextValue = v))" class="middt-jsf-input" />
                         break;
                 }

@@ -67,6 +67,12 @@ public sealed class JsonSchemaFormTests
         public JsonObject? Value { get; set; }
 
         [Parameter]
+        public JsonObject? Data { get; set; }
+
+        [Parameter]
+        public Middt.Framework.Expressions.ExpressionUser? User { get; set; }
+
+        [Parameter]
         public Action<JsonSchemaForm>? Captured { get; set; }
 
         protected override void BuildRenderTree(RenderTreeBuilder builder)
@@ -74,8 +80,10 @@ public sealed class JsonSchemaFormTests
             builder.OpenComponent<JsonSchemaForm>(0);
             builder.AddComponentParameter(1, nameof(JsonSchemaForm.Schema), Schema);
             builder.AddComponentParameter(2, nameof(JsonSchemaForm.Value), Value);
-            builder.AddComponentParameter(3, nameof(JsonSchemaForm.IdPrefix), "t");
-            builder.AddComponentReferenceCapture(4, form => Captured?.Invoke((JsonSchemaForm)form));
+            builder.AddComponentParameter(3, nameof(JsonSchemaForm.Data), Data);
+            builder.AddComponentParameter(4, nameof(JsonSchemaForm.User), User);
+            builder.AddComponentParameter(5, nameof(JsonSchemaForm.IdPrefix), "t");
+            builder.AddComponentReferenceCapture(6, form => Captured?.Invoke((JsonSchemaForm)form));
             builder.CloseComponent();
         }
     }
@@ -101,7 +109,13 @@ public sealed class JsonSchemaFormTests
         }
     }
 
-    private static async Task<Rendered> RenderAsync(Dictionary<string, List<JsonObject>> items, string? value = null, bool registerCache = true, string schema = Schema)
+    private static async Task<Rendered> RenderAsync(
+        Dictionary<string, List<JsonObject>> items,
+        string? value = null,
+        bool registerCache = true,
+        string schema = Schema,
+        string? data = null,
+        Middt.Framework.Expressions.ExpressionUser? user = null)
     {
         var collection = new ServiceCollection().AddLogging().AddSingleton<IJSRuntime, NullJsRuntime>().AddSingleton(TimeProvider.System);
         collection.AddRadzenComponents();
@@ -120,6 +134,8 @@ public sealed class JsonSchemaFormTests
             {
                 [nameof(Host.Schema)] = JsonNode.Parse(schema)!.AsObject(),
                 [nameof(Host.Value)] = value is null ? null : JsonNode.Parse(value)!.AsObject(),
+                [nameof(Host.Data)] = data is null ? null : JsonNode.Parse(data)!.AsObject(),
+                [nameof(Host.User)] = user,
                 [nameof(Host.Captured)] = (Action<JsonSchemaForm>)(f => form = f),
             }));
             await output.QuiescenceTask;
@@ -246,4 +262,66 @@ public sealed class JsonSchemaFormTests
 
     [Fact]
     public void Empty_lookup_values_are_omitted() => WorkflowUi.LookupValue(string.Empty, "integer").Should().BeNull();
+
+    [Fact]
+    public async Task VisibleWhen_requiredWhen_and_disabledWhen_react_to_live_ui_values()
+    {
+        const string visibleSchema = """
+            {
+              "type": "object",
+              "required": ["segment"],
+              "properties": {
+                "segment": { "type": "string", "title": "Segment", "enum": ["Bireysel", "KOBİ", "Kurumsal"], "default": "Bireysel" },
+                "taxOffice": {
+                  "type": "string",
+                  "title": "Vergi Dairesi",
+                  "visibleWhen": "ui.segment != \"Bireysel\"",
+                  "requiredWhen": "ui.segment == \"Kurumsal\"",
+                  "disabledWhen": "ui.segment == \"KOBİ\""
+                }
+              }
+            }
+            """;
+
+        await using var renderedBireysel = await RenderAsync(Items(), schema: visibleSchema);
+        var htmlBireysel = await renderedBireysel.HtmlAsync();
+        htmlBireysel.Should().Contain("Segment").And.NotContain("Vergi Dairesi");
+        (await renderedBireysel.InvokeAsync(renderedBireysel.Form.Validate)).Should().BeTrue();
+        (await renderedBireysel.InvokeAsync(renderedBireysel.Form.GetValue)).ToJsonString().Should().Be("""{"segment":"Bireysel"}""");
+
+        await using var renderedKobi = await RenderAsync(Items(), value: """{"segment":"KOBİ"}""", schema: visibleSchema);
+        var htmlKobi = await renderedKobi.HtmlAsync();
+        htmlKobi.Should().Contain("Vergi Dairesi").And.Contain("disabled");
+        (await renderedKobi.InvokeAsync(renderedKobi.Form.Validate)).Should().BeTrue();
+
+        await using var renderedKurumsal = await RenderAsync(Items(), value: """{"segment":"Kurumsal"}""", schema: visibleSchema);
+        var htmlKurumsal = await renderedKurumsal.HtmlAsync();
+        htmlKurumsal.Should().Contain("Segment").And.Contain("Vergi Dairesi");
+        (await renderedKurumsal.InvokeAsync(renderedKurumsal.Form.Validate)).Should().BeFalse();
+        (await renderedKurumsal.HtmlAsync()).Should().Contain("Bu alan zorunludur.");
+
+        // Role-based disabledWhen ("data.segment == \"Kurumsal\" && !user.IsInRole(\"manager\")") disables for standard/anonymous user and enables for manager
+        const string roleSchema = """
+            {
+              "type": "object",
+              "properties": {
+                "taxOffice": {
+                  "type": "string",
+                  "title": "Vergi Dairesi",
+                  "default": "Büyük Mükellefler V.D.",
+                  "disabledWhen": "data.segment == \"Kurumsal\" && !user.IsInRole(\"manager\")"
+                }
+              }
+            }
+            """;
+
+        await using var renderedAnon = await RenderAsync(Items(), schema: roleSchema, data: """{"segment":"Kurumsal","taxOffice":"Kadıköy V.D."}""");
+        var htmlAnon = await renderedAnon.HtmlAsync();
+        htmlAnon.Should().Contain("disabled").And.Contain("Kadıköy V.D.");
+
+        var manager = new Middt.Framework.Expressions.ExpressionUser { Name = "alice", Roles = ["manager"] };
+        await using var renderedManager = await RenderAsync(Items(), schema: roleSchema, data: """{"segment":"Kurumsal","taxOffice":"Kadıköy V.D."}""", user: manager);
+        var htmlManager = await renderedManager.HtmlAsync();
+        htmlManager.Should().NotContain("disabled");
+    }
 }

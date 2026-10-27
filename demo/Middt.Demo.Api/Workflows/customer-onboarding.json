@@ -29,9 +29,12 @@
         "x-mask": { "pattern": "last4", "exceptRoles": [ "manager", "idp-admin" ] }
       },
       "segment": { "type": "string", "title": "Segment", "enum": [ "Bireysel", "KOBİ", "Kurumsal" ], "x-search": true },
+      "taxOffice": { "type": "string", "title": "Vergi Dairesi", "x-list": false, "x-search": true },
       "monthlyIncome": { "type": "number", "title": "Aylık Gelir / Ciro", "x-search": true },
       "kycScore": { "type": "integer", "title": "KYC Skoru" },
       "riskLevel": { "type": "string", "title": "Risk Seviyesi", "enum": [ "Düşük", "Orta", "Yüksek" ], "x-search": true },
+      "conditionalApproval": { "type": "boolean", "title": "Şartlı Onay", "x-list": false },
+      "conditionDetails": { "type": "string", "title": "Şartlı Onay Koşulları", "x-list": false },
       "internalRiskNote": {
         "type": "string",
         "title": "İç Denetim Notu (Sadece Yönetici)",
@@ -58,6 +61,14 @@
             "title": "Müşteri Segmenti",
             "enum": [ "Bireysel", "KOBİ", "Kurumsal" ],
             "default": "Bireysel"
+          },
+          "taxOffice": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Vergi Dairesi",
+            "default": "Büyük Mükellefler V.D.",
+            "visibleWhen": "ui.segment != \"Bireysel\"",
+            "requiredWhen": "ui.segment == \"Kurumsal\""
           },
           "monthlyIncome": { "type": "number", "minimum": 0, "title": "Aylık Gelir / Ciro (₺)", "default": 45000 }
         }
@@ -156,7 +167,15 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "approvalNote": { "type": "string", "maxLength": 300, "title": "Uyum Onay Notu", "default": "MASAK ve KYC kontrolleri uygun bulundu." }
+                "approvalNote": { "type": "string", "maxLength": 300, "title": "Uyum Onay Notu", "default": "MASAK ve KYC kontrolleri uygun bulundu." },
+                "conditionalApproval": { "type": "boolean", "title": "Şartlı Onay (Ek Belge / Teminat Şartı)", "default": false },
+                "conditionDetails": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "title": "Şartlı Onay Koşulları",
+                  "visibleWhen": "ui.conditionalApproval == true",
+                  "requiredWhen": "ui.conditionalApproval == true"
+                }
               }
             },
             "set": {
@@ -231,6 +250,15 @@
                   "title": "Müşteri Segmenti",
                   "enum": [ "Bireysel", "KOBİ", "Kurumsal" ],
                   "default": "Kurumsal"
+                },
+                "taxOffice": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "title": "Vergi Dairesi",
+                  "default": "Büyük Mükellefler V.D.",
+                  "visibleWhen": "ui.segment != \"Bireysel\"",
+                  "requiredWhen": "ui.segment == \"Kurumsal\"",
+                  "disabledWhen": "data.segment == \"Kurumsal\" && !user.IsInRole(\"manager\")"
                 }
               }
             },

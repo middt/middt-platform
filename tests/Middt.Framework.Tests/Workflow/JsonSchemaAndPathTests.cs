@@ -226,6 +226,94 @@ public sealed class JsonSchemaValidatorTests
 
         JsonSchemaValidator.CheckSchema(schema).Should().Equal(error);
     }
+
+    [Fact]
+    public void VisibleWhen_requiredWhen_and_disabledWhen_on_schema_properties_are_validated_and_enforced()
+    {
+        var schema = JsonNode.Parse("""
+            {
+              "type": "object",
+              "required": [ "segment" ],
+              "properties": {
+                "segment": { "type": "string", "enum": [ "Bireysel", "KOBİ", "Kurumsal" ] },
+                "taxOffice": {
+                  "type": "string",
+                  "minLength": 2,
+                  "visibleWhen": "ui.segment != \"Bireysel\"",
+                  "requiredWhen": "ui.segment == \"Kurumsal\"",
+                  "disabledWhen": "ui.segment == \"Bireysel\""
+                }
+              }
+            }
+            """)!.AsObject();
+
+        JsonSchemaValidator.CheckSchema(schema).Should().BeEmpty();
+        JsonSchemaValidator.Validate(JsonNode.Parse("""{ "segment": "Bireysel" }"""), schema).Should().BeEmpty();
+        JsonSchemaValidator.Validate(JsonNode.Parse("""{ "segment": "KOBİ" }"""), schema).Should().BeEmpty();
+        JsonSchemaValidator.Validate(JsonNode.Parse("""{ "segment": "Kurumsal" }"""), schema).Should().Equal("$.taxOffice: is required.");
+        JsonSchemaValidator.Validate(JsonNode.Parse("""{ "segment": "Kurumsal", "taxOffice": "Kadıköy" }"""), schema).Should().BeEmpty();
+
+        // Hidden fields (visibleWhen == false) are stripped from the input object so unvalidated values never leak into instance data
+        var hiddenPayload = JsonNode.Parse("""{ "segment": "Bireysel", "taxOffice": "X" }""")!.AsObject();
+        JsonSchemaValidator.Validate(hiddenPayload, schema).Should().BeEmpty();
+        hiddenPayload.ContainsKey("taxOffice").Should().BeFalse();
+
+        // disabledWhen, data.<field>, and user.IsInRole(...) are evaluated with the caller's user and persisted instance data
+        var roleAndDataSchema = JsonNode.Parse("""
+            {
+              "type": "object",
+              "required": [ "monthlyIncome" ],
+              "properties": {
+                "monthlyIncome": { "type": "number", "minimum": 0 },
+                "segment": { "type": "string", "default": "Kurumsal" },
+                "taxOffice": {
+                  "type": "string",
+                  "minLength": 2,
+                  "visibleWhen": "ui.segment != \"Bireysel\"",
+                  "requiredWhen": "ui.segment == \"Kurumsal\" && user.IsInRole(\"manager\")",
+                  "disabledWhen": "data.segment == \"Kurumsal\" && !user.IsInRole(\"manager\")"
+                }
+              }
+            }
+            """)!.AsObject();
+        var persistedData = JsonNode.Parse("""{ "segment": "Kurumsal", "taxOffice": "Büyük Mükellefler V.D." }""")!.AsObject();
+        var standardUser = new Middt.Framework.Expressions.ExpressionUser { Name = "owner@test.com", Roles = [] };
+        var managerUser = new Middt.Framework.Expressions.ExpressionUser { Name = "alice@test.com", Roles = ["manager"] };
+
+        // Standard user cannot modify disabled taxOffice, but keeping existing value or omitting it succeeds
+        JsonSchemaValidator.Validate(
+            JsonNode.Parse("""{ "monthlyIncome": 180000, "segment": "Kurumsal", "taxOffice": "Kadıköy V.D." }"""),
+            roleAndDataSchema,
+            persistedData,
+            standardUser).Should().Equal("$.taxOffice: is disabled.");
+        JsonSchemaValidator.Validate(
+            JsonNode.Parse("""{ "monthlyIncome": 180000, "segment": "Kurumsal", "taxOffice": "Büyük Mükellefler V.D." }"""),
+            roleAndDataSchema,
+            persistedData,
+            standardUser).Should().BeEmpty();
+        JsonSchemaValidator.Validate(
+            JsonNode.Parse("""{ "monthlyIncome": 180000, "segment": "Kurumsal" }"""),
+            roleAndDataSchema,
+            persistedData,
+            standardUser).Should().BeEmpty();
+
+        // Manager user is not disabled and must provide taxOffice (requiredWhen is true for manager)
+        JsonSchemaValidator.Validate(
+            JsonNode.Parse("""{ "monthlyIncome": 180000, "segment": "Kurumsal" }"""),
+            roleAndDataSchema,
+            persistedData,
+            managerUser).Should().Equal("$.taxOffice: is required.");
+        JsonSchemaValidator.Validate(
+            JsonNode.Parse("""{ "monthlyIncome": 180000, "segment": "Kurumsal", "taxOffice": "Kadıköy V.D." }"""),
+            roleAndDataSchema,
+            persistedData,
+            managerUser).Should().BeEmpty();
+
+        var badSchema = JsonNode.Parse("""
+            { "type": "object", "properties": { "a": { "type": "string", "requiredWhen": "ui.segment ==" } } }
+            """)!.AsObject();
+        JsonSchemaValidator.CheckSchema(badSchema).Should().ContainSingle().Which.Should().StartWith("$.a.requiredWhen: ");
+    }
 }
 
 public sealed class JsonPathTests

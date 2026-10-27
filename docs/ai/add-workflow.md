@@ -26,6 +26,17 @@ Definitions are JSON(C) files in `demo/Middt.Demo.Api/Workflows/` (`customer-onb
      - **Appending to an array (`into: "<array>[]"` & `[-1]`)**: Setting `"into": "partialPayment[]"` appends the validated input object to `data.partialPayment` (creating the `JsonArray` if needed), and `"set": { "partialPayment[-1].paidAt": "now" }` sets fields on the newly appended element.
      - **Dynamic enum from instance array (`x-enumFrom`)**: Setting `"x-enumFrom": "partialPayment.reference"` on a schema property dynamically populates `enum` and `default` from the current instance's `data.partialPayment` array when `GetAsync` projects `AvailableTransitions`.
      - **Partial updates**: `"input": { "format": "jsonPatch", "into": "<owned subtree>", "schema": { … } }` makes the body an RFC 6902 JSON Patch on `data.<into>` (both `into` and `schema` are required; the schema validates the subtree after the patch; a failed `test` is 409). Both frontends prefill the form with the current values and send only the difference. Not on the start transition, event transitions, `sensitive` inputs or `?async=true`. Example: `update-billing-contact` in `invoice-collection.json`; details in the [README](../../README.md#updating-data-with-a-json-patch-inputformat-jsonpatch).
+     - **Reactive form field rules (`visibleWhen`, `requiredWhen`, `disabledWhen` & `ui.<field>`)**: Schema properties in `start.input.schema.properties` and `transition.input.schema.properties` support `"visibleWhen"` (or `"x-visibleWhen"`), `"requiredWhen"` (or `"x-requiredWhen"`), and `"disabledWhen"` (or `"x-disabledWhen"`). These evaluate portable expressions against `ui.<field>` (the live value selected/typed in the open form before clicking Save/Submit), `data.<field>` (the persisted workflow instance data, falling back to `ui` on start forms), and `user` (`user.IsInRole("manager")` of the authenticated caller, defaulting to anonymous). Both frontends reactively show/hide, require, or disable fields as the user edits the form, and `JsonSchemaValidator` enforces all three on the server (stripping hidden fields from the input payload so unvalidated values never enter `instance.Data`, enforcing `requiredWhen` unless the field is hidden or disabled, and rejecting any attempt to modify a disabled field away from its persisted `data.<field>` or schema `default` with `$.<field>: is disabled.`):
+       ```json
+       "segment": { "type": "string", "title": "Müşteri Segmenti", "enum": ["Bireysel", "KOBİ", "Kurumsal"], "default": "Bireysel" },
+       "taxOffice": {
+         "type": "string",
+         "title": "Vergi Dairesi",
+         "visibleWhen": "ui.segment != \"Bireysel\"",
+         "requiredWhen": "ui.segment == \"Kurumsal\"",
+         "disabledWhen": "data.segment == \"Kurumsal\" && !user.IsInRole(\"manager\")"
+       }
+       ```
      - Dynamic dropdown lookups against another workflow's data:
        ```json
        "customerKey": {

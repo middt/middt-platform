@@ -83,7 +83,25 @@ test('validate: maxLength for text and textarea only', () => {
   assert.equal(UiField.parse({ field: 'n', type: 'select', maxLength: 3 }).validate({ n: 'abcd' }), null);
 });
 
-test('validateFields collects errors by field', () => {
-  const fields = UiField.parseAll([{ field: 'a', required: true }, { field: 'b', type: 'integer' }, { field: 'c' }]);
-  assert.deepEqual(validateFields(fields, { b: 1.5 }), { a: 'Bu alan zorunludur.', b: 'Tam sayı olmalıdır.' });
+test('validateFields collects errors by field and honors visibleWhen, requiredWhen, and disabledWhen (ui.<field>)', () => {
+  const fields = UiField.parseAll([
+    { field: 'segment', required: true },
+    { field: 'taxOffice', visibleWhen: 'ui.segment != "Bireysel"', requiredWhen: 'ui.segment == "Kurumsal"' },
+    { field: 'rate', type: 'number', disabledWhen: 'ui.segment == "Bireysel"' },
+    { field: 'b', type: 'integer' },
+  ]);
+  assert.equal(fields[1]!.visibleWhen, 'ui.segment != "Bireysel"');
+  assert.equal(fields[1]!.requiredWhen, 'ui.segment == "Kurumsal"');
+  assert.equal(fields[2]!.disabledWhen, 'ui.segment == "Bireysel"');
+
+  assert.equal(fields[1]!.isVisible({ segment: 'Bireysel' }), false);
+  assert.equal(fields[1]!.isVisible({ segment: 'KOBİ' }), true);
+  assert.equal(fields[1]!.isRequired({ segment: 'KOBİ' }), false);
+  assert.equal(fields[1]!.isRequired({ segment: 'Kurumsal' }), true);
+  assert.equal(fields[2]!.isDisabled({ segment: 'Bireysel' }), true);
+  assert.equal(fields[2]!.isDisabled({ segment: 'Kurumsal' }), false);
+
+  assert.deepEqual(validateFields(fields, { segment: 'Bireysel', b: 1.5 }), { b: 'Tam sayı olmalıdır.' });
+  assert.deepEqual(validateFields(fields, { segment: 'KOBİ', b: 2 }), {});
+  assert.deepEqual(validateFields(fields, { segment: 'Kurumsal', b: 2 }), { taxOffice: 'Bu alan zorunludur.' });
 });

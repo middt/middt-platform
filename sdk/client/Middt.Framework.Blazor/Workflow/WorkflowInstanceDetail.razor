@@ -57,7 +57,8 @@
                 <form class="middt-wf-step-form" aria-labelledby="@($"{IdPrefix}-state-title")" novalidate
                       data-transition="@stepTr.Key" @onsubmit="SubmitStepAsync" @onsubmit:preventDefault>
                     <JsonSchemaForm @key="@($"{instance.Id}:{instance.State}:{instance.DataVersion}:{stepTr.Key}")" @ref="stepForm"
-                                    Schema="@stepTr.InputSchema" Value="@stepPrefill" IdPrefix="@($"{IdPrefix}-step-{stepTr.Key}")" Disabled="@executing" />
+                                    Schema="@stepTr.InputSchema" Value="@stepPrefill" Data="@DisplayData" ValueChanged="OnStepFormValueChanged"
+                                    IdPrefix="@($"{IdPrefix}-step-{stepTr.Key}")" Disabled="@executing" />
                     @if (stepErrors.Count > 0)
                     {
                         <ul class="middt-wf-errors" role="alert">
@@ -139,7 +140,7 @@
                             }
                         </div>
                         <JsonSchemaForm @key="@($"{instance.Id}:{instance.DataVersion}:retry")" @ref="retryForm"
-                                        Schema="@retrySchema" Value="@RetryPrefill" IdPrefix="@($"{IdPrefix}-retry")" Disabled="@retrying" />
+                                        Schema="@retrySchema" Value="@RetryPrefill" Data="@DisplayData" IdPrefix="@($"{IdPrefix}-retry")" Disabled="@retrying" />
                         @if (retryErrors.Count > 0)
                         {
                             <ul class="middt-wf-errors" role="alert">
@@ -297,7 +298,7 @@
         {
             @if (pendingHasInput)
             {
-                <JsonSchemaForm @ref="transitionForm" Schema="@pendingTransition.InputSchema" Value="@pendingPrefill" IdPrefix="@($"{IdPrefix}-tr-{pendingTransition.Key}")" Disabled="@executing" />
+                <JsonSchemaForm @ref="transitionForm" Schema="@pendingTransition.InputSchema" Value="@pendingPrefill" Data="@DisplayData" IdPrefix="@($"{IdPrefix}-tr-{pendingTransition.Key}")" Disabled="@executing" />
             }
             else
             {

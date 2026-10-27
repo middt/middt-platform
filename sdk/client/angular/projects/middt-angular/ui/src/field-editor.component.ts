@@ -86,19 +86,19 @@ const MAX_UNFILTERED_OPTIONS = 10;
     <div class="middt-ui-input" [class.middt-ui-invalid]="error()" [attr.data-field]="field().field">
       @if (field().type === 'checkbox') {
         <div class="middt-ui-check">
-          <mat-checkbox [id]="id()" [checked]="boolValue()" (change)="set($event.checked)" [disabled]="disabled()">{{ field().label }}</mat-checkbox>
+          <mat-checkbox [id]="id()" [checked]="boolValue()" (change)="set($event.checked)" [disabled]="isDisabled()">{{ field().label }}</mat-checkbox>
         </div>
       } @else {
         <label [for]="id()">
           {{ field().label }}
-          @if (field().required) {
+          @if (isRequired()) {
             <span class="middt-jsf-required" title="Zorunlu alan">*</span>
           }
         </label>
         @switch (field().type) {
           @case ('textarea') {
             <mat-form-field appearance="outline" subscriptSizing="dynamic">
-              <textarea matInput [id]="id()" [value]="textValue()" (input)="setText(eventValue($event))" [disabled]="disabled()" rows="3"
+              <textarea matInput [id]="id()" [value]="textValue()" (input)="setText(eventValue($event))" [disabled]="isDisabled()" rows="3"
                         [attr.maxlength]="field().maxLength" [placeholder]="field().placeholder ?? ''" [errorStateMatcher]="matcher"
                         [aria-describedby]="describedBy()"></textarea>
             </mat-form-field>
@@ -111,7 +111,7 @@ const MAX_UNFILTERED_OPTIONS = 10;
           }
           @case ('date') {
             <mat-form-field appearance="outline" subscriptSizing="dynamic">
-              <input matInput [id]="id()" [matDatepicker]="picker" [value]="dateValue()" (dateChange)="setDate($event.value)" [disabled]="disabled()"
+              <input matInput [id]="id()" [matDatepicker]="picker" [value]="dateValue()" (dateChange)="setDate($event.value)" [disabled]="isDisabled()"
                      placeholder="gg.aa.yyyy" [errorStateMatcher]="matcher" [aria-describedby]="describedBy()" />
               <mat-datepicker-toggle matIconSuffix [for]="picker" />
               <mat-datepicker #picker />
@@ -119,13 +119,13 @@ const MAX_UNFILTERED_OPTIONS = 10;
           }
           @case ('datetime') {
             <mat-form-field appearance="outline" subscriptSizing="dynamic">
-              <input matInput type="datetime-local" [id]="id()" [value]="dateTimeValue()" (change)="setDateTime(eventValue($event))" [disabled]="disabled()"
+              <input matInput type="datetime-local" [id]="id()" [value]="dateTimeValue()" (change)="setDateTime(eventValue($event))" [disabled]="isDisabled()"
                      [errorStateMatcher]="matcher" [aria-describedby]="describedBy()" />
             </mat-form-field>
           }
           @case ('select') {
             <mat-form-field appearance="outline" subscriptSizing="dynamic">
-              <mat-select [id]="id()" [value]="selectedKey()" (selectionChange)="setOption($event.value)" [disabled]="disabled()"
+              <mat-select [id]="id()" [value]="selectedKey()" (selectionChange)="setOption($event.value)" [disabled]="isDisabled()"
                           [placeholder]="field().placeholder ?? loadError() ?? 'Seçiniz'" [aria-label]="field().label" [errorStateMatcher]="matcher"
                           [aria-describedby]="describedBy()" (openedChange)="filter.set('')">
                 @if (options().length > maxUnfiltered) {
@@ -138,7 +138,7 @@ const MAX_UNFILTERED_OPTIONS = 10;
                   <mat-option [value]="option.key">{{ option.text }}</mat-option>
                 }
               </mat-select>
-              @if (hasValue() && !disabled()) {
+              @if (hasValue() && !isDisabled()) {
                 <button mat-icon-button matIconSuffix type="button" title="Temizle" [attr.aria-label]="field().label + ' temizle'"
                         (click)="$event.stopPropagation(); set(null)"><mat-icon>close</mat-icon></button>
               }
@@ -150,10 +150,10 @@ const MAX_UNFILTERED_OPTIONS = 10;
                 <input matInput [id]="id()" [value]="pickerText() ?? ''" readonly [placeholder]="field().placeholder ?? 'Seçiniz'"
                        [errorStateMatcher]="matcher" [aria-describedby]="describedBy()" />
               </mat-form-field>
-              <button mat-icon-button type="button" (click)="pick()" [disabled]="disabled()" title="Seç" [attr.aria-label]="field().label + ' seç'">
+              <button mat-icon-button type="button" (click)="pick()" [disabled]="isDisabled()" title="Seç" [attr.aria-label]="field().label + ' seç'">
                 <mat-icon>search</mat-icon>
               </button>
-              @if (hasValue() && !disabled()) {
+              @if (hasValue() && !isDisabled()) {
                 <button mat-icon-button type="button" (click)="clearPick()" title="Temizle" [attr.aria-label]="field().label + ' temizle'">
                   <mat-icon>close</mat-icon>
                 </button>
@@ -162,7 +162,7 @@ const MAX_UNFILTERED_OPTIONS = 10;
           }
           @default {
             <mat-form-field appearance="outline" subscriptSizing="dynamic">
-              <input matInput [id]="id()" [value]="textValue()" (input)="setText(eventValue($event))" [disabled]="disabled()"
+              <input matInput [id]="id()" [value]="textValue()" (input)="setText(eventValue($event))" [disabled]="isDisabled()"
                      [attr.maxlength]="field().maxLength" [placeholder]="field().placeholder ?? ''" [errorStateMatcher]="matcher"
                      [aria-describedby]="describedBy()" />
             </mat-form-field>
@@ -176,7 +176,7 @@ const MAX_UNFILTERED_OPTIONS = 10;
 
     <ng-template #number>
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <input matInput type="number" [id]="id()" [value]="numberValue()" (input)="setNumber(eventValue($event))" [disabled]="disabled()"
+        <input matInput type="number" [id]="id()" [value]="numberValue()" (input)="setNumber(eventValue($event))" [disabled]="isDisabled()"
                [step]="field().type === 'integer' ? 1 : 'any'" [placeholder]="field().placeholder ?? ''" [errorStateMatcher]="matcher"
                [aria-describedby]="describedBy()" />
       </mat-form-field>
@@ -202,6 +202,7 @@ export class UiFieldEditorComponent {
   readonly context = input.required<UiRenderContext>();
   readonly idPrefix = input('ui');
   readonly disabled = input(false);
+  readonly required = input<boolean | null>(null);
   readonly error = input<string | null | undefined>(null);
   readonly changed = output<void>();
 
@@ -221,6 +222,16 @@ export class UiFieldEditorComponent {
   protected readonly id = computed(() => `${this.idPrefix()}-${this.field().field}`);
   protected readonly errorId = computed(() => `${this.id()}-error`);
   protected readonly describedBy = computed(() => (this.error() ? this.errorId() : ''));
+
+  protected isRequired(): boolean {
+    this.#revision();
+    return this.required() ?? this.field().isRequired(this.target(), this.context());
+  }
+
+  protected isDisabled(): boolean {
+    this.#revision();
+    return this.disabled() || this.field().isDisabled(this.target(), this.context());
+  }
 
   protected readonly value = computed<unknown>(() => {
     this.#revision();

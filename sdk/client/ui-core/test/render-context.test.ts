@@ -6,8 +6,8 @@ const user = { id: '7', name: 'test@test.com', roles: ['manager'] };
 const ctx = (variables: Record<string, unknown> = {}, locale?: string): UiRenderContext =>
   new UiRenderContext({ user, variables, now: '2026-10-14T13:00:00.000Z', timeZone: 'Europe/Istanbul', ...(locale ? { locale } : {}) });
 
-test('variables are data, query, row, record, instance', () => {
-  assert.deepEqual([...UI_VARIABLES], ['data', 'query', 'row', 'record', 'instance']);
+test('variables are data, query, row, record, instance, ui', () => {
+  assert.deepEqual([...UI_VARIABLES], ['data', 'query', 'row', 'record', 'instance', 'ui']);
 });
 
 test('text renders templates, keeps plain text and reports syntax errors', () => {

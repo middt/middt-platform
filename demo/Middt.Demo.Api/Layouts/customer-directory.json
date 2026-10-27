@@ -3,7 +3,7 @@
   "key": "customer-directory",
   "title": "Müşteri Rehberi (Workflow JSON)",
   "kind": "page",
-  "version": 3,
+  "version": 4,
   "body": [
     { "widget": "heading", "text": "Müşteri Rehberi (Workflow JSON Verisi)" },
     { "widget": "link", "text": "Yeni Müşteri Kaydı Başlat", "href": "/workflow/customer-onboarding?start=1", "style": "button" },
@@ -24,6 +24,7 @@
       "search": [
         { "field": "fullName", "label": "Ad Soyad / Ünvan" },
         { "field": "segment", "label": "Segment", "type": "select", "options": [ "Bireysel", "KOBİ", "Kurumsal" ] },
+        { "field": "taxOffice", "label": "Vergi Dairesi (KOBİ / Kurumsal)", "visibleWhen": "ui.segment != null && ui.segment != \"Bireysel\"" },
         { "field": "riskLevel", "label": "Risk Seviyesi", "type": "select", "options": [ "Düşük", "Orta", "Yüksek" ] },
         { "field": "monthlyIncome_min", "label": "Min Aylık Gelir (≥)", "type": "number" },
         { "field": "monthlyIncome_max", "label": "Max Aylık Gelir (≤)", "type": "number" },

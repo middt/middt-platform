@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Middt.Framework.Expressions;
+using Middt.Framework.Expressions.Portable;
 
 namespace Middt.Framework.Workflow.Schema;
 
@@ -47,6 +48,26 @@ public static partial class JsonSchemaValidator
 
     /// <summary>Schema keyword on a transition input property populating <c>enum</c> dynamically from an instance data array path (<c>&lt;arrayPath&gt;.&lt;field&gt;</c>).</summary>
     public const string EnumFromKeyword = "x-enumFrom";
+
+    /// <summary>Schema keyword on a property controlling conditional visibility in forms using portable expressions (e.g. <c>ui.segment == "Kurumsal"</c>).</summary>
+    public const string VisibleWhenKeyword = "visibleWhen";
+
+    /// <summary>Alias of <see cref="VisibleWhenKeyword"/> with the <c>x-</c> extension prefix.</summary>
+    public const string XVisibleWhenKeyword = "x-visibleWhen";
+
+    /// <summary>Schema keyword on a property controlling conditional required validation using portable expressions (e.g. <c>ui.amount > 500000</c>).</summary>
+    public const string RequiredWhenKeyword = "requiredWhen";
+
+    /// <summary>Alias of <see cref="RequiredWhenKeyword"/> with the <c>x-</c> extension prefix.</summary>
+    public const string XRequiredWhenKeyword = "x-requiredWhen";
+
+    /// <summary>Schema keyword on a property controlling whether the field is disabled in forms using portable expressions (e.g. <c>!user.IsInRole("manager")</c>).</summary>
+    public const string DisabledWhenKeyword = "disabledWhen";
+
+    /// <summary>Alias of <see cref="DisabledWhenKeyword"/> with the <c>x-</c> extension prefix.</summary>
+    public const string XDisabledWhenKeyword = "x-disabledWhen";
+
+    private static readonly PortableExpression UiEvaluator = new(["data", "query", "row", "record", "instance", "ui"]);
 
     private static readonly HashSet<string> SupportedSearchModes =
     [
@@ -112,6 +133,17 @@ public static partial class JsonSchemaValidator
                 if (!validString && !validObject)
                 {
                     yield return $"{path}.{keyword}: must be a non-empty string path ('<arrayPath>.<field>') or an object '{{ \"source\": \"...\", \"format\": \"...\" }}'.";
+                }
+            }
+            else if (keyword is VisibleWhenKeyword or XVisibleWhenKeyword or RequiredWhenKeyword or XRequiredWhenKeyword or DisabledWhenKeyword or XDisabledWhenKeyword)
+            {
+                if (value is not JsonValue vw || !vw.TryGetValue<string>(out var expr) || string.IsNullOrWhiteSpace(expr))
+                {
+                    yield return $"{path}.{keyword}: must be a non-empty expression string.";
+                }
+                else if (UiEvaluator.Validate(expr) is { } exprError)
+                {
+                    yield return $"{path}.{keyword}: {exprError}";
                 }
             }
             else if (!SupportedKeywords.Contains(keyword))
@@ -363,14 +395,14 @@ public static partial class JsonSchemaValidator
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.CultureInvariant)]
     private static partial Regex FieldRegex();
 
-    public static List<string> Validate(JsonNode? instance, JsonObject schema)
+    public static List<string> Validate(JsonNode? instance, JsonObject schema, JsonObject? data = null, ExpressionUser? user = null)
     {
         var errors = new List<string>();
-        Validate(instance, schema, "$", errors);
+        Validate(instance, schema, "$", errors, data, user);
         return errors;
     }
 
-    private static void Validate(JsonNode? node, JsonObject schema, string path, List<string> errors)
+    private static void Validate(JsonNode? node, JsonObject schema, string path, List<string> errors, JsonObject? data, ExpressionUser? user)
     {
         if (schema["type"] is JsonValue typeValue && typeValue.TryGetValue<string>(out var type) && !IsType(node, type))
         {
@@ -391,10 +423,10 @@ public static partial class JsonSchemaValidator
         switch (node)
         {
             case JsonObject obj:
-                ValidateObject(obj, schema, path, errors);
+                ValidateObject(obj, schema, path, errors, data, user);
                 break;
             case JsonArray array:
-                ValidateArray(array, schema, path, errors);
+                ValidateArray(array, schema, path, errors, data, user);
                 break;
             case JsonValue value when value.GetValueKind() == JsonValueKind.String:
                 ValidateString(value.GetValue<string>(), schema, path, errors);
@@ -413,17 +445,60 @@ public static partial class JsonSchemaValidator
         }
     }
 
-    private static void ValidateObject(JsonObject obj, JsonObject schema, string path, List<string> errors)
+    private static void ValidateObject(JsonObject obj, JsonObject schema, string path, List<string> errors, JsonObject? data, ExpressionUser? user)
     {
         var properties = schema["properties"] as JsonObject;
+        var visibleProps = GetVisibleProperties(obj, properties, data, user);
+        if (visibleProps is not null && properties is not null)
+        {
+            foreach (var (name, _) in properties)
+            {
+                if (!visibleProps.Contains(name))
+                {
+                    obj.Remove(name);
+                }
+            }
+        }
+
+        var evalUi = properties is not null ? BuildVisibleUiObject(obj, properties, visibleProps) : obj;
+        var disabledProps = GetDisabledProperties(evalUi, properties, visibleProps, data, user);
+        var requiredReported = new HashSet<string>(StringComparer.Ordinal);
 
         if (schema["required"] is JsonArray required)
         {
             foreach (var name in required.Select(r => r?.GetValue<string>()).OfType<string>())
             {
+                if ((visibleProps is not null && !visibleProps.Contains(name))
+                    || (disabledProps is not null && disabledProps.Contains(name)))
+                {
+                    continue;
+                }
+
                 if (!obj.TryGetPropertyValue(name, out var v) || v is null)
                 {
                     errors.Add($"{path}.{name}: is required.");
+                    requiredReported.Add(name);
+                }
+            }
+        }
+
+        if (properties is not null)
+        {
+            foreach (var (name, propNode) in properties)
+            {
+                if (requiredReported.Contains(name)
+                    || (visibleProps is not null && !visibleProps.Contains(name))
+                    || (disabledProps is not null && disabledProps.Contains(name)))
+                {
+                    continue;
+                }
+
+                if (propNode is JsonObject propSchema && GetRequiredWhen(propSchema) is { } reqWhen && EvaluateFormCondition(reqWhen, evalUi, data, user))
+                {
+                    if (!obj.TryGetPropertyValue(name, out var v) || v is null)
+                    {
+                        errors.Add($"{path}.{name}: is required.");
+                    }
                 }
             }
         }
@@ -433,9 +508,36 @@ public static partial class JsonSchemaValidator
         {
             if (properties?[name] is JsonObject propertySchema)
             {
+                if (visibleProps is not null && !visibleProps.Contains(name))
+                {
+                    continue;
+                }
+
+                if (disabledProps is not null && disabledProps.Contains(name) && value is not null)
+                {
+                    JsonNode? expectedValue = null;
+                    var hasExpected = false;
+                    if (data is not null && data.TryGetPropertyValue(name, out var dataVal) && dataVal is not null)
+                    {
+                        expectedValue = dataVal;
+                        hasExpected = true;
+                    }
+                    else if (propertySchema["default"] is { } defaultVal)
+                    {
+                        expectedValue = defaultVal;
+                        hasExpected = true;
+                    }
+
+                    if (!hasExpected || !JsonNode.DeepEquals(value, expectedValue))
+                    {
+                        errors.Add($"{path}.{name}: is disabled.");
+                        continue;
+                    }
+                }
+
                 if (value is not null)
                 {
-                    Validate(value, propertySchema, $"{path}.{name}", errors);
+                    Validate(value, propertySchema, $"{path}.{name}", errors, data, user);
                 }
             }
             else if (!allowAdditional)
@@ -445,7 +547,145 @@ public static partial class JsonSchemaValidator
         }
     }
 
-    private static void ValidateArray(JsonArray array, JsonObject schema, string path, List<string> errors)
+    private static HashSet<string>? GetVisibleProperties(JsonObject obj, JsonObject? properties, JsonObject? data, ExpressionUser? user)
+    {
+        if (properties is null || properties.Count == 0)
+        {
+            return null;
+        }
+
+        var hasConditions = false;
+        foreach (var (_, propNode) in properties)
+        {
+            if (propNode is JsonObject propObj && GetVisibleWhen(propObj) is not null)
+            {
+                hasConditions = true;
+                break;
+            }
+        }
+
+        if (!hasConditions)
+        {
+            return null;
+        }
+
+        var ui = (JsonObject)obj.DeepClone();
+        for (var pass = 0; pass < properties.Count; pass++)
+        {
+            var changed = false;
+            foreach (var (name, propNode) in properties)
+            {
+                if (propNode is not JsonObject propObj)
+                {
+                    continue;
+                }
+
+                var visible = EvaluateVisibleWhen(GetVisibleWhen(propObj), ui, data, user);
+                if (!visible && ui.ContainsKey(name))
+                {
+                    ui.Remove(name);
+                    changed = true;
+                }
+                else if (visible && !ui.ContainsKey(name) && obj.TryGetPropertyValue(name, out var original) && original is not null)
+                {
+                    ui[name] = original.DeepClone();
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+            {
+                break;
+            }
+        }
+
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (name, propNode) in properties)
+        {
+            if (propNode is not JsonObject propObj || EvaluateVisibleWhen(GetVisibleWhen(propObj), ui, data, user))
+            {
+                result.Add(name);
+            }
+        }
+
+        return result;
+    }
+
+    private static HashSet<string>? GetDisabledProperties(JsonObject evalUi, JsonObject? properties, HashSet<string>? visibleProps, JsonObject? data, ExpressionUser? user)
+    {
+        if (properties is null || properties.Count == 0)
+        {
+            return null;
+        }
+
+        HashSet<string>? result = null;
+        foreach (var (name, propNode) in properties)
+        {
+            if (visibleProps is not null && !visibleProps.Contains(name))
+            {
+                continue;
+            }
+
+            if (propNode is JsonObject propObj && GetDisabledWhen(propObj) is { } disWhen && EvaluateFormCondition(disWhen, evalUi, data, user))
+            {
+                result ??= new HashSet<string>(StringComparer.Ordinal);
+                result.Add(name);
+            }
+        }
+
+        return result;
+    }
+
+    private static JsonObject BuildVisibleUiObject(JsonObject obj, JsonObject properties, HashSet<string>? visibleProps)
+    {
+        if (visibleProps is null)
+        {
+            return obj;
+        }
+
+        var ui = new JsonObject();
+        foreach (var (name, _) in properties)
+        {
+            if (visibleProps.Contains(name) && obj.TryGetPropertyValue(name, out var val) && val is not null)
+            {
+                ui[name] = val.DeepClone();
+            }
+        }
+
+        return ui;
+    }
+
+    private static string? GetVisibleWhen(JsonObject propertySchema) =>
+        (propertySchema[VisibleWhenKeyword] is JsonValue v1 && v1.TryGetValue<string>(out var s1) && !string.IsNullOrWhiteSpace(s1) ? s1 : null)
+        ?? (propertySchema[XVisibleWhenKeyword] is JsonValue v2 && v2.TryGetValue<string>(out var s2) && !string.IsNullOrWhiteSpace(s2) ? s2 : null);
+
+    private static string? GetRequiredWhen(JsonObject propertySchema) =>
+        (propertySchema[RequiredWhenKeyword] is JsonValue v1 && v1.TryGetValue<string>(out var s1) && !string.IsNullOrWhiteSpace(s1) ? s1 : null)
+        ?? (propertySchema[XRequiredWhenKeyword] is JsonValue v2 && v2.TryGetValue<string>(out var s2) && !string.IsNullOrWhiteSpace(s2) ? s2 : null);
+
+    private static string? GetDisabledWhen(JsonObject propertySchema) =>
+        (propertySchema[DisabledWhenKeyword] is JsonValue v1 && v1.TryGetValue<string>(out var s1) && !string.IsNullOrWhiteSpace(s1) ? s1 : null)
+        ?? (propertySchema[XDisabledWhenKeyword] is JsonValue v2 && v2.TryGetValue<string>(out var s2) && !string.IsNullOrWhiteSpace(s2) ? s2 : null);
+
+    private static bool EvaluateVisibleWhen(string? condition, JsonObject ui, JsonObject? data, ExpressionUser? user) =>
+        string.IsNullOrWhiteSpace(condition) || EvaluateFormCondition(condition, ui, data, user);
+
+    private static bool EvaluateFormCondition(string condition, JsonObject ui, JsonObject? data, ExpressionUser? user)
+    {
+        try
+        {
+            var context = new ExpressionContext { User = user ?? ExpressionUser.Anonymous };
+            context.Set("ui", ui);
+            context.Set("data", data ?? ui);
+            return UiEvaluator.EvaluateCondition(condition, context);
+        }
+        catch (PortableExpressionException)
+        {
+            return false;
+        }
+    }
+
+    private static void ValidateArray(JsonArray array, JsonObject schema, string path, List<string> errors, JsonObject? data, ExpressionUser? user)
     {
         if (Int(schema, "minItems") is { } min && array.Count < min)
         {
@@ -461,7 +701,7 @@ public static partial class JsonSchemaValidator
         {
             for (var i = 0; i < array.Count; i++)
             {
-                Validate(array[i], itemSchema, $"{path}[{i}]", errors);
+                Validate(array[i], itemSchema, $"{path}[{i}]", errors, data, user);
             }
         }
     }
