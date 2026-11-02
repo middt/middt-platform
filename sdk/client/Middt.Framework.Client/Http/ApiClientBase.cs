@@ -35,6 +35,8 @@ public abstract class ApiClientBase(
 
     protected HttpClient HttpClient { get; } = httpClient;
 
+    protected IBaseSessionState SessionState { get; } = sessionState;
+
     protected ILogger Logger { get; } = logger;
 
     protected async Task<TResponse> SendAsync<TResponse>(
@@ -46,12 +48,12 @@ public abstract class ApiClientBase(
     {
         try
         {
-            var usedToken = await sessionState.Token();
+            var usedToken = await SessionState.Token();
             using var response = await SendWithTokenAsync(method, requestUri, body, usedToken, cancellationToken);
 
             if (response.StatusCode == HttpStatusCode.Unauthorized && await TryRefreshTokenAsync(usedToken, cancellationToken))
             {
-                using var retry = await SendWithTokenAsync(method, requestUri, body, await sessionState.Token(), cancellationToken);
+                using var retry = await SendWithTokenAsync(method, requestUri, body, await SessionState.Token(), cancellationToken);
                 return await ReadResponseAsync<TResponse>(retry, cancellationToken);
             }
 
@@ -88,14 +90,14 @@ public abstract class ApiClientBase(
 
     private async Task<bool> TryRefreshTokenAsync(string? usedToken, CancellationToken cancellationToken)
     {
-        var token = await sessionState.Token();
+        var token = await SessionState.Token();
         if (!string.IsNullOrEmpty(token) && token != usedToken)
         {
             // Another request of this session already refreshed the token; just retry with it.
             return true;
         }
 
-        var refreshToken = await sessionState.RefreshToken();
+        var refreshToken = await SessionState.RefreshToken();
         if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(refreshToken))
         {
             return false;
@@ -130,7 +132,7 @@ public abstract class ApiClientBase(
     {
         // A request that read the session before a concurrent refresh completed (and removed its in-flight entry) would
         // otherwise replay the already rotated refresh token, which the API treats as reuse and revokes the session.
-        var current = await sessionState.RefreshToken();
+        var current = await SessionState.RefreshToken();
         if (current != refreshToken)
         {
             return !string.IsNullOrEmpty(current);
@@ -143,11 +145,11 @@ public abstract class ApiClientBase(
         if (!result.IsSuccess)
         {
             Logger.LogWarning("Token refresh failed, signing the session out: {Error}", result.ErrorText);
-            await sessionState.ClearToken();
+            await SessionState.ClearToken();
             return false;
         }
 
-        await sessionState.SetToken(result);
+        await SessionState.SetToken(result);
         return true;
     }
 

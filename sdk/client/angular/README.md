@@ -41,11 +41,12 @@ providers: [
 { path: 'ui/:key', component: MiddtLayoutPageComponent, canActivate: [middtAuthGuard] },
 { path: 'ui-admin', component: MiddtLayoutEditorComponent, canActivate: [middtRoleGuard('ui-admin')] },
 { path: 'workflow-admin', component: MiddtWorkflowDesignerComponent, canActivate: [middtRoleGuard('ui-admin')] },
+{ path: 'agent-admin', component: MiddtAgentStudioComponent, canActivate: [middtRoleGuard('ui-admin')] },
 ```
 
 - **Layouts**: `<middt-layout-host layoutKey="order-escalated" [variables]="{ data, instance }" />` embeds a layout;
-  widgets map by name (`MIDDT_UI_WIDGETS`); expressions, templates and formats come from `@middt/ui-core` and behave
+  widgets map by name (`MIDDT_UI_WIDGETS` – 16 built-in widgets including `stat`, `tabs`, `timeline`); expressions, templates and formats come from `@middt/ui-core` and behave
   exactly like the .NET side (shared conformance suite).
-- **Workflows**: `<middt-workflow-instance-list>` + `<middt-workflow-instance-detail>`; state views render their JSON layout (`view.layout`), and `<middt-workflow-designer>` + `<middt-layout-editor>` provide visual drag-and-drop authoring for workflows and screens.
+- **Workflows & AI Agents**: `<middt-workflow-instance-list>` + `<middt-workflow-instance-detail>` (with live SSE auto-refresh); state views render their JSON layout (`view.layout`), and `<middt-workflow-designer>`, `<middt-layout-editor>`, and `<middt-agent-studio>` provide visual authoring and live testing for workflows, screens, and AI agents/tools/MCP servers.
 - **Custom widgets** must also be known by the API (`MiddtUiOptions.AddWidget`).
 

@@ -475,3 +475,17 @@ public sealed class WorkflowPurgeResultModel
     public int PurgedHistoryCount { get; set; }
     public int PurgedIncidentsCount { get; set; }
 }
+
+/// <summary>Real-time Server-Sent Events (SSE) notification payload emitted when a workflow instance starts or changes state (<c>GET /api/workflows/events</c>).</summary>
+public sealed class WorkflowEventStreamModel
+{
+    public string Type { get; set; } = string.Empty;
+    public Guid InstanceId { get; set; }
+    public string Workflow { get; set; } = string.Empty;
+    public int WorkflowVersion { get; set; }
+    public string? Key { get; set; }
+    public string? FromState { get; set; }
+    public string State { get; set; } = string.Empty;
+    public string? Transition { get; set; }
+    public DateTime OccurredAt { get; set; }
+}

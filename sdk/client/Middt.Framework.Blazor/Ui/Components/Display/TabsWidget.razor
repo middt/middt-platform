@@ -1,0 +1,64 @@
+@inherits UiWidgetBase
+
+@{
+    var tabs = VisibleTabs();
+    var active = Math.Clamp(activeIndex, 0, Math.Max(0, tabs.Count - 1));
+}
+
+@if (tabs.Count > 0)
+{
+    <div class="middt-ui-tabs">
+        <div class="middt-ui-tablist" role="tablist">
+            @for (var i = 0; i < tabs.Count; i++)
+            {
+                var idx = i;
+                var isSelected = idx == active;
+                <button type="button"
+                        role="tab"
+                        class="middt-ui-tab@(isSelected ? " middt-ui-tab-active" : null)"
+                        aria-selected="@(isSelected ? "true" : "false")"
+                        @onclick="@(() => SelectTab(idx))">@tabs[idx].Title</button>
+            }
+        </div>
+        @for (var i = 0; i < tabs.Count; i++)
+        {
+            var idx = i;
+            var hiddenClass = idx == active ? null : " middt-ui-tabpanel-hidden";
+            <div class="middt-ui-tabpanel@hiddenClass" role="tabpanel">
+                <UiNodeView Node="tabs[idx].Child" Context="Context" />
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private int activeIndex;
+
+    private void SelectTab(int index) => activeIndex = index;
+
+    private List<(UiNode Child, string Title)> VisibleTabs()
+    {
+        var titles = Node.ArrayProp("titles");
+        var list = new List<(UiNode Child, string Title)>();
+        var children = Node.Children ?? [];
+        for (var i = 0; i < children.Count; i++)
+        {
+            var child = children[i];
+            if (!Context.IsVisible(child))
+            {
+                continue;
+            }
+
+            var explicitTitle = titles is not null && i < titles.Count && titles[i] is JsonValue tv ? tv.ToString() : null;
+            var resolvedTitle = !string.IsNullOrWhiteSpace(explicitTitle)
+                ? Context.Text(explicitTitle)
+                : child.StringProp("title") is { Length: > 0 } childTitle
+                    ? Context.Text(childTitle)
+                    : $"Sekme {(list.Count + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            list.Add((child, resolvedTitle));
+        }
+
+        return list;
+    }
+}
+

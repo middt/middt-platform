@@ -47,6 +47,8 @@ public partial class WorkflowInstanceDetail
     private List<string> stepErrors = [];
     private bool focusAfterRender;
     private bool polling;
+    private CancellationTokenSource? eventStreamCts;
+    private Guid? watchingInstanceId;
 
     private TimeZoneInfo? timeZone;
 
@@ -188,6 +190,63 @@ public partial class WorkflowInstanceDetail
         {
             editingRetryInput = false;
             retryErrors = [];
+        }
+
+        if (IsFirstRenderCompleted)
+        {
+            StartEventStreamIfNeeded(Workflow, id);
+        }
+    }
+
+    private void StartEventStreamIfNeeded(string workflow, Guid id)
+    {
+        if (watchingInstanceId == id && eventStreamCts is { IsCancellationRequested: false })
+        {
+            return;
+        }
+
+        eventStreamCts?.Cancel();
+        eventStreamCts?.Dispose();
+        watchingInstanceId = id;
+        eventStreamCts = CancellationTokenSource.CreateLinkedTokenSource(ComponentCancellation);
+        _ = WatchInstanceEventsAsync(workflow, id, eventStreamCts.Token);
+    }
+
+    private async Task WatchInstanceEventsAsync(string workflow, Guid id, CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var ev in WorkflowClient.WatchEventsAsync(workflow, id, ct))
+            {
+                if (ev.InstanceId != id || executing || retrying)
+                {
+                    continue;
+                }
+
+                await InvokeAsync(async () =>
+                {
+                    if (instance?.Id != id || executing || retrying)
+                    {
+                        return;
+                    }
+
+                    await LoadAsync();
+                    if (instance is not null)
+                    {
+                        await OnChanged.InvokeAsync(instance);
+                    }
+
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal on component disposal or instance switch
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "SSE event stream closed for workflow instance {Id}", id);
         }
     }
 

@@ -125,7 +125,11 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
     {
         ArgumentNullException.ThrowIfNull(catalog);
         EnsurePersistedCatalogLoaded();
+        RegisterCatalogCore(catalog);
+    }
 
+    private void RegisterCatalogCore(AgentCatalogFile catalog)
+    {
         foreach (var server in catalog.McpServers.Where(s => !string.IsNullOrWhiteSpace(s.Name)))
         {
             _mcpClient.RegisterServer(server);
@@ -331,16 +335,15 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
 
                 var record = Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Definitions)
                     .FirstOrDefault(d => d.Key == AgentEndpoints.PersistedCatalogKey && d.Version == 1);
+                _persistedLoaded = true;
                 if (record is not null && !string.IsNullOrWhiteSpace(record.Content))
                 {
                     var catalog = JsonSerializer.Deserialize<AgentCatalogFile>(record.Content, CatalogJsonOptions);
                     if (catalog is not null)
                     {
-                        RegisterCatalog(catalog);
+                        RegisterCatalogCore(catalog);
                     }
                 }
-
-                _persistedLoaded = true;
             }
             catch
             {

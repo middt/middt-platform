@@ -159,3 +159,38 @@
 .middt-wf-modal { background: var(--rz-base-background-color, #fff); border-radius: 12px; width: min(96vw, 1560px); max-height: 92vh; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(15, 23, 42, .35); overflow: hidden; border: 1px solid #cbd5e1; }
 .middt-wf-modal-header { display: flex; justify-content: space-between; align-items: center; padding: .75rem 1.25rem; background: #0f172a; color: #fff; }
 .middt-wf-modal-body { padding: 1rem; overflow-y: auto; flex: 1; }
+
+/* Stat, Tabs & Timeline Display Widgets */
+.middt-ui-stat { padding: 1rem 1.25rem; border-radius: var(--rz-border-radius, 6px); background: var(--rz-base-background-color, #fff); box-shadow: var(--rz-card-shadow, 0 1px 3px rgba(0,0,0,.1)); border-left: 4px solid var(--rz-primary, #0d6efd); display: flex; flex-direction: column; gap: .35rem; }
+.middt-ui-stat-primary { border-left-color: var(--rz-primary, #0d6efd); }
+.middt-ui-stat-secondary { border-left-color: var(--rz-secondary, #6c757d); }
+.middt-ui-stat-success { border-left-color: var(--rz-success, #198754); }
+.middt-ui-stat-warning { border-left-color: var(--rz-warning, #ffc107); }
+.middt-ui-stat-danger { border-left-color: var(--rz-danger, #dc3545); }
+.middt-ui-stat-info { border-left-color: var(--rz-info, #0dcaf0); }
+.middt-ui-stat-header { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.middt-ui-stat-label { font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--rz-text-secondary-color, #64748b); }
+.middt-ui-stat-icon { font-size: .85rem; color: var(--rz-text-secondary-color, #64748b); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.middt-ui-stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1.2; color: inherit; }
+.middt-ui-stat-subtitle { font-size: .8rem; color: var(--rz-text-secondary-color, #64748b); }
+.middt-ui-tabs { display: flex; flex-direction: column; gap: .75rem; }
+.middt-ui-tablist { display: flex; gap: .35rem; border-bottom: 1px solid var(--rz-base-300, #dee2e6); padding-bottom: .4rem; flex-wrap: wrap; }
+.middt-ui-tab { padding: .42rem .9rem; border-radius: 6px; border: 1px solid transparent; background: transparent; cursor: pointer; font-weight: 600; font-size: .88rem; color: inherit; }
+.middt-ui-tab:hover { background: var(--rz-base-200, #f1f5f9); }
+.middt-ui-tab-active { background: var(--rz-primary, #0d6efd) !important; color: #fff !important; }
+.middt-ui-tabpanel { display: flex; flex-direction: column; gap: .75rem; }
+.middt-ui-tabpanel-hidden { display: none; }
+.middt-ui-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; position: relative; }
+.middt-ui-timeline-item { display: flex; align-items: flex-start; gap: .75rem; position: relative; padding-left: .25rem; }
+.middt-ui-timeline-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: .3rem; flex-shrink: 0; background: var(--rz-primary, #0d6efd); box-shadow: 0 0 0 3px rgba(13, 110, 253, .16); }
+.middt-ui-timeline-dot-primary { background: var(--rz-primary, #0d6efd); }
+.middt-ui-timeline-dot-secondary { background: var(--rz-secondary, #6c757d); }
+.middt-ui-timeline-dot-success { background: var(--rz-success, #198754); }
+.middt-ui-timeline-dot-warning { background: var(--rz-warning, #ffc107); }
+.middt-ui-timeline-dot-danger { background: var(--rz-danger, #dc3545); }
+.middt-ui-timeline-dot-info { background: var(--rz-info, #0dcaf0); }
+.middt-ui-timeline-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; padding: .5rem .75rem; border-radius: 6px; background: var(--rz-base-background-color, #fff); border: 1px solid var(--rz-base-300, #e2e8f0); }
+.middt-ui-timeline-header { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.middt-ui-timeline-title { font-size: .9rem; font-weight: 600; }
+.middt-ui-timeline-time { font-size: .76rem; color: var(--rz-text-secondary-color, #64748b); }
+.middt-ui-timeline-subtitle { font-size: .83rem; color: var(--rz-text-secondary-color, #475569); }

@@ -251,9 +251,12 @@
     [
         new("📦 Düzen & Kapsayıcılar", "section", "🗂️", "Kart / Bölüm (section)", "Başlıklı kart kapsayıcısı; içine diğer bileşenler sürüklenir."),
         new("📦 Düzen & Kapsayıcılar", "columns", "🏛️", "Yan Yana Sütunlar (columns)", "Alt bileşenlerini yan yana sütunlar halinde gösterir."),
+        new("📦 Düzen & Kapsayıcılar", "tabs", "📑", "Sekmeli Panel (tabs)", "Alt bileşenlerini sekmeli (tab) paneller halinde gösterir."),
         new("📦 Düzen & Kapsayıcılar", "list", "🔁", "Tekrarlayan Liste (list)", "Bir dizi (data.items) içindeki her kayıt için alt bileşenleri tekrarlar."),
         new("📦 Düzen & Kapsayıcılar", "record", "🔍", "Kayıt Yükleyici (record)", "Tekil bir varlık kaydını (entity/recordId) yükler."),
         new("📦 Düzen & Kapsayıcılar", "layout", "🧩", "Alt Ekran Gömme (layout)", "Başka bir 'view' ekranını bu ekranın içine gömer."),
+        new("📝 İçerik & Göstergeler", "stat", "📈", "KPI / Metrik Kartı (stat)", "Büyük vurgulanan metrik değeri, etiket, ikon ve alt açıklama kartı."),
+        new("📝 İçerik & Göstergeler", "timeline", "🕒", "Zaman Çizelgesi (timeline)", "Süreç adımlarını veya olay geçmişini dikey zaman çizelgesinde gösterir."),
         new("📝 İçerik & Göstergeler", "fields", "📋", "Etiket / Değer Tablosu (fields)", "Müşteri adı, tutar, durum gibi etiket-değer alanlarını listeler."),
         new("📝 İçerik & Göstergeler", "heading", "🔤", "Başlık (heading)", "H1–H6 seviyesinde dinamik başlık metni."),
         new("📝 İçerik & Göstergeler", "text", "📄", "Metin / Paragraf (text)", "Açıklama, kod veya bilgi paragrafı."),
@@ -637,6 +640,96 @@
                                placeholder="2, 1 veya 1, 1"
                                @onchange="@(e => SetNodeCsvArray(node, "widths", e.Value?.ToString()))" />
                         <small class="middt-ui-text-muted">Örn: <code>2, 1</code> sol sütunu sağ sütunun 2 katı genişlikte yapar.</small>
+                    </div>
+                }
+                else if (node.Widget == "tabs")
+                {
+                    <div class="middt-ui-input">
+                        <label>Sekme Başlıkları (titles — virgülle)</label>
+                        <input class="middt-wf-input" value="@GetNodeCsvArray(node, "titles")"
+                               placeholder="Genel Bilgiler, Geçmiş, Belgeler"
+                               @onchange="@(e => SetNodeCsvArray(node, "titles", e.Value?.ToString()))" />
+                        <small class="middt-ui-text-muted">Her alt bileşen (children) sırasıyla bir sekme panelini oluşturur.</small>
+                    </div>
+                }
+                else if (node.Widget == "stat")
+                {
+                    <div class="middt-wf-grid-2">
+                        <div class="middt-ui-input">
+                            <label>Etiket (label)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("label") ?? "")"
+                                   placeholder="Toplam Tutar"
+                                   @onchange="@(e => SetNodeString(node, "label", e.Value?.ToString()))" />
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Değer Şablonu (value)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("value") ?? "")"
+                                   placeholder="{{ data.amount }}"
+                                   @onchange="@(e => SetNodeString(node, "value", e.Value?.ToString()))" />
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Biçim (format)</label>
+                            <select class="middt-wf-input" value="@(node.StringProp("format") ?? "")"
+                                    @onchange="@(e => SetNodeString(node, "format", e.Value?.ToString()))">
+                                <option value="">Yok (Metin)</option>
+                                <option value="N2">N2 (Para / Ondalık: 1.250,00)</option>
+                                <option value="N0">N0 (Tam Sayı: 1.250)</option>
+                                <option value="g">g (Tarih + Saat)</option>
+                            </select>
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Vurgu Rengi (color)</label>
+                            <select class="middt-wf-input" value="@(node.StringProp("color") ?? "primary")"
+                                    @onchange="@(e => SetNodeString(node, "color", e.Value?.ToString()))">
+                                <option value="primary">primary (Mavi)</option>
+                                <option value="secondary">secondary (Gri)</option>
+                                <option value="success">success (Yeşil)</option>
+                                <option value="warning">warning (Sarı)</option>
+                                <option value="danger">danger (Kırmızı)</option>
+                                <option value="info">info (Açık Mavi)</option>
+                            </select>
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Alt Açıklama (subtitle — opsiyonel)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("subtitle") ?? "")"
+                                   placeholder="Durum: {{ instance.state }}"
+                                   @onchange="@(e => SetNodeString(node, "subtitle", e.Value?.ToString()))" />
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>İkon (icon — opsiyonel)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("icon") ?? "")"
+                                   placeholder="📈 veya payments"
+                                   @onchange="@(e => SetNodeString(node, "icon", e.Value?.ToString()))" />
+                        </div>
+                    </div>
+                }
+                else if (node.Widget == "timeline")
+                {
+                    <div class="middt-wf-grid-2">
+                        <div class="middt-ui-input">
+                            <label>Dizi Kaynağı İfadesi (source — C# İfadesi)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("source") ?? "")"
+                                   placeholder="data.history veya data.events"
+                                   @onchange="@(e => SetNodeString(node, "source", e.Value?.ToString()))" />
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Başlık Şablonu (title)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("title") ?? "")"
+                                   placeholder="{{ row.title }}"
+                                   @onchange="@(e => SetNodeString(node, "title", e.Value?.ToString()))" />
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Alt Başlık Şablonu (subtitle)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("subtitle") ?? "")"
+                                   placeholder="{{ row.note }}"
+                                   @onchange="@(e => SetNodeString(node, "subtitle", e.Value?.ToString()))" />
+                        </div>
+                        <div class="middt-ui-input">
+                            <label>Zaman Şablonu (time)</label>
+                            <input class="middt-wf-input" value="@(node.StringProp("time") ?? "")"
+                                   placeholder="{{ row.date }}"
+                                   @onchange="@(e => SetNodeString(node, "time", e.Value?.ToString()))" />
+                        </div>
                     </div>
                 }
                 else if (node.Widget == "fields")
@@ -1521,6 +1614,61 @@
                     },
                 ],
             },
+            "tabs" => new UiNode
+            {
+                Widget = "tabs",
+                Props = new JsonObject { ["titles"] = new JsonArray("Genel Bilgiler", "Detaylar") },
+                Children =
+                [
+                    new UiNode
+                    {
+                        Widget = "section",
+                        Props = new JsonObject { ["title"] = "Genel Bilgiler" },
+                        Children = [new UiNode { Widget = "text", Props = new JsonObject { ["text"] = "Birinci sekme içeriği" } }],
+                    },
+                    new UiNode
+                    {
+                        Widget = "section",
+                        Props = new JsonObject { ["title"] = "Detaylar" },
+                        Children = [new UiNode { Widget = "text", Props = new JsonObject { ["text"] = "İkinci sekme içeriği" } }],
+                    },
+                ],
+            },
+            "stat" => new UiNode
+            {
+                Widget = "stat",
+                Props = new JsonObject
+                {
+                    ["label"] = "Toplam Tutar",
+                    ["value"] = "{{ data.amount }}",
+                    ["format"] = "N2",
+                    ["subtitle"] = "Durum: {{ instance.state }}",
+                    ["icon"] = "📈",
+                    ["color"] = "primary",
+                },
+            },
+            "timeline" => new UiNode
+            {
+                Widget = "timeline",
+                Props = new JsonObject
+                {
+                    ["items"] = new JsonArray(
+                        new JsonObject
+                        {
+                            ["title"] = "Başvuru Alındı",
+                            ["subtitle"] = "{{ data.customerName }}",
+                            ["time"] = "Adım 1",
+                            ["color"] = "success",
+                        },
+                        new JsonObject
+                        {
+                            ["title"] = "İnceleme Sürecinde",
+                            ["subtitle"] = "Aktif durum: {{ instance.state }}",
+                            ["time"] = "Adım 2",
+                            ["color"] = "primary",
+                        }),
+                },
+            },
             "fields" => new UiNode
             {
                 Widget = "fields",
@@ -1828,7 +1976,7 @@
         string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     private static bool IsContainerWidget(string widget) =>
-        widget is "section" or "columns" or "list" or "record";
+        widget is "section" or "columns" or "tabs" or "list" or "record";
 
     private static string GetWidgetIcon(string widget) =>
         PaletteItems.FirstOrDefault(p => p.Widget == widget)?.Icon ?? "🧩";
@@ -1841,6 +1989,9 @@
         {
             "section" => node.StringProp("title") ?? "Bölüm Kartı",
             "columns" => $"Yan Yana Sütunlar ({node.Children?.Count ?? 0} sütun)",
+            "tabs" => $"Sekmeli Panel ({node.Children?.Count ?? 0} sekme)",
+            "stat" => $"{node.StringProp("label")}: {node.StringProp("value")}",
+            "timeline" => node.StringProp("source") is { } s ? $"Zaman Çizelgesi ({s})" : $"Zaman Çizelgesi ({node.ArrayProp("items")?.Count ?? 0} adım)",
             "fields" => $"{node.ArrayProp("items")?.Count ?? 0} alan satırı",
             "heading" => node.StringProp("text") ?? "Başlık",
             "text" => node.StringProp("text") ?? "Metin",

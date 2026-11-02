@@ -53,6 +53,13 @@ const PALETTE_ITEMS: readonly WidgetPaletteItem[] = [
   },
   {
     category: '📦 Düzen & Kapsayıcılar',
+    widget: 'tabs',
+    icon: '📑',
+    title: 'Sekmeli Panel (tabs)',
+    description: 'Alt bileşenlerini sekmeli (tab) paneller halinde gösterir.',
+  },
+  {
+    category: '📦 Düzen & Kapsayıcılar',
     widget: 'list',
     icon: '🔁',
     title: 'Tekrarlayan Liste (list)',
@@ -71,6 +78,20 @@ const PALETTE_ITEMS: readonly WidgetPaletteItem[] = [
     icon: '🧩',
     title: 'Alt Ekran Gömme (layout)',
     description: "Başka bir 'view' ekranını bu ekranın içine gömer.",
+  },
+  {
+    category: '📝 İçerik & Göstergeler',
+    widget: 'stat',
+    icon: '📈',
+    title: 'KPI / Metrik Kartı (stat)',
+    description: 'Büyük vurgulanan metrik değeri, etiket, ikon ve alt açıklama kartı.',
+  },
+  {
+    category: '📝 İçerik & Göstergeler',
+    widget: 'timeline',
+    icon: '🕒',
+    title: 'Zaman Çizelgesi (timeline)',
+    description: 'Süreç adımlarını veya olay geçmişini dikey zaman çizelgesinde gösterir.',
   },
   {
     category: '📝 İçerik & Göstergeler',
@@ -667,6 +688,111 @@ const PALETTE_ITEMS: readonly WidgetPaletteItem[] = [
                     class="middt-wf-input"
                     [value]="getNodeString(node, 'title')"
                     (change)="setNodeString(node, 'title', $any($event.target).value)" />
+                </div>
+              } @else if (node.widget === 'tabs') {
+                <div class="middt-ui-input">
+                  <label>Sekme Başlıkları (titles — virgülle)</label>
+                  <input
+                    class="middt-wf-input"
+                    placeholder="Genel Bilgiler, Detaylar"
+                    [value]="getNodeCsvArray(node, 'titles')"
+                    (change)="setNodeCsvArray(node, 'titles', $any($event.target).value)" />
+                  <small class="middt-ui-text-muted">Her alt bileşen (children) sırasıyla bir sekme panelini oluşturur.</small>
+                </div>
+              } @else if (node.widget === 'stat') {
+                <div class="middt-wf-grid-2">
+                  <div class="middt-ui-input">
+                    <label>Etiket (label)</label>
+                    <input
+                      class="middt-wf-input"
+                      placeholder="Toplam Tutar"
+                      [value]="getNodeString(node, 'label')"
+                      (change)="setNodeString(node, 'label', $any($event.target).value)" />
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>Değer Şablonu (value)</label>
+                    <input
+                      class="middt-wf-input"
+                      [placeholder]="'{{ data.amount }}'"
+                      [value]="getNodeString(node, 'value')"
+                      (change)="setNodeString(node, 'value', $any($event.target).value)" />
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>Biçim (format)</label>
+                    <select
+                      class="middt-wf-input"
+                      [value]="getNodeString(node, 'format')"
+                      (change)="setNodeString(node, 'format', $any($event.target).value)">
+                      <option value="">Yok (Metin)</option>
+                      <option value="N2">N2 (Para / Ondalık)</option>
+                      <option value="N0">N0 (Tam Sayı)</option>
+                      <option value="g">g (Tarih + Saat)</option>
+                    </select>
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>Vurgu Rengi (color)</label>
+                    <select
+                      class="middt-wf-input"
+                      [value]="getNodeString(node, 'color') || 'primary'"
+                      (change)="setNodeString(node, 'color', $any($event.target).value)">
+                      <option value="primary">primary</option>
+                      <option value="secondary">secondary</option>
+                      <option value="success">success</option>
+                      <option value="warning">warning</option>
+                      <option value="danger">danger</option>
+                      <option value="info">info</option>
+                    </select>
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>Alt Açıklama (subtitle)</label>
+                    <input
+                      class="middt-wf-input"
+                      [value]="getNodeString(node, 'subtitle')"
+                      (change)="setNodeString(node, 'subtitle', $any($event.target).value)" />
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>İkon (icon)</label>
+                    <input
+                      class="middt-wf-input"
+                      placeholder="📈"
+                      [value]="getNodeString(node, 'icon')"
+                      (change)="setNodeString(node, 'icon', $any($event.target).value)" />
+                  </div>
+                </div>
+              } @else if (node.widget === 'timeline') {
+                <div class="middt-wf-grid-2">
+                  <div class="middt-ui-input">
+                    <label>Dizi Kaynağı İfadesi (source)</label>
+                    <input
+                      class="middt-wf-input"
+                      placeholder="data.history"
+                      [value]="getNodeString(node, 'source')"
+                      (change)="setNodeString(node, 'source', $any($event.target).value)" />
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>Başlık Şablonu (title)</label>
+                    <input
+                      class="middt-wf-input"
+                      [placeholder]="'{{ row.title }}'"
+                      [value]="getNodeString(node, 'title')"
+                      (change)="setNodeString(node, 'title', $any($event.target).value)" />
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>Alt Başlık Şablonu (subtitle)</label>
+                    <input
+                      class="middt-wf-input"
+                      [placeholder]="'{{ row.note }}'"
+                      [value]="getNodeString(node, 'subtitle')"
+                      (change)="setNodeString(node, 'subtitle', $any($event.target).value)" />
+                  </div>
+                  <div class="middt-ui-input">
+                    <label>Zaman Şablonu (time)</label>
+                    <input
+                      class="middt-wf-input"
+                      [placeholder]="'{{ row.date }}'"
+                      [value]="getNodeString(node, 'time')"
+                      (change)="setNodeString(node, 'time', $any($event.target).value)" />
+                  </div>
                 </div>
               } @else if (node.widget === 'fields') {
                 @let rows = getNodeArray(node, 'items');
@@ -1373,6 +1499,24 @@ export class MiddtLayoutEditorComponent implements OnInit {
     return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
   }
 
+  protected getNodeCsvArray(node: UiNode, prop: string): string {
+    const v = node[prop];
+    return Array.isArray(v) ? v.map(x => String(x)).join(', ') : '';
+  }
+
+  protected setNodeCsvArray(node: UiNode, prop: string, raw: string): void {
+    const items = raw
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (items.length === 0) {
+      delete node[prop];
+    } else {
+      node[prop] = items;
+    }
+    this.#touchDoc();
+  }
+
   protected addFieldsRow(node: UiNode): void {
     const rows = this.getNodeArray(node, 'items');
     rows.push({ label: 'Yeni Alan', value: '{{ data.title }}' });
@@ -1398,7 +1542,7 @@ export class MiddtLayoutEditorComponent implements OnInit {
   }
 
   protected isContainerWidget(widget: string): boolean {
-    return widget === 'section' || widget === 'columns' || widget === 'list' || widget === 'record';
+    return widget === 'section' || widget === 'columns' || widget === 'tabs' || widget === 'list' || widget === 'record';
   }
 
   protected getWidgetIcon(widget: string): string {
@@ -1415,6 +1559,14 @@ export class MiddtLayoutEditorComponent implements OnInit {
         return this.getNodeString(node, 'title') || 'Bölüm Kartı';
       case 'columns':
         return `Yan Yana Sütunlar (${node.children?.length ?? 0} sütun)`;
+      case 'tabs':
+        return `Sekmeli Panel (${node.children?.length ?? 0} sekme)`;
+      case 'stat':
+        return `${this.getNodeString(node, 'label')}: ${this.getNodeString(node, 'value')}`;
+      case 'timeline':
+        return this.getNodeString(node, 'source')
+          ? `Zaman Çizelgesi (${this.getNodeString(node, 'source')})`
+          : `Zaman Çizelgesi (${this.getNodeArray(node, 'items').length} adım)`;
       case 'fields':
         return `${this.getNodeArray(node, 'items').length} alan satırı`;
       case 'heading':
@@ -1571,6 +1723,33 @@ function createWidgetNode(widget: string): UiNode {
         children: [
           { widget: 'section', title: 'Sol Sütun', children: [{ widget: 'text', text: 'Sol sütun içeriği' }] },
           { widget: 'section', title: 'Sağ Sütun', children: [{ widget: 'text', text: 'Sağ sütun içeriği' }] },
+        ],
+      };
+    case 'tabs':
+      return {
+        widget: 'tabs',
+        titles: ['Genel Bilgiler', 'Detaylar'],
+        children: [
+          { widget: 'section', title: 'Genel Bilgiler', children: [{ widget: 'text', text: 'Birinci sekme içeriği' }] },
+          { widget: 'section', title: 'Detaylar', children: [{ widget: 'text', text: 'İkinci sekme içeriği' }] },
+        ],
+      };
+    case 'stat':
+      return {
+        widget: 'stat',
+        label: 'Toplam Tutar',
+        value: '{{ data.amount }}',
+        format: 'N2',
+        subtitle: 'Durum: {{ instance.state }}',
+        icon: '📈',
+        color: 'primary',
+      };
+    case 'timeline':
+      return {
+        widget: 'timeline',
+        items: [
+          { title: 'Başvuru Alındı', subtitle: '{{ data.customerName }}', time: 'Adım 1', color: 'success' },
+          { title: 'İnceleme Sürecinde', subtitle: 'Aktif durum: {{ instance.state }}', time: 'Adım 2', color: 'primary' },
         ],
       };
     case 'fields':

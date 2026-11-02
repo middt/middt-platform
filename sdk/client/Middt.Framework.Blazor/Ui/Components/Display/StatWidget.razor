@@ -1,0 +1,17 @@
+@inherits UiWidgetBase
+
+<div class="middt-ui-stat middt-ui-stat-@(Node.StringProp("color") ?? "primary")">
+    <div class="middt-ui-stat-header">
+        <span class="middt-ui-stat-label">@Text("label")</span>
+        @if (Node.StringProp("icon") is { Length: > 0 } icon)
+        {
+            <span class="middt-ui-stat-icon" aria-hidden="true">@icon</span>
+        }
+    </div>
+    <div class="middt-ui-stat-value">@Context.Text(Node.StringProp("value"), Node.StringProp("format"))</div>
+    @if (Node.StringProp("subtitle") is not null)
+    {
+        <div class="middt-ui-stat-subtitle">@Text("subtitle")</div>
+    }
+</div>
+

@@ -1,5 +1,8 @@
 using System.Globalization;
+using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -234,6 +237,69 @@ public class WorkflowApiClient(
     /// <summary>Retries the failed step of a <see cref="WorkflowInstanceStatus.Faulted"/> instance with optional updated input/data.</summary>
     public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> RetryAsync(string workflow, Guid id, JsonObject? input, CancellationToken cancellationToken = default) =>
         SendAsync<BaseResponseDataModel<WorkflowInstanceModel>>(HttpMethod.Post, $"{InstanceRoute(workflow, id)}/retry", input, cancellationToken);
+
+    /// <summary>Subscribes to the real-time Server-Sent Events (SSE) stream (<c>GET /api/workflows/events</c>) for matching workflow events.</summary>
+    public virtual async IAsyncEnumerable<WorkflowEventStreamModel> WatchEventsAsync(
+        string? workflow = null,
+        Guid? instanceId = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var query = new StringBuilder();
+        AppendQuery(query, "workflow", workflow);
+        AppendQuery(query, "instanceId", instanceId?.ToString("D", CultureInfo.InvariantCulture));
+        var uri = $"{RoutePrefix.TrimEnd('/')}/events{query}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        var token = await SessionState.Token();
+        if (!string.IsNullOrEmpty(token))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            yield break;
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(cancellationToken);
+            if (line is null)
+            {
+                yield break;
+            }
+
+            if (!line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var json = line[5..].Trim();
+            if (string.IsNullOrEmpty(json))
+            {
+                continue;
+            }
+
+            WorkflowEventStreamModel? parsed = null;
+            try
+            {
+                parsed = JsonSerializer.Deserialize<WorkflowEventStreamModel>(json, SerializerOptions);
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed SSE payload
+            }
+
+            if (parsed is not null)
+            {
+                yield return parsed;
+            }
+        }
+    }
 
     protected string WorkflowRoute(string workflow) =>
         $"{RoutePrefix.TrimEnd('/')}/{EscapePathSegment(workflow, nameof(workflow))}";

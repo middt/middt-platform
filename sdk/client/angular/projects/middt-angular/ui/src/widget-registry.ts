@@ -10,7 +10,10 @@ import {
   UiLinkWidget,
   UiListWidget,
   UiSectionWidget,
+  UiStatWidget,
+  UiTabsWidget,
   UiTextWidget,
+  UiTimelineWidget,
 } from './display-widgets';
 import { UiGridWidget } from './grid-widget.component';
 import { UiLayoutWidget } from './layout-widget.component';
@@ -38,6 +41,9 @@ export function defaultUiWidgets(): UiWidgetDefinition[] {
     { name: UiWidgetNames.fields, component: UiFieldsWidget, description: 'Label/value list.' },
     { name: UiWidgetNames.alert, component: UiAlertWidget, description: 'Highlighted message.' },
     { name: UiWidgetNames.badge, component: UiBadgeWidget, description: 'Small status label.' },
+    { name: UiWidgetNames.stat, component: UiStatWidget, description: 'Key performance indicator (KPI) metric card.' },
+    { name: UiWidgetNames.tabs, component: UiTabsWidget, description: 'Organizes its visible children into switchable tab panels.' },
+    { name: UiWidgetNames.timeline, component: UiTimelineWidget, description: 'Chronological event or step timeline.' },
     { name: UiWidgetNames.section, component: UiSectionWidget, description: 'Card with an optional title.' },
     { name: UiWidgetNames.columns, component: UiColumnsWidget, description: 'Shows its children side by side (one column each, stacked on small screens).' },
     { name: UiWidgetNames.divider, component: UiDividerWidget, description: 'Horizontal line.' },

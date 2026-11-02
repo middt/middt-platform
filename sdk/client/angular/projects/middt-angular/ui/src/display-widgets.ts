@@ -1,10 +1,10 @@
 // Display widgets – same markup and CSS classes as the Blazor display widgets and the static UiHtmlRenderer.
 
-import { ChangeDetectionStrategy, Component, computed, forwardRef, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, forwardRef, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { Router } from '@angular/router';
-import { PortableExpressionError, UiExpressions, UiFieldJson, UiRenderContext, UiUrl } from '@middt/ui-core';
+import { PortableExpressionError, UiExpressions, UiFieldJson, type UiNode, UiRenderContext, UiUrl } from '@middt/ui-core';
 import { UiNodeComponent, UiNodeListComponent } from './node.component';
 import { cloneJson, isJsonObject, UiProps, UiWidgetBase } from './widget-base';
 
@@ -82,6 +82,202 @@ export class UiAlertWidget extends UiWidgetBase {
   template: `<span class="middt-ui-badge middt-ui-badge-{{ stringProp('color') ?? 'secondary' }}">{{ text('text') }}</span>`,
 })
 export class UiBadgeWidget extends UiWidgetBase {}
+
+@Component({
+  selector: 'middt-ui-stat',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: contents,
+  template: `
+    <div class="middt-ui-stat middt-ui-stat-{{ stringProp('color') ?? 'primary' }}">
+      <div class="middt-ui-stat-header">
+        <span class="middt-ui-stat-label">{{ text('label') }}</span>
+        @if (icon(); as ic) {
+          <span class="middt-ui-stat-icon" aria-hidden="true">{{ ic }}</span>
+        }
+      </div>
+      <div class="middt-ui-stat-value">{{ formattedValue() }}</div>
+      @if (hasSubtitle()) {
+        <div class="middt-ui-stat-subtitle">{{ text('subtitle') }}</div>
+      }
+    </div>
+  `,
+})
+export class UiStatWidget extends UiWidgetBase {
+  protected readonly icon = computed(() => {
+    const ic = UiProps.string(this.node(), 'icon');
+    return ic && ic.length > 0 ? ic : null;
+  });
+
+  protected readonly formattedValue = computed(() =>
+    this.context().text(UiProps.string(this.node(), 'value'), UiProps.string(this.node(), 'format')),
+  );
+
+  protected readonly hasSubtitle = computed(() => UiProps.string(this.node(), 'subtitle') !== null);
+}
+
+@Component({
+  selector: 'middt-ui-tabs',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [forwardRef(() => UiNodeComponent)],
+  host: contents,
+  template: `
+    @if (tabs().length > 0) {
+      <div class="middt-ui-tabs">
+        <div class="middt-ui-tablist" role="tablist">
+          @for (tab of tabs(); track $index) {
+            <button
+              type="button"
+              role="tab"
+              [class]="$index === active() ? 'middt-ui-tab middt-ui-tab-active' : 'middt-ui-tab'"
+              [attr.aria-selected]="$index === active() ? 'true' : 'false'"
+              (click)="selectTab($index)">
+              {{ tab.title }}
+            </button>
+          }
+        </div>
+        @for (tab of tabs(); track $index) {
+          <div
+            [class]="$index === active() ? 'middt-ui-tabpanel' : 'middt-ui-tabpanel middt-ui-tabpanel-hidden'"
+            role="tabpanel">
+            <middt-ui-node [node]="tab.child" [context]="context()" />
+          </div>
+        }
+      </div>
+    }
+  `,
+})
+export class UiTabsWidget extends UiWidgetBase {
+  protected readonly activeIndex = signal(0);
+
+  protected readonly tabs = computed(() => {
+    const context = this.context();
+    const node = this.node();
+    const titles = UiProps.array(node, 'titles');
+    const result: { child: UiNode; title: string }[] = [];
+    const children = node.children ?? [];
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      if (!context.isVisible(child.visibleWhen ?? null)) {
+        continue;
+      }
+
+      const rawExplicit = titles !== null && i < titles.length ? titles[i] : null;
+      const explicitTitle = typeof rawExplicit === 'string' || typeof rawExplicit === 'number' ? String(rawExplicit) : null;
+      const childTitle = UiProps.string(child, 'title');
+      const resolvedTitle =
+        explicitTitle && explicitTitle.trim().length > 0
+          ? context.text(explicitTitle)
+          : childTitle && childTitle.length > 0
+            ? context.text(childTitle)
+            : `Sekme ${result.length + 1}`;
+      result.push({ child, title: resolvedTitle });
+    }
+
+    return result;
+  });
+
+  protected readonly active = computed(() => {
+    const count = this.tabs().length;
+    return count === 0 ? 0 : Math.min(Math.max(0, this.activeIndex()), count - 1);
+  });
+
+  protected selectTab(index: number): void {
+    this.activeIndex.set(index);
+  }
+}
+
+@Component({
+  selector: 'middt-ui-timeline',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: contents,
+  template: `
+    @if (entries().length === 0) {
+      <p class="middt-ui-text middt-ui-text-muted">{{ stringProp('empty') ?? 'Kayıt yok.' }}</p>
+    } @else {
+      <ol class="middt-ui-timeline">
+        @for (entry of entries(); track $index) {
+          <li class="middt-ui-timeline-item">
+            <span class="middt-ui-timeline-dot middt-ui-timeline-dot-{{ entry.color }}" aria-hidden="true"></span>
+            <div class="middt-ui-timeline-content">
+              <div class="middt-ui-timeline-header">
+                <strong class="middt-ui-timeline-title">{{ entry.title }}</strong>
+                @if (entry.time) {
+                  <span class="middt-ui-timeline-time">{{ entry.time }}</span>
+                }
+              </div>
+              @if (entry.subtitle) {
+                <div class="middt-ui-timeline-subtitle">{{ entry.subtitle }}</div>
+              }
+            </div>
+          </li>
+        }
+      </ol>
+    }
+  `,
+})
+export class UiTimelineWidget extends UiWidgetBase {
+  protected readonly entries = computed(() => {
+    const context = this.context();
+    const node = this.node();
+    const defaultColor = UiProps.string(node, 'color') ?? 'primary';
+    const list: { title: string; subtitle: string | null; time: string | null; color: string }[] = [];
+
+    const staticItems = UiProps.array(node, 'items');
+    if (staticItems !== null && staticItems.length > 0) {
+      for (const item of staticItems) {
+        if (!isJsonObject(item) || !context.isVisible(UiFieldJson.getString(item, 'visibleWhen'))) {
+          continue;
+        }
+
+        const title = context.text(UiFieldJson.getString(item, 'title'));
+        const subRaw = UiFieldJson.getString(item, 'subtitle');
+        const subtitle = subRaw !== null ? context.text(subRaw) : null;
+        const timeRaw = UiFieldJson.getString(item, 'time');
+        const time = timeRaw !== null ? context.text(timeRaw) : null;
+        const color = UiFieldJson.getString(item, 'color') ?? defaultColor;
+        list.push({ title, subtitle, time, color });
+      }
+
+      return list;
+    }
+
+    const source = UiProps.string(node, 'source');
+    if (source !== null && source.length > 0) {
+      let value: unknown;
+      try {
+        value = context.render(`{{ ${source} }}`);
+      } catch (error) {
+        if (error instanceof PortableExpressionError) {
+          return [];
+        }
+
+        throw error;
+      }
+
+      if (Array.isArray(value)) {
+        const titleTpl = UiProps.string(node, 'title');
+        const subTpl = UiProps.string(node, 'subtitle');
+        const timeTpl = UiProps.string(node, 'time');
+        for (let idx = 0; idx < Math.min(value.length, MAX_LIST_ITEMS); idx++) {
+          const cloned = cloneJson(value[idx]);
+          if (isJsonObject(cloned) && !('rowNumber' in cloned)) {
+            cloned['rowNumber'] = idx + 1;
+          }
+
+          const rowContext = context.with(UiExpressions.row, cloned);
+          const title = rowContext.text(titleTpl);
+          const subtitle = subTpl !== null ? rowContext.text(subTpl) : null;
+          const time = timeTpl !== null ? rowContext.text(timeTpl) : null;
+          const rowColor = isJsonObject(cloned) ? UiFieldJson.getString(cloned, 'color') : null;
+          const color = rowColor && rowColor.length > 0 ? rowColor : defaultColor;
+          list.push({ title, subtitle, time, color });
+        }
+      }
+    }
+
+    return list;
+  });
+}
 
 @Component({
   selector: 'middt-ui-section',

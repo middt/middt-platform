@@ -120,6 +120,15 @@ public sealed class UiHtmlRenderer(UiWidgetCatalog catalog, IOptions<MiddtUiOpti
             case "badge":
                 html.Raw($"<span class=\"middt-ui-badge middt-ui-badge-{Attr(node.StringProp("color") ?? "secondary")}\">").Text(Text(node, context, "text")).Raw("</span>");
                 break;
+            case "stat":
+                Stat(node, context, html);
+                break;
+            case "tabs":
+                Tabs(node, context, html);
+                break;
+            case "timeline":
+                Timeline(node, context, html);
+                break;
             case "divider":
                 html.Raw("<hr class=\"middt-ui-divider\" />");
                 break;
@@ -238,6 +247,163 @@ public sealed class UiHtmlRenderer(UiWidgetCatalog catalog, IOptions<MiddtUiOpti
         {
             html.Raw("<span class=\"middt-ui-link-disabled\">").Text(Text(node, context, "text")).Raw("</span>");
         }
+    }
+
+    private static void Stat(UiNode node, UiRenderContext context, UiHtmlBuilder html)
+    {
+        var color = Attr(node.StringProp("color") ?? "primary");
+        html.Raw($"<div class=\"middt-ui-stat middt-ui-stat-{color}\">");
+        html.Raw("<div class=\"middt-ui-stat-header\"><span class=\"middt-ui-stat-label\">")
+            .Text(Text(node, context, "label"))
+            .Raw("</span>");
+        if (node.StringProp("icon") is { Length: > 0 } icon)
+        {
+            html.Raw("<span class=\"middt-ui-stat-icon\" aria-hidden=\"true\">").Text(icon).Raw("</span>");
+        }
+
+        html.Raw("</div>");
+        html.Raw("<div class=\"middt-ui-stat-value\">")
+            .Text(context.Text(node.StringProp("value"), node.StringProp("format")))
+            .Raw("</div>");
+        if (node.StringProp("subtitle") is not null)
+        {
+            html.Raw("<div class=\"middt-ui-stat-subtitle\">").Text(Text(node, context, "subtitle")).Raw("</div>");
+        }
+
+        html.Raw("</div>");
+    }
+
+    private void Tabs(UiNode node, UiRenderContext context, UiHtmlBuilder html)
+    {
+        var titles = node.ArrayProp("titles");
+        var visibleTabs = new List<(UiNode Child, string Title)>();
+        var children = node.Children ?? [];
+        for (var i = 0; i < children.Count; i++)
+        {
+            var child = children[i];
+            if (!context.IsVisible(child))
+            {
+                continue;
+            }
+
+            var explicitTitle = titles is not null && i < titles.Count && titles[i] is JsonValue tv ? tv.ToString() : null;
+            var resolvedTitle = !string.IsNullOrWhiteSpace(explicitTitle)
+                ? context.Text(explicitTitle)
+                : child.StringProp("title") is { Length: > 0 } childTitle
+                    ? context.Text(childTitle)
+                    : $"Sekme {(visibleTabs.Count + 1).ToString(CultureInfo.InvariantCulture)}";
+            visibleTabs.Add((child, resolvedTitle));
+        }
+
+        if (visibleTabs.Count == 0)
+        {
+            return;
+        }
+
+        html.Raw("<div class=\"middt-ui-tabs\"><div class=\"middt-ui-tablist\" role=\"tablist\">");
+        for (var i = 0; i < visibleTabs.Count; i++)
+        {
+            var activeClass = i == 0 ? " middt-ui-tab-active" : string.Empty;
+            html.Raw($"<button type=\"button\" role=\"tab\" class=\"middt-ui-tab{activeClass}\" aria-selected=\"{(i == 0 ? "true" : "false")}\">")
+                .Text(visibleTabs[i].Title)
+                .Raw("</button>");
+        }
+
+        html.Raw("</div>");
+        for (var i = 0; i < visibleTabs.Count; i++)
+        {
+            var hiddenClass = i == 0 ? string.Empty : " middt-ui-tabpanel-hidden";
+            html.Raw($"<div class=\"middt-ui-tabpanel{hiddenClass}\" role=\"tabpanel\">");
+            Node(visibleTabs[i].Child, context, html);
+            html.Raw("</div>");
+        }
+
+        html.Raw("</div>");
+    }
+
+    private static void Timeline(UiNode node, UiRenderContext context, UiHtmlBuilder html)
+    {
+        var entries = new List<(string Title, string? Subtitle, string? Time, string Color)>();
+        var defaultColor = node.StringProp("color") ?? "primary";
+
+        if (node.ArrayProp("items") is { Count: > 0 } staticItems)
+        {
+            foreach (var item in staticItems.OfType<JsonObject>())
+            {
+                if (!context.IsVisible(UiFieldJson.GetString(item, "visibleWhen")))
+                {
+                    continue;
+                }
+
+                var title = context.Text(UiFieldJson.GetString(item, "title"));
+                var subtitle = UiFieldJson.GetString(item, "subtitle") is { } sub ? context.Text(sub) : null;
+                var time = UiFieldJson.GetString(item, "time") is { } tm ? context.Text(tm) : null;
+                var color = UiFieldJson.GetString(item, "color") ?? defaultColor;
+                entries.Add((title, subtitle, time, color));
+            }
+        }
+        else if (node.StringProp("source") is { Length: > 0 } source)
+        {
+            JsonArray? items;
+            try
+            {
+                items = UiExpressions.Evaluator.EvaluateToNode(source, context.ToExpressionContext()) as JsonArray;
+            }
+            catch (PortableExpressionException)
+            {
+                items = null;
+            }
+
+            if (items is { Count: > 0 })
+            {
+                var rowIndex = 0;
+                foreach (var item in items.Take(MaxListItems))
+                {
+                    rowIndex++;
+                    var cloned = item?.DeepClone();
+                    if (cloned is JsonObject itemObj && itemObj["rowNumber"] is null)
+                    {
+                        itemObj["rowNumber"] = rowIndex;
+                    }
+
+                    var rowContext = context.With(UiExpressions.Row, cloned);
+                    var title = rowContext.Text(node.StringProp("title"));
+                    var subtitle = node.StringProp("subtitle") is { } sub ? rowContext.Text(sub) : null;
+                    var time = node.StringProp("time") is { } tm ? rowContext.Text(tm) : null;
+                    var color = (cloned is JsonObject obj && UiFieldJson.GetString(obj, "color") is { Length: > 0 } rowColor ? rowColor : null) ?? defaultColor;
+                    entries.Add((title, subtitle, time, color));
+                }
+            }
+        }
+
+        if (entries.Count == 0)
+        {
+            html.Raw("<p class=\"middt-ui-text middt-ui-text-muted\">").Text(node.StringProp("empty") ?? "Kayıt yok.").Raw("</p>");
+            return;
+        }
+
+        html.Raw("<ol class=\"middt-ui-timeline\">");
+        foreach (var entry in entries)
+        {
+            html.Raw("<li class=\"middt-ui-timeline-item\">")
+                .Raw($"<span class=\"middt-ui-timeline-dot middt-ui-timeline-dot-{Attr(entry.Color)}\" aria-hidden=\"true\"></span>")
+                .Raw("<div class=\"middt-ui-timeline-content\"><div class=\"middt-ui-timeline-header\">")
+                .Raw("<strong class=\"middt-ui-timeline-title\">").Text(entry.Title).Raw("</strong>");
+            if (!string.IsNullOrEmpty(entry.Time))
+            {
+                html.Raw("<span class=\"middt-ui-timeline-time\">").Text(entry.Time).Raw("</span>");
+            }
+
+            html.Raw("</div>");
+            if (!string.IsNullOrEmpty(entry.Subtitle))
+            {
+                html.Raw("<div class=\"middt-ui-timeline-subtitle\">").Text(entry.Subtitle).Raw("</div>");
+            }
+
+            html.Raw("</div></li>");
+        }
+
+        html.Raw("</ol>");
     }
 
     private static string Text(UiNode node, UiRenderContext context, string prop) => context.Text(node.StringProp(prop));

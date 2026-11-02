@@ -29,6 +29,7 @@
                 <span class="middt-wf-subtype">{{ subType }}</span>
               }
               <span title="Akış sürümü">v{{ instance.workflowVersion }}</span>
+              <span class="middt-ui-badge middt-ui-badge-success" data-testid="wf-sse-status" title="Gerçek zamanlı SSE bağlantısı aktif">🟢 Canlı (SSE)</span>
             </div>
           </div>
           <button mat-icon-button type="button" title="Yenile" aria-label="Detayı yenile" (click)="refresh()"><mat-icon>refresh</mat-icon></button>

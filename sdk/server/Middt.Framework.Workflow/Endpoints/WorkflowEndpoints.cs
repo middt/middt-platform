@@ -367,6 +367,10 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<WorkflowPurgeResultModel>.Success(result, result.PurgedInstancesCount);
         }).WithName("PurgeWorkflowInstances");
 
+        group.MapGet("events", (string? workflow, Guid? instanceId, WorkflowRegistry registry, WorkflowEventStreamHub hub, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+            StreamWorkflowEventsAsync(workflow, instanceId, registry, hub, principal, http, ct))
+            .WithName("StreamWorkflowEvents");
+
         group.MapGet("{workflow}", (string workflow, int? version, WorkflowRegistry registry, ClaimsPrincipal principal) =>
         {
             var definition = version is { } v ? registry.Get(workflow, v) : registry.GetLatest(workflow);
@@ -463,6 +467,10 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<List<WorkflowAgentRunModel>>.Success(items, items.Count);
         }).WithName("GetWorkflowInstanceAgentRuns");
 
+        group.MapGet("{workflow}/instances/{id:guid}/events", (string workflow, Guid id, WorkflowRegistry registry, WorkflowEventStreamHub hub, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+            StreamWorkflowEventsAsync(workflow, id, registry, hub, principal, http, ct))
+            .WithName("StreamWorkflowInstanceEvents");
+
         group.MapPost("{workflow}/instances/{id:guid}/retry", async (string workflow, Guid id, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] JsonObject? input, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
         {
             var enrichedInput = input is { Count: > 0 } ? WorkflowHttpInput.FromHttpContext(http, input) : null;
@@ -488,6 +496,55 @@ public static class WorkflowEndpoints
         http.Response.Headers.ETag = ComputeInstanceETag(instance);
         var body = BaseResponseDataModel<WorkflowInstanceModel>.Success(instance, 1);
         return result.Outcome == WorkflowMessageOutcome.Buffered ? Results.Accepted(null, body) : Results.Ok(body);
+    }
+
+    private static async Task<IResult> StreamWorkflowEventsAsync(
+        string? workflow,
+        Guid? instanceId,
+        WorkflowRegistry registry,
+        WorkflowEventStreamHub hub,
+        ClaimsPrincipal principal,
+        HttpContext http,
+        CancellationToken ct)
+    {
+        var user = WorkflowUser.From(principal);
+        if (!string.IsNullOrWhiteSpace(workflow))
+        {
+            var definition = registry.GetLatest(workflow);
+            if (definition.Roles.Count > 0 && !definition.Roles.Any(user.IsInRole) && !user.IsInRole("ui-admin"))
+            {
+                throw new WorkflowForbiddenException($"You are not allowed to access workflow '{workflow}'.");
+            }
+        }
+
+        bool CanAccessWorkflow(string wfKey)
+        {
+            try
+            {
+                var def = registry.GetLatest(wfKey);
+                return def.Roles.Count == 0 || def.Roles.Any(user.IsInRole) || user.IsInRole("ui-admin");
+            }
+            catch (WorkflowNotFoundException)
+            {
+                return false;
+            }
+        }
+
+        http.Response.Headers.ContentType = "text/event-stream; charset=utf-8";
+        http.Response.Headers.CacheControl = "no-cache";
+        http.Response.Headers["X-Accel-Buffering"] = "no";
+
+        await http.Response.WriteAsync(": connected\n\n", ct);
+        await http.Response.Body.FlushAsync(ct);
+
+        await foreach (var ev in hub.SubscribeAsync(workflow, instanceId, CanAccessWorkflow, ct))
+        {
+            var payload = System.Text.Json.JsonSerializer.Serialize(ev, WorkflowJson.Options);
+            await http.Response.WriteAsync($"event: workflow-event\ndata: {payload}\n\n", ct);
+            await http.Response.Body.FlushAsync(ct);
+        }
+
+        return Results.Empty;
     }
 
     private static TimeSpan ParseBuffer(string? bufferFor) =>

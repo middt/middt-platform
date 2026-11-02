@@ -1,12 +1,13 @@
 # Citizen Developer Rehberi – Middt Platform ile Kod Yazmadan (Zero-Code) Uygulama Geliştirme
 
-Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; yalnızca **JSON tanımları** ve çalışma zamanı **Ekran Tasarımı Editörü** kullanarak uçtan uca kurumsal uygulamaların (veri modeli, iş akışı motoru, iş kuralları, dış servis entegrasyonları, yapay zeka ajanları ve Blazor/Angular ekranları) nasıl geliştirileceğini adım adım anlatır.
+Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; yalnızca **JSON tanımları** ve tarayıcı üzerindeki **3 Görsel Stüdyo** (**Akış Tasarımı `/workflow-admin`**, **Ekran Tasarımı `/ui-admin`**, **AI Agent & MCP Stüdyosu `/agent-admin`**) kullanarak uçtan uca kurumsal uygulamaların (veri modeli, iş akışı motoru, iş kuralları, dış servis entegrasyonları, yapay zeka ajanları, gerçek zamanlı SSE güncellemeleri ve Blazor/Angular ekranları) nasıl geliştirileceğini adım adım anlatır.
 
 ---
 
 ## İçindekiler
 
 1. [Mimari Genel Bakış: Citizen Developer Neleri Tanımlar?](#1-mimari-genel-bakış-citizen-developer-neleri-tanımlar)
+   - [1.1. Tarayıcıdan Görsel Stüdyolar ile Geliştirme vs. JSON Dosyaları](#11-tarayıcıdan-görsel-stüdyolar-ile-geliştirme-vs-json-dosyaları)
 2. [Proje Klasör Yapısı (Nereye Ne Eklenir?)](#2-proje-klasör-yapısı-nereye-ne-eklenir)
 3. [Bölüm 1: İş Akışı Motoru (Workflow Engine) Kullanımı](#3-bölüm-1-iş-akışı-motoru-workflow-engine-kullanımı)
    - [3.1. Temel İş Akışı İskeleti ve Güvenlik](#31-temel-iş-akışı-iskeleti-ve-güvenlik)
@@ -28,15 +29,21 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
      - [10. `agent` / `aiAgent` — Yapay Zeka Ajanı Çalıştırma](#10-agent--aiagent--yapay-zeka-ajanı-çalıştırma)
      - [11. `mcp` — Model Context Protocol Sunucusu Çağrısı](#11-mcp--model-context-protocol-sunucusu-çağrısı)
      - [12. `log` — Yapılandırılmış Log Yazma](#12-log--yapılandırılmış-log-yazma)
-4. [Bölüm 2: Yapay Zeka Ajanları (AI Agents), Araçlar (Tools) ve MCP](#4-bölüm-2-yapay-zeka-ajanları-ai-agents-araçlar-tools-ve-mcp)
+4. [Bölüm 2: Yapay Zeka Ajanları (AI Agents), Araçlar (Tools), MCP ve Görsel Stüdyo (`/agent-admin`)](#4-bölüm-2-yapay-zeka-ajanları-ai-agents-araçlar-tools-ve-mcp)
    - [4.1. AI Ajanı Tanımlama (`Agents/*.json`)](#41-ai-ajanı-tanımlama-agentsjson)
    - [4.2. Kodsuz AI Araçları (`Agents/Tools/*.json`) — Expression, Task (`http`, `set`, `cache`) ve MCP](#42-kodsuz-ai-araçları-agentstoolsjson--expression-task-http-set-cache-ve-mcp)
    - [4.3. Akış İçinde Ajan Çağırma ve Otomatik Geçiş Kararı (`selectedTransition`)](#43-akış-içinde-ajan-çağırma-ve-otomatik-geçiş-kararı-selectedtransition)
+   - [4.4. Görsel AI Ajan, Araç ve MCP Stüdyosu (`/agent-admin`) ve Canlı Test Playground](#44-görsel-ai-ajan-araç-ve-mcp-stüdyosu-agent-admin-ve-canlı-test-playground)
 5. [Bölüm 3: İfade Dili (Expression Language) Rehberi](#5-bölüm-3-ifade-dili-expression-language-rehberi)
-6. [Bölüm 4: Sunucu Güdümlü Ekran Tasarımı (`Layouts/*.json`) ve Canlı Tasarımcılar](#6-bölüm-4-sunucu-güdümlü-ekran-tasarımı-layoutsjson)
-   - [6.1. Ekran Bileşenleri (Widgets) Kataloğu](#61-ekran-bileşenleri-widgets-kataloğu)
-   - [6.2. Canlı Ekran Tasarımı Editörü (`/ui-admin`)](#62-canlı-ekran-tasarımı-editörü-ui-admin)
+6. [Bölüm 4: Sunucu Güdümlü Ekran Tasarımı (`Layouts/*.json`), 16 Widget ve Canlı Tasarımcılar](#6-bölüm-4-sunucu-güdümlü-ekran-tasarımı-layoutsjson)
+   - [6.1. Ekran Bileşenleri (Widgets) Kataloğu (`stat`, `tabs`, `timeline` Dahil 16 Bileşen)](#61-ekran-bileşenleri-widgets-kataloğu)
+     - [6.1.1. `stat` — KPI / Metrik Kartı Bileşeni Detaylı Kullanımı](#611-stat--kpi--metrik-kartı-bileşeni-detaylı-kullanımı)
+     - [6.1.2. `tabs` — Etkileşimli Sekmeli Panel Konteyneri Detaylı Kullanımı](#612-tabs--etkileşimli-sekmeli-panel-konteyneri-detaylı-kullanımı)
+     - [6.1.3. `timeline` — Süreç ve Aktivite Zaman Çizelgesi Detaylı Kullanımı](#613-timeline--süreç-ve-aktivite-zaman-çizelgesi-detaylı-kullanımı)
+   - [6.2. Görsel Sürükle-Bırak Ekran Tasarımcısı (`/ui-admin`)](#62-görsel-sürükle-bırak-ekran-tasarımcısı-ui-admin-ve-akış-bağlantısı)
    - [6.3. Görsel İş Akışı ve Görev Tasarımcısı (`/workflow-admin`)](#63-görsel-iş-akışı-ve-görev-tasarımcısı-workflow-admin)
+   - [6.4. Sürüm Geçmişi, Simülasyon (Dry-Run), Görev Kutusu (`/inbox`), Operasyon Merkezi ve Paket Taşıma](#64-sürüm-geçmişi-simülasyon-dry-run-görev-kutusu-inbox-operasyon-merkezi-ve-paket-taşıma)
+   - [6.5. Gerçek Zamanlı İş Akışı Güncellemeleri (Canlı SSE — Server-Sent Events)](#65-gerçek-zamanlı-iş-akışı-güncellemeleri-canlı-sse--server-sent-events)
 7. [Bölüm 5: Dış Servis Simülasyonu (Mockoon) ve Başlangıç Verileri (Seeds)](#7-bölüm-5-dış-servis-simülasyonu-mockoon-ve-başlangıç-verileri-seeds)
 8. [Bölüm 6: Uçtan Uca Örnek Proje — "Tedarikçi Satınalma Talebi" Modülü](#8-bölüm-6-uçtan-uca-örnek-proje--tedarikçi-satınalma-talebi-modülü)
 9. [Kontrol Listesi ve Doğrulama Komutları](#9-kontrol-listesi-ve-doğrulama-komutları)
@@ -45,24 +52,24 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
 
 ## 1. Mimari Genel Bakış: Citizen Developer Neleri Tanımlar?
 
-Middt Platform'da veritabanı tablosu açmak, C# Entity/Controller yazmak veya Blazor/Angular sayfası kodlamak gerekmez. Platform tüm iş mantığını ve ekranları deklaratif JSON dosyalarından üretir:
+Middt Platform'da veritabanı tablosu açmak, C# Entity/Controller yazmak veya Blazor/Angular sayfası kodlamak gerekmez. Platform tüm iş mantığını ve ekranları deklaratif JSON dosyalarından veya tarayıcıdaki **3 Görsel Stüdyodan** üretir:
 
 ```mermaid
 flowchart LR
-    subgraph CD["Citizen Developer Tanımları (Sadece JSON)"]
-        WF["Workflows/*.json\n(Durum Makinesi, Veri Şeması, Görevler)"]
-        AG["Agents/*.json & Tools/*.json\n(AI Ajanları, HTTP/Task/MCP Araçları)"]
-        LY["Layouts/*.json\n(Menü, Liste, Form ve Durum Ekranları)"]
+    subgraph CD["Citizen Developer Tanımları (JSON veya Tarayıcı Stüdyoları)"]
+        WF["Workflows/*.json\nveya /workflow-admin"]
+        AG["Agents/*.json & Tools/*.json\nveya /agent-admin"]
+        LY["Layouts/*.json\nveya /ui-admin"]
         MK["mockoon/mockoon-env.json\n(Dış Servis Mock Uçları)"]
     end
 
     subgraph Engine["Middt Platform Çekirdeği"]
-        WE["Workflow Engine\n(PostgreSQL Partitioned JSONB)"]
-        AE["Microsoft Agent Framework\n(Otonom Karar & Yönlendirme)"]
-        UI["Server-Driven UI Engine\n(ui Şeması & Dinamik Sorgu)"]
+        WE["Workflow Engine + SSE Hub\n(PostgreSQL Partitioned JSONB)"]
+        AE["Microsoft Agent Framework\n(Otonom Karar, Tool & MCP)"]
+        UI["Server-Driven UI Engine\n(16 Widget & Dinamik Sorgu)"]
     end
 
-    subgraph Frontends["İki Arayüzde Anında Çalışır"]
+    subgraph Frontends["İki Arayüzde Anında ve Canlı (SSE) Çalışır"]
         BL["Blazor Server (:8080)"]
         NG["Angular 22 (:8081)"]
     end
@@ -78,10 +85,20 @@ flowchart LR
     UI --> NG
 ```
 
-Bir iş akışı (`Workflows/*.json`) tanımladığınızda platform otomatik olarak:
+Bir iş akışı (`Workflows/*.json` veya `/workflow-admin`) tanımladığınızda platform otomatik olarak:
 1. PostgreSQL'de o akışa özel bölümlenmiş (`wf."WorkflowInstances_<Akis>"`, `wf."WorkflowInstanceData_<Akis>"`, vb.) tabloları ve `dataSchema` içindeki alanlara göre arama indekslerini oluşturur.
-2. `/api/workflows/<akis-anahtari>` ve `/api/v1/<PascalCaseAkisAdi>/getitems|getall|getbyid` REST uçlarını açar.
-3. Hem Blazor (`/workflow/<akis-anahtari>`) hem Angular arayüzünde **Liste**, **Arama Filtreleri**, **Yeni Kayıt Başlatma Formu**, **Sihirbaz (Wizard) Adımları**, **Durum Görünümü**, **Aksiyon Butonları** ve **Geçmiş Zaman Çizelgesi** ekranlarını hazır hale getirir.
+2. `/api/workflows/<akis-anahtari>`, gerçek zamanlı `/api/workflows/<akis-anahtari>/instances/{id}/events` (SSE) ve `/api/v1/<PascalCaseAkisAdi>/getitems|getall|getbyid` REST uçlarını açar.
+3. Hem Blazor (`/workflow/<akis-anahtari>`) hem Angular arayüzünde **Liste**, **Arama Filtreleri**, **Yeni Kayıt Başlatma Formu**, **Sihirbaz (Wizard) Adımları**, **Durum Görünümü (`🟢 Canlı (SSE)`)**, **Aksiyon Butonları** ve **Geçmiş Zaman Çizelgesi** ekranlarını hazır hale getirir.
+
+### 1.1. Tarayıcıdan Görsel Stüdyolar ile Geliştirme vs. JSON Dosyaları
+
+Middt Platform'da tüm bileşenleri ister IDE'de JSON dosyası olarak, ister doğrudan tarayıcı üzerinden **3 Görsel Stüdyo** ile geliştirebilirsiniz. Görsel stüdyolarda yapılan her kayıt anında PostgreSQL veritabanına yazılır ve her iki arayüzde (Blazor `:8080` ve Angular `:8081`) yeniden başlatmaya gerek kalmadan devreye girer:
+
+| Görsel Stüdyo | Tarayıcı Adresi | Ne İşe Yarar? | Veritabanı & Dosya Karşılığı |
+|---|---|---|---|
+| **Akış Tasarımı** | `/workflow-admin` | Sürükle-bırak 2B durum makinesi tuvali, 16 yerleşik görev bloğu, canlı SVG ok çizimi, `dataSchema` editörü ve değişmez sürümleme (`v1`, `v2`, …). | `wf."WorkflowDefinitions"` tablosu (`Workflows/*.json`) |
+| **Ekran Tasarımı** | `/ui-admin` | Sürükle-bırak 16 bileşenli (`stat`, `tabs`, `timeline`, `grid`, `fields`, `section` vb.) ekran editörü, canlı önizleme, özellik denetçisi ve revizyon geçmişi. | `ui."UiLayouts"` & `ui."UiLayoutRevisions"` tabloları (`Layouts/*.json`) |
+| **AI Agent & MCP Stüdyosu** | `/agent-admin` | Yapay zeka ajanlarını, deklaratif araçları (`expression`, `task`, `http`, `mcp`) ve MCP sunucularını görsel formlarla oluşturma, doğrulama ve **Canlı Test Playground** üzerinde örnek veriyle anında deneme. | `wf."WorkflowDefinitions"` tablosu (`Key = "__agents__"`) (`Agents/**/*.json`) |
 
 ---
 
@@ -1218,6 +1235,76 @@ Bir durumun `onEntry` adımında `aiAgent` görevi çalıştırıldığında:
 > [!IMPORTANT]
 > Otomatik geçişlerde `title` ve `description` alanlarını açıkça yazın. AI ajanı hangi geçişi seçeceğine karar verirken geçişlerin `key`, `title` ve `description` bilgilerini birlikte değerlendirir.
 
+### 4.4. Görsel AI Ajan, Araç ve MCP Stüdyosu (`/agent-admin`) ve Canlı Test Playground
+
+Citizen Developer'lar yeni bir yapay zeka ajanı, deklaratif araç (Tool) veya MCP sunucusu eklemek için diskteki JSON dosyalarını açmak zorunda değildir. Sol menüdeki **AI Agent & MCP Stüdyosu** (`/agent-admin` — hem Blazor `http://localhost:8080/agent-admin` hem Angular `http://localhost:8081/agent-admin` üzerinde mevcuttur) 3 sekmeli bir görsel stüdyo ve **Canlı Test Playground** sunar:
+
+```mermaid
+flowchart LR
+    subgraph Studio["AI Agent & MCP Stüdyosu (/agent-admin)"]
+        T1["🤖 Ajanlar Sekmesi\n(Talimat, Model, Bütçe, Araç Seçimi, OutputSchema)"]
+        T2["🛠️ Araçlar (Tools) Sekmesi\n(expression, task, http, mcp)"]
+        T3["🔌 MCP Sunucuları Sekmesi\n(http/sse, stdio, izinli araçlar)"]
+        PG["🧪 Canlı Test Playground\n(Örnek Prompt + Örnek Data + Geçişler -> Anlık Dry-Run)"]
+    end
+    T2 --> T1
+    T3 --> T1
+    T1 --> PG
+```
+
+#### 1. 🤖 Ajanlar (Agents) Sekmesi
+- Sol listedeki **"+ Yeni"** butonuna tıklayarak yeni bir ajan başlatabilir veya mevcut bir ajanı (`dispute-orchestrator`, `risk-limit-underwriter`, `invoice-collection-advisor` vb.) seçebilirsiniz.
+- **Görsel Form Editörü**:
+  - **Ajan Adı (`name`)** ve **Açıklama (`description`)**
+  - **Sağlayıcı (`provider`)**: `DeepSeek`, `OpenAI`, `Ollama` veya boş bırakıldığında sistem varsayılanı
+  - **Model ID (`modelId`)**, **Temperature (`temperature`)**, **Maks. Araç Çağrısı (`maxToolCalls`)** ve **Maks. Toplam Token (`maxTotalTokens`)** bütçeleri
+  - **Sistem Talimatları (`instructions`)**: Ajanın rolünü, iş kurallarını ve çıktı beklentilerini anlatan doğal dil yönergesi
+  - **Kullanılabilir Araçlar (`tools`)**: Sistemde kayıtlı tüm deklaratif araçlar onay kutusu (checkbox) listesi olarak gelir; ajanın kullanmasını istediğiniz araçları tek tıkla işaretleyebilirsiniz.
+  - **MCP Sunucuları (`mcpServers`)**: Kayıtlı MCP sunucularını onay kutusuyla ajana bağlayabilirsiniz.
+  - **Çıktı Şeması (`outputSchema` JSON)**: Ajanın üreteceği yapılandırılmış JSON yanıtının şeması.
+- Üst barda yer alan **"Görsel Form / JSON Kodu"** geçişiyle istediğiniz an tam JSON tanımını da görüntüleyip düzenleyebilirsiniz.
+- **"Doğrula"** (`POST /api/agents/validate`) şema ve araç referanslarını kontrol eder; **"Kaydet"** (`PUT /api/agents/{name}`) ajanı anında belleğe ve PostgreSQL `wf."WorkflowDefinitions"` (`Key = "__agents__"`) kaydına yazar.
+
+#### 2. 🛠️ Araçlar (Declarative Tools) Sekmesi
+Sol üstten **Araçlar (Tools)** sekmesine geçip **"+ Yeni"** butonuna tıklayarak kod yazmadan 4 farklı tipte araç oluşturabilirsiniz:
+1. **`kind: "expression"` (Taşınabilir İfade Aracı)**:
+   - `output` alanına yazdığınız `{{ ... }}` şablonlarını ve matematiksel/mantıksal ifadeleri (`args.*` ve `data.*` üzerinden) hesaplayıp ajana döndürür.
+2. **`kind: "task"` (İş Akışı Görevi Köprüsü)**:
+   - **Alt Görev Tipi (`task`)** açılır kutusundan `http`, `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `startWorkflow`, `cache`, `set`, `publish`, `rabbitmq`, `operation` görevlerinden herhangi birini seçebilirsiniz.
+   - Örneğin `"task": "loadWorkflow"` veya `"task": "queryWorkflow"` seçerek ajanın başka bir iş akışındaki müşteri/fatura/sipariş kayıtlarını sorgulamasını sağlayabilirsiniz.
+   - **`writeToWorkflowData: true`** işaretlenirse aracın ürettiği veri doğrudan aktif iş akışı kaydının `data` nesnesine de kalıcı olarak yazılır.
+3. **`kind: "http"` (Doğrudan REST API Aracı)**:
+   - `config` içinde `url` (`http://...` tam URL), `method` (`GET`/`POST`) ve `body` şablonu tanımlayarak dış servisleri ajana araç olarak açar.
+4. **`kind: "mcp"` (MCP Köprü Aracı)**:
+   - Kayıtlı bir MCP sunucusundaki (`mcpServer`) belirli bir aracı (`mcpTool`) RBAC rol kontrolüyle (`roles`) sarmalar.
+
+#### 3. 🔌 MCP Sunucuları (MCP Servers) Sekmesi
+- **Taşıma Tipi (`transport`)**: Uzak HTTP JSON-RPC 2.0 sunucuları için `http` / `sse` (`endpoint`: `https://...` ve `headers`), yerel süreçler için `stdio` (`command` ve `arguments`) seçilir.
+- **İzin Verilen Araçlar (`allowedTools`)**: Sunucudaki araçlardan yalnızca izin verilenlerin ajana açılmasını sağlayan beyaz liste.
+
+#### 4. 🧪 Canlı Test Playground (Dry-Run Test Paneli)
+Ajanlar sekmesinde sağ tarafta yer alan **Canlı Test Playground** paneli, tasarladığınız ajanı herhangi bir iş akışı başlatmadan ve veritabanını kirletmeden (`WriteToWorkflowData` kapalı izole modda) saniyeler içinde test etmenizi sağlar:
+1. **Test Prompt (`prompt`)**: Ajana gönderilecek örnek kullanıcı mesajını yazın.
+2. **İzin Verilen Geçişler (`allowedTransitions`)**: Virgülle ayrılmış örnek geçiş anahtarları girin (ör. `to-approved, to-underwriting, to-rejected`).
+3. **Örnek İş Akışı Verisi (`data` JSON)**: Ajanın ve araçlarının `data.*` üzerinden okuyacağı örnek JSON verisini girin (ör. `{ "customerKey": "CUST-101", "amount": 350000 }`).
+4. **"▶️ Testi Çalıştır"** (`POST /api/agents/test`) butonuna tıkladığınızda:
+   - Ajan gerçek LLM (`DeepSeek` / `OpenAI` / `Ollama`) veya `LocalAgentChatClient` üzerinde çalışır,
+   - Gerekli araçları (`tools` / `mcpServers`) canlı olarak çağırır,
+   - Sağ panelde **Seçilen Geçiş (`selectedTransition`)** rozeti, **Çalışma Süresi (`ms`)**, **Token Kullanımı (`prompt` + `completion`)**, **Üretilen Yapılandırılmış Çıktı (`output` JSON)** ve **Çağrılan Araçların (`toolCalls`)** girdi/çıktı detayları anında listelenir.
+
+#### 5. İş Akışı Tasarımcısından (`/workflow-admin`) Tek Tıkla Ajan Stüdyosuna Geçiş
+`/workflow-admin` içinde bir duruma `agent` / `aiAgent` görevi eklediğinizde, sağ denetçideki ajan seçimi açılır kutusunun hemen yanında **"🤖 Ajanı Stüdyoda Aç (`/agent-admin`)"** kısayolu yer alır; tıkladığınızda doğrudan ilgili ajan `/agent-admin` üzerinde açılır.
+
+| AI Agent & MCP Stüdyosu REST Ucu | Açıklama |
+|---|---|
+| `GET /api/agents` | Kayıtlı tüm ajanların, deklaratif araçların ve MCP sunucularının özet listesini döner. |
+| `GET /api/agents/catalog`<br>`POST /api/agents/catalog` | Tüm kataloğu (`agents`, `tools`, `mcpServers`) tek bir `AgentCatalogFile` olarak okur veya topluca yayımlar (`replace: true/false`). |
+| `PUT /api/agents/{name}`<br>`DELETE /api/agents/{name}` | Tekil bir AI ajanını çalışma zamanında kaydeder/günceller veya siler (`wf."WorkflowDefinitions"` içindeki `__agents__` kaydına kalıcı yazar). |
+| `PUT /api/agents/tools/{name}`<br>`DELETE /api/agents/tools/{name}` | Tekil bir deklaratif aracı (`expression`, `task`, `http`, `mcp`) çalışma zamanında kaydeder veya siler. |
+| `PUT /api/agents/mcp-servers/{name}`<br>`DELETE /api/agents/mcp-servers/{name}` | Tekil bir MCP sunucu tanımını çalışma zamanında kaydeder veya siler. |
+| `POST /api/agents/validate` | Ajan, araç veya MCP sunucu tanımını kaydetmeden önce şema ve referans kurallarına göre doğrular. |
+| `POST /api/agents/test` | Seçilen (veya satır içi gönderilen) ajanı örnek `prompt`, `data` ve `allowedTransitions` ile izole ortamda çalıştırıp `output`, `selectedTransition`, `toolCalls` ve `usage` sonuçlarını döner. |
+
 ---
 
 ## 5. Bölüm 3: İfade Dili (Expression Language) Rehberi
@@ -1245,94 +1332,238 @@ Tüm ekranlar `demo/Middt.Demo.Workflows/Layouts/*.json` altında tanımlanır v
 
 ### 6.1. Ekran Bileşenleri (Widgets) Kataloğu
 
-| Widget | Amacı | Temel Özellikler |
-|---|---|---|
-| `heading` | Başlık (H1–H6) ve alt başlık | `text`, `level` (`1`–`6`), `subtitle`, `visibleWhen` |
-| `text` | Paragraf metni | `text`, `muted`, `visibleWhen` |
-| `section` | Başlıklı kart/bölüm kutusu | `title`, `subtitle`, `collapsible`, `collapsed`, `visibleWhen`, `children` |
-| `columns` | Yan yana sütun yerleşimi | `widths` (ör. `[2, 1]`), `visibleWhen`, `children` |
-| `divider` | Yatay ayırıcı çizgi | `visibleWhen` |
-| `fields` | Etiket–Değer (`dt`/`dd`) özet listesi | `columns` (`1`–`4`), `items`: `[{ "label": "...", "value": "{{ ... }}", "format": "N2", "badge": "success", "visibleWhen": "..." }]` |
-| `list` | Dizi (`JsonArray`) öğelerini tablo veya kart olarak listeleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `mode` (`table` \| `cards`), `columns`, `rowTransition` / `rowTransitions`, `children` (her öğe `row` değişkeniyle okunur) |
-| `alert` | Bilgi/Uyarı/Hata kutusu | `severity` (`info`, `success`, `warning`, `danger`), `title`, `text`, `visibleWhen` |
-| `badge` | Renkli durum etiketi | `variant` (`neutral`, `info`, `success`, `warning`, `danger`), `text`, `visibleWhen` |
-| `link` | Uygulama içi yönlendirme bağlantısı / butonu | `text`, `href` (`/` ile başlayan yerel adres), `variant` (`default`, `primary`, `outline`), `visibleWhen` |
-| `layout` | Başka bir `kind: "view"` layout'u alt bileşen olarak gömme | `key` (ör. `{"widget": "layout", "key": "workflow-footer"}`), `data` (isteğe bağlı alt nesne ifadesi) |
-| `grid` | Sunucu sayfalamalı, sıralamalı, aramalı veri tablosu | `entity`, `pageSize`, `defaultSort`, `columns`, `search` (`visibleWhen`, `disabledWhen` destekli arama alanları), `rowHref`, `createHref`, `form` (`visibleWhen`, `requiredWhen`, `disabledWhen` destekli CRUD form alanları) |
-| `record` | Tekil kayıt (`getbyid`) yükleyici kapsayıcı | `entity`, `id` (ör. `"{{ query.id }}"`), `notFoundText`, `children` (yüklenen kayıt `record` değişkeniyle okunur) |
+Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik bileşenin (`UiWidgets.All`) birleşiminden oluşur ve hem Blazor Server, hem Angular 22 hem de statik HTML (`UiHtmlRenderer`) üzerinde birebir aynı `middt-ui-*` CSS sınıfları ve semantiğiyle çalışır:
 
-**Durum Görünümü (`view`) Örneği (`Layouts/risk-detail.json`)**:
+| Widget | Kategori | Amacı | Temel Özellikler |
+|---|---|---|---|
+| `heading` | Görsel & Metin | Başlık (H1–H4) | `text`, `level` (`1`–`4`), `visibleWhen` |
+| `text` | Görsel & Metin | Paragraf / satır içi metin | `text`, `style` (`body` \| `lead` \| `muted` \| `small` \| `code`), `visibleWhen` |
+| `stat` | Görsel & KPI | **KPI / Metrik Kartı** (büyük biçimlendirilmiş değer, trend oku, renk varyantı ve ikon) | `label`, `value` (`{{ }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `delta` (`{{ }}`), `trend` (`up` \| `down` \| `neutral`), `variant` (`neutral` \| `info` \| `success` \| `warning` \| `danger`), `icon`, `subtitle`, `visibleWhen` |
+| `alert` | Görsel & Metin | Bilgi / Uyarı / Hata kutusu | `severity` (`info` \| `success` \| `warning` \| `danger`), `text`, `visibleWhen` |
+| `badge` | Görsel & Metin | Renkli durum rozeti | `color` (`neutral` \| `info` \| `success` \| `warning` \| `danger`), `text`, `visibleWhen` |
+| `divider` | Görsel & Metin | Yatay ayırıcı çizgi | `visibleWhen` |
+| `link` | Görsel & Metin | Güvenli yönlendirme bağlantısı / butonu | `text`, `href` (`/` ile başlayan yerel veya güvenli URL), `style` (`link` \| `button`), `visibleWhen` |
+| `fields` | Veri Gösterimi | Etiket–Değer (`dt`/`dd`) özet listesi | `items`: `[{ "label": "...", "value": "{{ ... }}", "format": "N2", "visibleWhen": "..." }]`, `visibleWhen` |
+| `timeline` | Veri & Süreç | **Süreç / Aktivite Zaman Çizelgesi** (statik `items` veya dinamik `source` dizisi) | `title`, `source` (dizi ifadesi) veya `items` (`[{ title, subtitle, timestamp, status, badge }]`), `titleTemplate`, `subtitleTemplate`, `timestampTemplate`, `statusTemplate` (`completed` \| `active` \| `pending` \| `error` \| `warning` \| `info`), `badgeTemplate`, `emptyText`, `visibleWhen` |
+| `section` | Kapsayıcı | Başlıklı kart / bölüm kutusu | `title`, `subtitle`, `visibleWhen`, `children` |
+| `columns` | Kapsayıcı | Yan yana duyarlı sütun yerleşimi | `widths` (ör. `["2", "1"]` veya `["1", "1", "1"]`), `visibleWhen`, `children` |
+| `tabs` | Kapsayıcı | **Etkileşimli Sekmeli Panel** (her alt düğümü sekme olarak gösterir) | `children` (her çocuk bileşenin `title` alanı sekme başlığı, `subtitle` alanı ipucu olarak kullanılır), `visibleWhen` |
+| `list` | Kapsayıcı | Dizi (`JsonArray`) öğelerini tekrarlayarak listeleme ve satır aksiyonu tetikleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `emptyText`, `rowTransition` / `rowTransitions`, `children` (her öğe `row` ve 1 tabanlı `rowNumber` değişkeniyle okunur) |
+| `layout` | Kapsayıcı / Ortak | Başka bir `kind: "view"` ekranı alt bileşen olarak gömme | `key` (ör. `"workflow-footer"`), `data` (isteğe bağlı alt nesne ifadesi), `title`, `visibleWhen` |
+| `grid` | Etkileşimli CRUD | Sunucu sayfalamalı, sıralamalı, aramalı veri tablosu | `entity`, `pageSize`, `filter`, `columns`, `search` (`visibleWhen`, `disabledWhen`), `create`, `edit`, `delete`, `form` (`visibleWhen`, `requiredWhen`, `disabledWhen`), `rowActions` |
+| `record` | Etkileşimli | Tekil kayıt (`getbyid`) yükleyici kapsayıcı | `entity`, `recordId` (`"{{ query.id }}"`), `emptyText`, `children` (yüklenen kayıt `record` değişkeniyle okunur) |
+
+---
+
+#### 6.1.1. `stat` — KPI / Metrik Kartı Bileşeni Detaylı Kullanımı
+
+`stat` bileşeni; finansal tutarları, risk skorlarını, SLA yüzdelerini veya tahsilat oranlarını özetleyen **KPI kartları** oluşturmak için kullanılır. Genellikle `columns` kapsayıcısı içinde 2, 3 veya 4 sütunlu gösterge panelleri olarak yerleştirilir.
+
+| Özellik | Tip | Zorunlu | Açıklama ve Örnek Değerler |
+|---|---|---|---|
+| `widget` | `"stat"` | Evet | Bileşen tipi |
+| `label` | `string` (`{{ }}`) | Evet | Üst kısımda gösterilen metrik başlığı (ör. `"Fatura Tutarı"`, `"Kalan Alacak"`). |
+| `value` | `string` (`{{ }}`) | Evet | Ana metrik değeri (ör. `"{{ data.invoiceAmount }}"`, `"{{ instance.agents.riskAdvisor.riskScore }}"`). |
+| `format` | `string` | Hayır | Sayı veya tarih biçimi: `N0`–`N6` (binlik ayraçlı), `F0`–`F6` (ondalık), `d`, `D`, `g`, `t`. |
+| `delta` | `string` (`{{ }}`) | Hayır | Değişim / oran rozeti metni (ör. `"Tahsilat: %{{ Math.Round((data.paidAmount / data.invoiceAmount) * 100, 0) }}"`, `"+%14.2"`). |
+| `trend` | `string` | Hayır | Trend yönü oku ve rengi: `"up"` (`↑` yeşil), `"down"` (`↓` kırmızı) veya `"neutral"` (`→` gri, varsayılan). |
+| `variant` | `string` | Hayır | Kartın vurgu rengi (`{{ }}` şablonu destekler): `"neutral"` (varsayılan), `"info"`, `"success"`, `"warning"`, `"danger"`. |
+| `icon` | `string` | Hayır | Sağ üst köşede gösterilen ikon/rozet metni (ör. `"receipt_long"`, `"payments"`, `" trending_up"`). |
+| `subtitle` | `string` (`{{ }}`) | Hayır | Alt açıklama metni (ör. `"Vade: {{ data.dueDate }}"`). |
+| `visibleWhen` | `string` | Hayır | Kartın görünürlük koşulu (ör. `"data.invoiceAmount > 0"`). |
+
+**Örnek: 3 Sütunlu Dinamik KPI Gösterge Paneli (`columns` + `stat`)**:
 ```json
 {
-  "$schema": "../../../spec/ui-layout.schema.json",
-  "key": "risk-detail",
-  "title": "Risk & Limit Değerlendirme Özeti",
-  "kind": "view",
-  "version": 1,
-  "body": [
+  "widget": "columns",
+  "widths": ["1", "1", "1"],
+  "children": [
     {
-      "widget": "alert",
-      "severity": "success",
-      "text": "Risk değerlendirmesi onaylandı.",
-      "visibleWhen": "instance.state == \"approved\""
+      "widget": "stat",
+      "label": "Fatura Tutarı (₺)",
+      "value": "{{ data.invoiceAmount }}",
+      "format": "N2",
+      "icon": "receipt_long",
+      "variant": "info",
+      "subtitle": "Fatura No: {{ data.invoiceNumber }}"
     },
     {
+      "widget": "stat",
+      "label": "Tahsil Edilen (₺)",
+      "value": "{{ data.paidAmount }}",
+      "format": "N2",
+      "icon": "payments",
+      "variant": "success",
+      "trend": "up",
+      "delta": "%{{ data.invoiceAmount > 0 ? Math.Round((data.paidAmount / data.invoiceAmount) * 100, 0) : 0 }} Tamamlandı"
+    },
+    {
+      "widget": "stat",
+      "label": "Kalan Tutar (₺)",
+      "value": "{{ data.remainingAmount }}",
+      "format": "N2",
+      "icon": "account_balance_wallet",
+      "variant": "{{ data.remainingAmount > 0 ? \"warning\" : \"success\" }}",
+      "trend": "{{ data.remainingAmount > 0 ? \"down\" : \"neutral\" }}",
+      "subtitle": "Vade: {{ data.dueDate }}"
+    }
+  ]
+}
+```
+
+---
+
+#### 6.1.2. `tabs` — Etkileşimli Sekmeli Panel Konteyneri Detaylı Kullanımı
+
+`tabs` bileşeni, karmaşık iş akışı detay ekranlarını veya yönetim sayfalarını sayfa boyunu uzatmadan **etkileşimli sekmeler (`role="tablist"`)** halinde gruplar.
+- `tabs` düğümünün `children` dizisine eklediğiniz her alt bileşen (tipik olarak `section`) bir sekme (tab) olur.
+- Alt bileşenin `"title"` özelliği (`{{ }}` şablonu destekler) sekme başlığı olarak, `"subtitle"` özelliği ise sekme ipucu (`title` tooltip) olarak kullanılır.
+- Alt bileşenlerdeki `"visibleWhen"` koşulları değerlendirilir; koşulu sağlamayan sekmeler otomatik olarak gizlenir.
+
+**Örnek: 3 Sekmeli İş Akışı Detay Ekranı (`tabs` + `section`)**:
+```json
+{
+  "widget": "tabs",
+  "children": [
+    {
       "widget": "section",
-      "title": "AI Tahsis Analizi",
-      "visibleWhen": "instance.agents != null && instance.agents.riskLimitUnderwriter != null",
+      "title": "Genel Bilgiler & Finansal Özet",
+      "subtitle": "Fatura ve müşteri özet bilgileri",
       "children": [
         {
           "widget": "fields",
           "items": [
-            { "label": "AI Kararı", "value": "{{ instance.agents.riskLimitUnderwriter.decision }}" },
-            { "label": "Risk Skoru", "value": "{{ instance.agents.riskLimitUnderwriter.riskScore }}" },
-            { "label": "TCMB Memzuç Kaydı", "value": "{{ instance.agents.riskLimitUnderwriter.centralBankRecord }}" }
+            { "label": "Müşteri Adı", "value": "{{ data.customerName }}" },
+            { "label": "Fatura Tutarı", "value": "{{ data.invoiceAmount }}", "format": "N2" },
+            { "label": "Kalan Tutar", "value": "{{ data.remainingAmount }}", "format": "N2" }
           ]
         }
       ]
     },
     {
       "widget": "section",
-      "title": "Çağrılan AI Araçları (Tool Calls)",
-      "visibleWhen": "instance.toolCalls != null && instance.toolCalls.Count > 0",
+      "title": "AI Tahsilat & Risk Analizi",
+      "visibleWhen": "instance.agents != null && instance.agents.collectionRiskAdvisor != null",
       "children": [
         {
-          "widget": "list",
-          "source": "instance.toolCalls",
-          "children": [
-            {
-              "widget": "fields",
-              "items": [
-                { "label": "Ajan", "value": "{{ row.agent }}" },
-                { "label": "Araç Adı", "value": "{{ row.name }}" },
-                { "label": "Çağrı No", "value": "{{ row.callId }}" }
-              ]
-            }
+          "widget": "fields",
+          "items": [
+            { "label": "Risk Seviyesi", "value": "{{ instance.agents.collectionRiskAdvisor.riskLevel }}" },
+            { "label": "Tahsilat Stratejisi", "value": "{{ instance.agents.collectionRiskAdvisor.recommendedAction }}" },
+            { "label": "AI Özeti", "value": "{{ instance.agents.collectionRiskAdvisor.summary }}" }
           ]
         }
       ]
     },
-    { "widget": "layout", "key": "workflow-footer" }
+    {
+      "widget": "section",
+      "title": "Tahsilat Zaman Çizelgesi",
+      "children": [
+        {
+          "widget": "timeline",
+          "source": "data.partialPayment",
+          "emptyText": "Henüz ödeme hareketi kaydedilmedi.",
+          "titleTemplate": "{{ row.reference }} — {{ row.amount }} ₺",
+          "subtitleTemplate": "Ödeme Kanalı: {{ row.channel ?? 'Banka EFT' }}",
+          "timestampTemplate": "{{ row.paidAt }}",
+          "statusTemplate": "completed",
+          "badgeTemplate": "#{{ row.rowNumber }}"
+        }
+      ]
+    }
   ]
 }
 ```
+
+---
+
+#### 6.1.3. `timeline` — Süreç ve Aktivite Zaman Çizelgesi Detaylı Kullanımı
+
+`timeline` bileşeni; süreç aşamalarını, ödeme hareketlerini, onay adımlarını veya AI ajanlarının yaptığı araç çağrılarını (`instance.toolCalls`) dikey bir zaman çizelgesi olarak görselleştirir. İki farklı çalışma modunu destekler:
+
+1. **Mod 1: Dinamik Dizi Kaynağı (`source`)**:
+   - `source` özelliğine bir dizi ifadesi (`"data.partialPayment"`, `"instance.toolCalls"`, `"data.auditLog"`) verilir.
+   - Dizideki her eleman için `row` (elemanın kendisi) ve `rowNumber` (`1..N` sıra numarası) kapsam içine alınır ve `titleTemplate`, `subtitleTemplate`, `timestampTemplate`, `statusTemplate`, `badgeTemplate` şablonları hesaplanır.
+2. **Mod 2: Statik Adım Listesi (`items`)**:
+   - `items` dizisi içinde sabit veya `{{ }}` şablonlu adımlar (`title`, `subtitle`, `timestamp`, `status`, `badge`) tanımlanır.
+
+| Özellik | Tip | Açıklama ve Alabileceği Değerler |
+|---|---|---|
+| `title` | `string` (`{{ }}`) | Zaman çizelgesi üst başlığı (isteğe bağlı). |
+| `source` | `string` (İfade) | Dinamik dizi kaynağı (ör. `"data.partialPayment"` veya `"instance.toolCalls"`). |
+| `titleTemplate` | `string` (`{{ }}`) | `source` modunda her adımın başlık şablonu (varsayılan: `row.title ?? row.name ?? row.key`). |
+| `subtitleTemplate` | `string` (`{{ }}`) | `source` modunda her adımın alt açıklama şablonu (varsayılan: `row.subtitle ?? row.description ?? row.summary`). |
+| `timestampTemplate` | `string` (`{{ }}`) | `source` modunda her adımın zaman damgası şablonu (varsayılan: `row.timestamp ?? row.paidAt ?? row.createdAt`). |
+| `statusTemplate` | `string` (`{{ }}`) | `source` modunda her adımın durum rengi: `"completed"` (yeşil), `"active"` (mavi/vurgu), `"pending"` (gri), `"warning"` (turuncu), `"error"` (kırmızı), `"info"` (açık mavi). |
+| `badgeTemplate` | `string` (`{{ }}`) | `source` modunda sağ üstte gösterilecek rozet şablonu (ör. `"{{ row.agent }}"` veya `"#{{ row.rowNumber }}"`). |
+| `items` | `array` | Statik modda adım dizisi: `[{ "title": "...", "subtitle": "...", "timestamp": "...", "status": "completed", "badge": "..." }]`. |
+| `emptyText` | `string` (`{{ }}`) | Dizi boş olduğunda gösterilecek metin (ör. `"Henüz kayıt bulunmuyor."`). |
+
+**Örnek A — Dinamik AI Araç Çağrıları Zaman Çizelgesi (`source: "instance.toolCalls"`)**:
+```json
+{
+  "widget": "timeline",
+  "title": "AI Ajanı Araç Çağrı Geçmişi",
+  "source": "instance.toolCalls",
+  "emptyText": "Henüz AI araç çağrısı yapılmadı.",
+  "titleTemplate": "{{ row.name }}",
+  "subtitleTemplate": "Çağrı ID: {{ row.callId }}",
+  "timestampTemplate": "Adım #{{ row.rowNumber }}",
+  "statusTemplate": "completed",
+  "badgeTemplate": "{{ row.agent }}"
+}
+```
+
+**Örnek B — Statik Aşama Zaman Çizelgesi (`items` ile Dinamik Durum Hesaplama)**:
+```json
+{
+  "widget": "timeline",
+  "title": "Tahsilat Süreç Adımları",
+  "items": [
+    {
+      "title": "1. Fatura Oluşturuldu",
+      "subtitle": "Müşteri: {{ data.customerName }} ({{ data.invoiceNumber }})",
+      "timestamp": "Vade: {{ data.dueDate }}",
+      "status": "completed",
+      "badge": "{{ data.invoiceAmount }} ₺"
+    },
+    {
+      "title": "2. Tahsilat ve Ödeme Takibi",
+      "subtitle": "Ödenen: {{ data.paidAmount }} ₺ · Kalan: {{ data.remainingAmount }} ₺",
+      "status": "{{ data.remainingAmount == 0 ? \"completed\" : (data.paidAmount > 0 ? \"active\" : \"pending\") }}",
+      "badge": "{{ instance.stateTitle }}"
+    },
+    {
+      "title": "3. Muhasebe Mutabakatı & Kapanış",
+      "subtitle": "{{ data.ledgerReference != null ? data.ledgerReference : \"Mutabakat bekleniyor\" }}",
+      "status": "{{ instance.state == \"paid\" ? \"completed\" : (instance.state == \"reconciling\" ? \"active\" : \"pending\") }}",
+      "badge": "{{ instance.status }}"
+    }
+  ]
+}
+```
+
+---
 
 ### 6.2. Görsel Sürükle-Bırak Ekran Tasarımcısı (`/ui-admin`) ve Akış Bağlantısı
 
 Sol menüdeki **Ekran Tasarımı** (`/ui-admin`) sayfası, Citizen Developer'ların JSON kodu yazmadan hem bağımsız sayfaları (`kind: "page"`) hem de iş akışı durum ekranlarını (`kind: "view"`) **sürükle-bırak (drag-and-drop)** yöntemiyle tasarlayabildiği 3 sütunlu görsel stüdyodur:
 
-1. **Sol Sürükle-Bırak Bileşen Paleti (`middt-ui-editor-palette`)**:
-   - **Yerleşim & Kapsayıcılar**: `📦 Bölüm / Kart (section)`, `🏛️ Yan Yana Sütunlar (columns)`, `🔁 Tekrarlı Liste (list)`, `🧩 Gömülü Alt Ekran (layout)`.
-   - **Veri & Etkileşimli Bileşenler**: `📋 Etiket–Değer Alanları (fields)`, `📊 Veri Tablosu / CRUD (grid)`, `🗂️ Tekil Kayıt Yükleyici (record)`.
-   - **Görsel & Metin Bileşenleri**: `🔤 Başlık (heading)`, `📝 Metin / Paragraf (text)`, `⚠️ Uyarı / Bilgi Kutusu (alert)`, `🏷️ Durum Rozeti (badge)`, `➖ Ayırıcı Çizgi (divider)`, `🔗 Bağlantı / Buton (link)`.
-   - Palet üzerindeki bileşenleri sürükleyip ortadaki görsel tuvale (veya `section`, `columns`, `list`, `record` kapsayıcılarının iç bırakma alanlarına) bırakabilir ya da `+` butonuyla seçili kapsayıcıya tek tıkla ekleyebilirsiniz.
+1. **Sol Sürükle-Bırak Bileşen Paleti (`middt-ui-editor-palette` — 16 Bileşen)**:
+   - **Yerleşim & Kapsayıcılar**: `📦 Bölüm / Kart (section)`, `🏛️ Yan Yana Sütunlar (columns)`, `🗂️ Sekmeli Panel (tabs)`, `🔁 Tekrarlı Liste (list)`, `🧩 Gömülü Alt Ekran (layout)`.
+   - **Veri & Etkileşimli Bileşenler**: `📋 Etiket–Değer Alanları (fields)`, `🕒 Zaman Çizelgesi (timeline)`, `📊 Veri Tablosu / CRUD (grid)`, `🗂️ Tekil Kayıt Yükleyici (record)`.
+   - **Görsel, KPI & Metin Bileşenleri**: `📈 KPI / İstatistik Kartı (stat)`, `🔤 Başlık (heading)`, `📝 Metin / Paragraf (text)`, `⚠️ Uyarı / Bilgi Kutusu (alert)`, `🏷️ Durum Rozeti (badge)`, `➖ Ayırıcı Çizgi (divider)`, `🔗 Bağlantı / Buton (link)`.
+   - Palet üzerindeki bileşenleri sürükleyip ortadaki görsel tuvale (veya `section`, `columns`, `tabs`, `list`, `record` kapsayıcılarının iç bırakma alanlarına) bırakabilir ya da `+` butonuyla seçili kapsayıcıya tek tıkla ekleyebilirsiniz.
 2. **Orta Görsel Tuval, Canlı Önizleme ve JSON Sekmeleri**:
    - **`🎨 Görsel Tasarım (Sürükle & Bırak)`**: Bileşen ağacını kartlar halinde gösterir; her bileşeni seçebilir, yukarı/aşağı (`↑`/`↓`) sıralayabilir, çoğaltabilir (`📑`), silebilir (`🗑️`) veya kapsayıcılar arasında sürükleyebilirsiniz.
    - **`👁️ Canlı Önizleme`**: Düzenlenen ekranı örnek `data` ve `instance` verileriyle gerçek zamanlı olarak render eder.
    - **`{ } JSON Kodu`**: Görsel tuvalle çift yönlü senkronize tam JSON editörü.
 3. **Sağ Bağlama Duyarlı Özellikler Denetçisi (`middt-ui-editor-inspector`)**:
    - Seçili bileşenin `id`, `visibleWhen` ve tipe özel tüm ayarlarını form kontrolleriyle düzenler:
-     - **`fields` (`Etiket–Değer Listesi`)**: Satır ekleme/silme/sıralama, `label`, `value` (`{{ data.* }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`) ve `visibleWhen` görsel tablosu.
+     - **`stat` (`KPI / İstatistik Kartı`)**: `label`, `value` (`{{ data.* }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `delta`, `trend` (`up` / `down` / `neutral`), `variant` (`neutral` / `info` / `success` / `warning` / `danger`), `icon` ve `subtitle` alanları.
+     - **`tabs` (`Sekmeli Panel`)**: İçine eklenen her alt bileşenin (`section` vb.) `title` özelliğini sekme başlığı olarak otomatik bağlar.
+     - **`timeline` (`Zaman Çizelgesi`)**: Dinamik dizi ifadesi (`source`, `titleTemplate`, `subtitleTemplate`, `timestampTemplate`, `statusTemplate`, `badgeTemplate`, `emptyText`) veya statik `items` JSON dizisi düzenleyicisi.
+     - **`fields` (`Etiket–Değer Listesi`)**: Satır ekleme/silme/sıralama, `label`, `value` (`{{ data.* }}`), `format` ve `visibleWhen` görsel tablosu.
      - **`grid` (`Veri Tablosu`)**: `entity` (iş akışı seçimi), `pageSize`, görsel **Sütunlar (`columns`)** editörü, **Arama Filtreleri (`search`)** editörü ve **Form Alanları (`form`)** editörü.
      - **`columns` (`Yan Yana Sütunlar`)**: Sütun oranları (`widths`, ör. `2, 1`) ve otomatik sütun senkronizasyonu.
      - **`layout` (`Gömülü Alt Ekran`)**: Sistemdeki `kind: "view"` ekranlarından açılır kutuyla seçim (`key`) ve alt veri kapsamı (`data`).
@@ -1385,6 +1616,27 @@ Platform, tasarlanan iş akışlarının güvenli yayımlanması ve işletilmesi
 | **Operasyon Merkezi & Toplu Retry** | `GET /api/workflows/operations`<br>`POST /api/workflows/operations/retry-batch` | `Faulted` durumundaki kayıtları, açık `WorkflowIncidents` hatalarını ve bekleyen `WorkflowJobs` işlerini tek ekranda özetler; seçilen kayıtları (isteğe bağlı yeni `input` verisiyle) topluca yeniden dener. |
 | **Taşınabilir Paket (Bundle Export/Import)** | `GET /api/workflows/bundle`<br>`POST /api/workflows/bundle/import` | İş akışlarını, ekran tasarımlarını (`Layouts`) ve AI ajan/araç/MCP tanımlarını SHA-256 bütünlük özetiyle (`checksum`) tek pakette dışa/içe aktarır (`dryRun: true` ile CI/CD doğrulaması destekler). |
 | **Veri Saklama Temizliği (Purge)** | `POST /api/workflows/maintenance/purge` | Tamamlanmış (`Completed`, `Cancelled`, `Faulted`) eski kayıtları saklama süresi (`olderThanDays`) ve parti sınırı (`batchSize`) ile temizler (`dryRun` destekli). |
+| **Gerçek Zamanlı Olay Akışı (SSE)** | `GET /api/workflows/events`<br>`GET /api/workflows/{workflow}/instances/{id}/events` | İş akışı durum geçişlerini, arka plan (`background: true`) görev tamamlamalarını, zamanlayıcıları ve gelen `Event` mesajlarını `text/event-stream` (`event: workflow-event`) olarak anlık yayınlar. |
+
+### 6.5. Gerçek Zamanlı İş Akışı Güncellemeleri (Canlı SSE — Server-Sent Events)
+
+Hem Blazor (`WorkflowInstanceDetail`) hem de Angular (`MiddtWorkflowInstanceDetailComponent`) iş akışı detay ekranları, aktif (`Active`) veya hatalı (`Faulted`) bir iş akışı kaydı açıldığında otomatik olarak sunucunun **Server-Sent Events (`GET /api/workflows/{workflow}/instances/{id}/events`)** akışına abone olur ve durum başlığının yanında yeşil **`🟢 Canlı (SSE)`** rozetini gösterir.
+
+#### Hangi Durumlarda Ekran Sayfa Yenilemeden Otomatik Güncellenir?
+1. **Arka Plan Görevleri (`"background": true`)**:
+   - Örneğin `invoice-collection` (Fatura Tahsilatı) akışında fatura tam ödendiğinde akış `reconciling` (*Muhasebe Mutabakatı*) durumuna girer ve `post-ledger` görevi arka planda (`background: true`) çalışır. Görev tamamlandığında `WorkflowEventStreamHub` üzerinden SSE bildirimi gönderilir ve açık olan ekran **hiçbir tuşa basmadan** otomatik olarak `paid` (*Tahsil Edildi*) durumuna ve sonuç ekranına (`invoice-result`) geçer.
+2. **Dış Sistem Olay Mesajları (`"trigger": "Event"`)**:
+   - Bir ödeme sistemi, ERP veya başka bir mikroservis `POST /api/workflows/invoice-collection/messages/payment.received?key=INV-FTR-2026-0001` çağrısı yaptığında, o faturayı ekranda görüntüleyen kullanıcının ekranındaki KPI kartları (`stat`), ödeme listesi (`list`), zaman çizelgesi (`timeline`) ve durum diyagramı anında güncellenir.
+3. **Zamanlanmış Geçişler (`"trigger": "Scheduled"`, `"after": "PT30S"`)**:
+   - Süresi dolan bir SLA veya eskalasyon zamanlayıcısı (`WorkflowJobProcessor`) çalıştığında ekran anında yeni duruma geçer.
+4. **Başka Bir Kullanıcı veya Alt Akış (`SubFlow` / `triggerWorkflow`) Güncellemeleri**:
+   - Aynı kaydı iki farklı kullanıcı veya iki farklı sekme (ör. biri Blazor `:8080`, diğeri Angular `:8081`) açtığında, bir kullanıcının yaptığı işlem diğer kullanıcının ekranına milisaniyeler içinde yansır.
+
+> [!TIP]
+> **Canlı SSE'yi 10 Saniyede Test Etme**:
+> 1. Sol menüden **Fatura Tahsilatı** (`/workflow/invoice-collection`) sayfasına gidin ve `Ödeme Bekleniyor` durumundaki bir faturayı açın (üstte **`🟢 Canlı (SSE)`** rozetini göreceksiniz).
+> 2. **"Ödemeyi Kaydet (Tam)"** veya **"Arka Plan Mutabakatını Başlat"** işlemini çalıştırın; akış önce `Muhasebe Mutabakatı (Arka Plan)` durumuna geçecek, arka plan işi biter bitmez sayfa yenilenmeden otomatik olarak `Tahsil Edildi` durumuna ilerleyecektir.
+> 3. Veya aynı fatura detay ekranını hem Blazor (`http://localhost:8080`) hem Angular (`http://localhost:8081`) sekmesinde yan yana açıp birinde **"Kısmi Ödeme Kaydet"** yapın; diğer sekmenin anında güncellendiğini görebilirsiniz.
 
 ---
 
@@ -1415,13 +1667,13 @@ Uygulama ilk kez ayağa kalktığında listelerin boş gelmemesi için `Seeds/in
 
 ## 8. Bölüm 6: Uçtan Uca Örnek Proje — "Tedarikçi Satınalma Talebi" Modülü
 
-Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adımlı** standart geliştirme süreci:
+Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adımlı** standart geliştirme süreci (bu adımları ister JSON dosyalarıyla, ister doğrudan **`/agent-admin` → `/workflow-admin` → `/ui-admin`** görsel stüdyolarıyla tarayıcıdan yapabilirsiniz):
 
 ### Adım 1: Mockoon'a Bütçe Kontrol Servisi Ekle (`demo/mockoon/mockoon-env.json`)
 `routes` listesine `POST api/v1/budget/check` rotasını ekleyin (ör. `{"budgetStatus": "Uygun", "costCenterRef": "CC-2026-01"}`).
 
-### Adım 2: AI Aracı ve Ajanını Oluştur (`Agents/Tools/` & `Agents/`)
-1. `demo/Middt.Demo.Workflows/Agents/Tools/verify-department-budget-http.json`:
+### Adım 2: AI Aracı ve Ajanını Oluştur (`/agent-admin` veya `Agents/`)
+1. **`/agent-admin` → Araçlar (Tools)** sekmesinden (veya `demo/Middt.Demo.Workflows/Agents/Tools/verify-department-budget-http.json` dosyası olarak):
 ```json
 {
   "name": "verify_department_budget_http",
@@ -1445,26 +1697,115 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
   }
 }
 ```
-2. `demo/Middt.Demo.Workflows/Agents/procurement-approver.json`:
-   - `tools`: `["verify_department_budget_http"]`
-   - `outputSchema`: `decision`, `riskLevel`, `budgetStatus`, `summary`, `recommendation`.
+2. **`/agent-admin` → Ajanlar (Agents)** sekmesinden (veya `demo/Middt.Demo.Workflows/Agents/procurement-approver.json` dosyası olarak):
+   - `tools` listesinden `verify_department_budget_http` aracını işaretleyin.
+   - `outputSchema` içinde `decision`, `riskLevel`, `budgetStatus`, `summary`, `recommendation` alanlarını tanımlayın.
+   - Sağdaki **Canlı Test Playground** panelinden örnek `{ "department": "BT", "amount": 45000 }` verisiyle ajanı hemen test edin.
 
-### Adım 3: İş Akışını Tanımla (`Workflows/purchase-request.json`)
-- `key`: `"purchase-request"`, `title`: `"Satınalma Talebi"`
+### Adım 3: İş Akışını Tanımla (`/workflow-admin` veya `Workflows/purchase-request.json`)
+- `key`: `"purchase-request"`, `title`: `"Satınalma Talebi"`, `icon`: `"shopping_bag"`
 - `dataSchema`: `requestNo`, `department`, `supplierName`, `amount` (`"x-search": true`)
 - `start`: Giriş formu şeması ve `target: "ai-triage"`
 - `states`:
-  - `ai-triage`: `onEntry` içinde `setKey` ve `aiAgent` (`procurement-approver`), `transitions` içinde `to-auto-approved` (≤ 25.000 ₺) ve `to-manager-review` (> 25.000 ₺).
+  - `ai-triage`: `onEntry` içinde `setKey` ve `aiAgent` (`key: "procurementApprover"`, `agent: "procurement-approver"`), `transitions` içinde `to-auto-approved` (≤ 25.000 ₺) ve `to-manager-review` (> 25.000 ₺).
   - `manager-review` (`subType: "Human"`, `view.layout: "purchase-detail"`): `approve` ve `reject` manuel geçişleri.
   - `approved` (`type: "Finish"`, `subType: "Success"`, `view.layout: "purchase-detail"`).
   - `rejected` (`type: "Finish"`, `subType: "Error"`, `view.layout: "purchase-detail"`).
 
-### Adım 4: Durum Ekranını Tanımla (`Layouts/`)
-1. `demo/Middt.Demo.Workflows/Layouts/purchase-detail.json` dosyasını oluşturun (veya `/workflow-admin` içinden **"+ Yeni Ekran Oluştur & Tasarla"** butonuyla oluşturun; `data.*`, `instance.agents.*` ve `instance.toolCalls` alanlarını gösteren `section`, `fields`, `list` bileşenleriyle).
-2. İş akışı `Workflows/purchase-request.json` olarak kaydedildiğinde sol menüdeki **İş Akışları** grubunun altında (`title` ve `icon` bilgileriyle) otomatik olarak görünür; ayrıca bir menü dosyası düzenlemenize gerek yoktur. (Bağımsız `kind: "page"` ekranlarının sol menüde görünmesi için ise layout JSON'una `"menu": { "title": "...", "icon": "...", "order": 10 }` eklenir.)
+### Adım 4: Durum Ekranını Tanımla (`/ui-admin` veya `Layouts/purchase-detail.json`)
+1. `/workflow-admin` içinde `manager-review` durumuna tıklayıp **"+ Yeni Ekran Oluştur & Tasarla"** butonuna basın (veya `demo/Middt.Demo.Workflows/Layouts/purchase-detail.json` dosyasını oluşturun). Aşağıdaki örnek; yeni **`stat` (KPI kartları)**, **`tabs` (Sekmeli panel)** ve **`timeline` (Zaman çizelgesi)** bileşenlerinin tamamını kullanır:
+```json
+{
+  "$schema": "../../../../spec/ui-layout.schema.json",
+  "key": "purchase-detail",
+  "title": "Satınalma Talebi Detay Ekranı",
+  "kind": "view",
+  "version": 1,
+  "body": [
+    {
+      "widget": "columns",
+      "widths": ["1", "1", "1"],
+      "children": [
+        {
+          "widget": "stat",
+          "label": "Talep Tutarı (₺)",
+          "value": "{{ data.amount }}",
+          "format": "N2",
+          "icon": "payments",
+          "variant": "{{ data.amount > 25000 ? \"warning\" : \"success\" }}",
+          "subtitle": "Departman: {{ data.department }}"
+        },
+        {
+          "widget": "stat",
+          "label": "AI Risk Seviyesi",
+          "value": "{{ instance.agents.procurementApprover.riskLevel ?? \"Değerlendiriliyor\" }}",
+          "icon": "shield",
+          "variant": "info",
+          "subtitle": "Öneri: {{ instance.agents.procurementApprover.decision ?? \"-\" }}"
+        },
+        {
+          "widget": "stat",
+          "label": "Bütçe Uygunluğu",
+          "value": "{{ instance.agents.procurementApprover.budgetStatus ?? \"Kontrol Edildi\" }}",
+          "icon": "account_balance",
+          "variant": "success",
+          "subtitle": "Tedarikçi: {{ data.supplierName }}"
+        }
+      ]
+    },
+    {
+      "widget": "tabs",
+      "children": [
+        {
+          "widget": "section",
+          "title": "Satınalma & Tedarikçi Bilgileri",
+          "children": [
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "Talep No", "value": "{{ instance.key }}" },
+                { "label": "Departman", "value": "{{ data.department }}" },
+                { "label": "Tedarikçi Firma", "value": "{{ data.supplierName }}" },
+                { "label": "Talep Tutarı (₺)", "value": "{{ data.amount }}", "format": "N2" }
+              ]
+            }
+          ]
+        },
+        {
+          "widget": "section",
+          "title": "AI Ajan Analizi & Araç Geçmişi",
+          "visibleWhen": "instance.agents != null && instance.agents.procurementApprover != null",
+          "children": [
+            {
+              "widget": "fields",
+              "items": [
+                { "label": "AI Özeti", "value": "{{ instance.agents.procurementApprover.summary }}" },
+                { "label": "Aksiyon Önerisi", "value": "{{ instance.agents.procurementApprover.recommendation }}" }
+              ]
+            },
+            {
+              "widget": "timeline",
+              "title": "Çağrılan AI Araçları (Tool Calls)",
+              "source": "instance.toolCalls",
+              "emptyText": "Araç çağrısı kaydı bulunmuyor.",
+              "titleTemplate": "{{ row.name }}",
+              "subtitleTemplate": "Çağrı No: {{ row.callId }}",
+              "timestampTemplate": "Adım #{{ row.rowNumber }}",
+              "statusTemplate": "completed",
+              "badgeTemplate": "{{ row.agent }}"
+            }
+          ]
+        }
+      ]
+    },
+    { "widget": "layout", "key": "workflow-footer" }
+  ]
+}
+```
+2. İş akışı kaydedildiğinde sol menüdeki **İş Akışları** grubunun altında (`title` ve `icon` bilgileriyle) otomatik olarak görünür; ayrıca bir menü dosyası düzenlemenize gerek yoktur. (Bağımsız `kind: "page"` ekranlarının sol menüde görünmesi için ise layout JSON'una `"menu": { "title": "...", "icon": "...", "order": 10 }` eklenir.)
 
 ### Adım 5: Çalıştır ve Görüntüle
-`docker compose up -d --build` komutuyla (veya yerel geliştirmede API'yi başlatarak) hem Blazor (`http://localhost:8080/workflow/purchase-request`) hem Angular (`http://localhost:8081/workflow/purchase-request`) üzerinde yeni modülünüzü anında kullanmaya başlayabilirsiniz.
+Tarayıcı stüdyolarından (`/agent-admin`, `/workflow-admin`, `/ui-admin`) kaydettiyseniz değişiklikler **anında** aktif olur; dosyadan eklediyseniz `docker compose up -d --build` komutuyla hem Blazor (`http://localhost:8080/workflow/purchase-request`) hem Angular (`http://localhost:8081/workflow/purchase-request`) üzerinde yeni modülünüzü hemen kullanmaya başlayabilirsiniz.
 
 ---
 

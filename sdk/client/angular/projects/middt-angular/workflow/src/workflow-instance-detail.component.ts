@@ -115,6 +115,7 @@ export class MiddtWorkflowInstanceDetailComponent {
   readonly #notify = inject(NotifyService);
   readonly #injector = inject(Injector);
   #abort = new AbortController();
+  #sseSubscribedId: string | null = null;
   #loadedWorkflow: string | null = null;
   #loadedId: string | null = null;
   #polling = false;
@@ -310,6 +311,7 @@ export class MiddtWorkflowInstanceDetailComponent {
     if (id !== this.#loadedId) {
       this.#abort.abort();
       this.#abort = new AbortController();
+      this.#sseSubscribedId = null;
       this.instance.set(null);
       this.history.set([]);
       this.incidents.set([]);
@@ -373,6 +375,32 @@ export class MiddtWorkflowInstanceDetailComponent {
       this.retryErrors.set([]);
     }
     this.instance.set(instance);
+    this.#ensureSseSubscription(workflow, id, signal);
+  }
+
+  #ensureSseSubscription(workflow: string, id: string, signal: AbortSignal): void {
+    if (this.#sseSubscribedId === id || typeof this.#client.subscribeEvents !== 'function') {
+      return;
+    }
+
+    this.#sseSubscribedId = id;
+    this.#client.subscribeEvents({
+      workflow,
+      instanceId: id,
+      signal,
+      onEvent: ev => {
+        if (this.#destroyed || ev.instanceId !== id || this.instance()?.id !== id || this.executing() || this.retrying()) {
+          return;
+        }
+
+        void this.#load().then(() => {
+          const updated = this.instance();
+          if (updated && updated.id === id) {
+            this.changed.emit(updated);
+          }
+        });
+      },
+    });
   }
 
   async #ensureDefinition(workflow: string, version: number, signal: AbortSignal): Promise<void> {

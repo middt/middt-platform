@@ -418,6 +418,26 @@ export interface WorkflowPurgeResultModel {
   purgedIncidentsCount: number;
 }
 
+/** Real-time Server-Sent Events (SSE) notification payload emitted when a workflow instance starts or changes state (`GET /api/workflows/events`). */
+export interface WorkflowEventStreamModel {
+  type: string;
+  instanceId: string;
+  workflow: string;
+  workflowVersion: number;
+  key?: string | null;
+  fromState?: string | null;
+  state: string;
+  transition?: string | null;
+  occurredAt: string;
+}
+
+export interface WorkflowEventSubscriptionOptions {
+  workflow?: string | null;
+  instanceId?: string | null;
+  onEvent: (event: WorkflowEventStreamModel) => void;
+  signal?: AbortSignal;
+}
+
 /** Filter and paging of `listInstances` (defaults: page 1, 20 per page). */
 export interface WorkflowInstanceQuery {
   state?: string | null;
@@ -637,6 +657,75 @@ export class WorkflowApiClient extends ApiClientBase {
 
       return { result: ResultEnum.error, messageList: [UNAVAILABLE_MESSAGE], count: 0, data: null };
     }
+  }
+
+  /**
+   * Subscribes to the real-time Server-Sent Events (SSE) stream (`GET /api/workflows/events`) and invokes `options.onEvent`
+   * whenever a matching workflow event arrives. Returns an unsubscribe function that aborts the stream.
+   */
+  subscribeEvents(options: WorkflowEventSubscriptionOptions): () => void {
+    const controller = new AbortController();
+    const onExternalAbort = (): void => controller.abort();
+    if (options.signal) {
+      if (options.signal.aborted) {
+        controller.abort();
+      } else {
+        options.signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
+
+    const suffix = query({ workflow: options.workflow, instanceId: options.instanceId });
+    const path = `${this.routePrefix}/events${suffix}`;
+
+    void (async () => {
+      try {
+        const response = await this.sendRaw('GET', path, controller.signal);
+        if (!response.ok || !response.body) {
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line.startsWith('data:')) {
+              continue;
+            }
+
+            const json = line.slice(5).trim();
+            if (!json) {
+              continue;
+            }
+
+            try {
+              const parsed = JSON.parse(json) as WorkflowEventStreamModel;
+              options.onEvent(parsed);
+            } catch {
+              // ignore malformed SSE line
+            }
+          }
+        }
+      } catch {
+        // stream aborted or closed
+      } finally {
+        options.signal?.removeEventListener('abort', onExternalAbort);
+      }
+    })();
+
+    return () => {
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      controller.abort();
+    };
   }
 
   protected workflowRoute(workflow: string): string {

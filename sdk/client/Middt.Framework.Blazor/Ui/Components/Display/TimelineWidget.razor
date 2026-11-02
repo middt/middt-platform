@@ -1,0 +1,99 @@
+@inherits UiWidgetBase
+
+@{
+    var entries = Entries();
+}
+
+@if (entries.Count == 0)
+{
+    <p class="middt-ui-text middt-ui-text-muted">@(Node.StringProp("empty") ?? "Kayıt yok.")</p>
+}
+else
+{
+    <ol class="middt-ui-timeline">
+        @foreach (var entry in entries)
+        {
+            <li class="middt-ui-timeline-item">
+                <span class="middt-ui-timeline-dot middt-ui-timeline-dot-@entry.Color" aria-hidden="true"></span>
+                <div class="middt-ui-timeline-content">
+                    <div class="middt-ui-timeline-header">
+                        <strong class="middt-ui-timeline-title">@entry.Title</strong>
+                        @if (!string.IsNullOrEmpty(entry.Time))
+                        {
+                            <span class="middt-ui-timeline-time">@entry.Time</span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(entry.Subtitle))
+                    {
+                        <div class="middt-ui-timeline-subtitle">@entry.Subtitle</div>
+                    }
+                </div>
+            </li>
+        }
+    </ol>
+}
+
+@code {
+    private const int MaxItems = 1000;
+
+    private List<TimelineEntry> Entries()
+    {
+        var list = new List<TimelineEntry>();
+        var defaultColor = Node.StringProp("color") ?? "primary";
+
+        if (Node.ArrayProp("items") is { Count: > 0 } staticItems)
+        {
+            foreach (var item in staticItems.OfType<JsonObject>())
+            {
+                if (!Context.IsVisible(UiFieldJson.GetString(item, "visibleWhen")))
+                {
+                    continue;
+                }
+
+                var title = Context.Text(UiFieldJson.GetString(item, "title"));
+                var subtitle = UiFieldJson.GetString(item, "subtitle") is { } sub ? Context.Text(sub) : null;
+                var time = UiFieldJson.GetString(item, "time") is { } tm ? Context.Text(tm) : null;
+                var color = UiFieldJson.GetString(item, "color") ?? defaultColor;
+                list.Add(new TimelineEntry(title, subtitle, time, color));
+            }
+        }
+        else if (Node.StringProp("source") is { Length: > 0 } source)
+        {
+            JsonArray? items;
+            try
+            {
+                items = Context.Render(JsonValue.Create($"{{{{ {source} }}}}")) as JsonArray;
+            }
+            catch (Middt.Framework.Expressions.Portable.PortableExpressionException)
+            {
+                items = null;
+            }
+
+            if (items is { Count: > 0 })
+            {
+                var rowIndex = 0;
+                foreach (var item in items.Take(MaxItems))
+                {
+                    rowIndex++;
+                    var cloned = item?.DeepClone();
+                    if (cloned is JsonObject itemObj && itemObj["rowNumber"] is null)
+                    {
+                        itemObj["rowNumber"] = rowIndex;
+                    }
+
+                    var rowContext = Context.With(UiExpressions.Row, cloned);
+                    var title = rowContext.Text(Node.StringProp("title"));
+                    var subtitle = Node.StringProp("subtitle") is { } sub ? rowContext.Text(sub) : null;
+                    var time = Node.StringProp("time") is { } tm ? rowContext.Text(tm) : null;
+                    var color = (cloned is JsonObject obj && UiFieldJson.GetString(obj, "color") is { Length: > 0 } rowColor ? rowColor : null) ?? defaultColor;
+                    list.Add(new TimelineEntry(title, subtitle, time, color));
+                }
+            }
+        }
+
+        return list;
+    }
+
+    private sealed record TimelineEntry(string Title, string? Subtitle, string? Time, string Color);
+}
+

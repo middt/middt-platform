@@ -1149,6 +1149,21 @@ public sealed class MiddtAgentTests
         catalogResp.Data.Tools.Should().Contain(t => t.Name == "calc_refund_bonus");
         catalogResp.Data.McpServers.Should().Contain(m => m.Name == "studio-mcp");
 
+        // 4b. A newly started MiddtAgentRegistry instance loads the persisted __agents__ catalog from WorkflowDbContext without recursion
+        var freshMcp = new MiddtMcpClient(
+            host.Services,
+            Options.Create(new AgentSettings()),
+            new MiddtAgentOptions());
+        var freshRegistry = new MiddtAgentRegistry(
+            host.Services,
+            Options.Create(new AgentSettings()),
+            new MiddtAgentOptions(),
+            freshMcp,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+        freshRegistry.GetDefinition("studio-dispute-agent").Should().NotBeNull();
+        freshRegistry.GetTool("calc_refund_bonus").Should().NotBeNull();
+        freshMcp.GetServer("studio-mcp").Should().NotBeNull();
+
         // 5. POST /api/agents/validate catches broken references and approves valid catalogs
         var invalidBody = JsonNode.Parse("""
         {

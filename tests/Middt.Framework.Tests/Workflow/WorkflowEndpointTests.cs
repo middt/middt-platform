@@ -875,4 +875,51 @@ public sealed class WorkflowEndpointTests
         var purgeLive = (await EnvelopeAsync<WorkflowPurgeResultModel>(purgeLiveResp)).Data!;
         purgeLive.PurgedInstancesCount.Should().BeGreaterThanOrEqualTo(1);
     }
+
+    [Fact]
+    public async Task Event_stream_delivers_real_time_sse_notifications_on_start_and_transition()
+    {
+        await using var host = await Host();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(10));
+
+        using var sseReq = host.Request(HttpMethod.Get, $"{Base}/events?workflow=pipeline", null, "alice", "clerk", "manager");
+        using var sseResp = await host.Client.SendAsync(sseReq, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        sseResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        sseResp.Content.Headers.ContentType?.MediaType.Should().Be("text/event-stream");
+
+        await using var stream = await sseResp.Content.ReadAsStreamAsync(cts.Token);
+        using var reader = new StreamReader(stream);
+
+        // Read initial ': connected' comment line
+        var firstLine = await reader.ReadLineAsync(cts.Token);
+        firstLine.Should().Be(": connected");
+
+        // Trigger a workflow start and transition
+        var started = await StartAsync(host, "pipeline", new { key = "ORD-SSE-1", data = new { name = "Ada", amount = 80 } });
+        await TransitionAsync(host, "pipeline", started.Id, "submit", new { comment = "SSE test" });
+
+        var received = new List<WorkflowEventStreamModel>();
+        while (!received.Any(e => e.State == "review") && !cts.Token.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(cts.Token);
+            if (line is null)
+            {
+                break;
+            }
+
+            if (line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                var json = line[5..].Trim();
+                var ev = System.Text.Json.JsonSerializer.Deserialize<WorkflowEventStreamModel>(json, WorkflowTestHost.Json);
+                if (ev is not null && ev.InstanceId == started.Id)
+                {
+                    received.Add(ev);
+                }
+            }
+        }
+
+        received.Should().Contain(e => e.Type == "Started" && e.Workflow == "pipeline" && e.Key == "ORD-SSE-1");
+        received.Should().Contain(e => e.State == "review" && e.Transition == "submit");
+    }
 }

@@ -417,4 +417,29 @@ public sealed class UiLayoutValidatorTests
         section.Children.Should().Be("required");
         UiWidgetSpecModel.From(UiWidgets.Alert).Props.Single(p => p.Name == "severity").Values.Should().Equal("info", "success", "warning", "danger");
     }
+
+    [Fact]
+    public void Stat_tabs_and_timeline_widgets_are_validated()
+    {
+        Errors("""[ { "widget": "stat", "label": "Toplam Tutar", "value": "{{ data.amount }}", "format": "N2", "color": "success" } ]""")
+            .Should().BeEmpty();
+        Errors("""[ { "widget": "stat", "value": "{{ data.amount }}" } ]""")
+            .Should().Equal("body[0](stat).label: required.");
+        Errors("""[ { "widget": "stat", "label": "Tutar", "value": "{{ data.amount }}", "color": "purple" } ]""")
+            .Should().ContainSingle(e => e.Contains("body[0](stat).color:", StringComparison.Ordinal));
+
+        Errors("""[ { "widget": "tabs", "titles": [ "Genel", "Detay" ], "children": [ { "widget": "divider" }, { "widget": "divider" } ] } ]""")
+            .Should().BeEmpty();
+        Errors("""[ { "widget": "tabs", "titles": [ "Genel" ] } ]""")
+            .Should().Equal("body[0](tabs).children: 'tabs' needs at least one child.");
+
+        Errors("""[ { "widget": "timeline", "source": "data.events", "title": "{{ row.title }}", "time": "{{ row.at }}" } ]""")
+            .Should().BeEmpty();
+        Errors("""[ { "widget": "timeline", "items": [ { "title": "Başvuru Alındı", "color": "success" } ] } ]""")
+            .Should().BeEmpty();
+        Errors("""[ { "widget": "timeline" } ]""")
+            .Should().Equal("body[0](timeline): requires either 'source' or non-empty 'items'.");
+        Errors("""[ { "widget": "timeline", "source": "data.events" } ]""")
+            .Should().Equal("body[0](timeline).title: required when 'source' is specified.");
+    }
 }

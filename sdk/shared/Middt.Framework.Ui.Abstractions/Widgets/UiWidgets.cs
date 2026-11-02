@@ -89,6 +89,66 @@ public static partial class UiWidgets
         Props = [new("text", UiPropType.Template) { Required = true }, new("color", UiPropType.Enum) { Values = ["primary", "secondary", "success", "warning", "danger", "info"] }],
     };
 
+    public static UiWidgetSpec Stat { get; } = new("stat", "Key performance indicator (KPI) metric card.")
+    {
+        Props =
+        [
+            new("label", UiPropType.Template, "Metric title, e.g. Toplam Tutar.") { Required = true },
+            new("value", UiPropType.Template, "Formatted metric value, e.g. {{ data.amount }}.") { Required = true },
+            new("format", UiPropType.Format, "Optional number/date format (N0–N6, F0–F6, d, D, g, t)."),
+            new("subtitle", UiPropType.Template, "Optional secondary description or trend text."),
+            new("icon", UiPropType.String, "Optional Material icon name."),
+            new("color", UiPropType.Enum) { Values = ["primary", "secondary", "success", "warning", "danger", "info"] },
+        ],
+    };
+
+    public static UiWidgetSpec Tabs { get; } = new("tabs", "Organizes its visible children into switchable tab panels.")
+    {
+        Children = UiChildren.Required,
+        Props =
+        [
+            new("titles", UiPropType.Options, "Optional tab header labels corresponding to each child (defaults to child 'title' or 'Sekme N')."),
+        ],
+    };
+
+    public static UiWidgetSpec Timeline { get; } = new("timeline", "Chronological event or step timeline.")
+    {
+        Props =
+        [
+            new("source", UiPropType.Expression, "Optional expression returning an array of items (each item is 'row'), e.g. instance.agentRuns."),
+            new("title", UiPropType.Template, "Item title template when 'source' is used, e.g. {{ row.agent }}."),
+            new("subtitle", UiPropType.Template, "Optional item description template when 'source' is used."),
+            new("time", UiPropType.Template, "Optional item timestamp/badge template when 'source' is used."),
+            new("color", UiPropType.Enum, "Default dot color when 'source' is used.") { Values = ["primary", "secondary", "success", "warning", "danger", "info"] },
+            new("empty", UiPropType.String, "Text shown when 'source' is empty."),
+            new("items", UiPropType.Array, "Static or template timeline entries.")
+            {
+                Properties =
+                [
+                    new("title", UiPropType.Template) { Required = true },
+                    new("subtitle", UiPropType.Template),
+                    new("time", UiPropType.Template),
+                    new("color", UiPropType.Enum) { Values = ["primary", "secondary", "success", "warning", "danger", "info"] },
+                    new("visibleWhen", UiPropType.Expression),
+                ],
+            },
+        ],
+        Validate = (node, path, errors) =>
+        {
+            var hasSource = !string.IsNullOrWhiteSpace(node.StringProp("source"));
+            var hasItems = node.ArrayProp("items") is { Count: > 0 };
+            if (!hasSource && !hasItems)
+            {
+                errors.Add($"{path}: requires either 'source' or non-empty 'items'.");
+            }
+
+            if (hasSource && string.IsNullOrWhiteSpace(node.StringProp("title")))
+            {
+                errors.Add($"{path}.title: required when 'source' is specified.");
+            }
+        },
+    };
+
     public static UiWidgetSpec Section { get; } = new("section", "Card with an optional title.")
     {
         Children = UiChildren.Required,
@@ -213,7 +273,7 @@ public static partial class UiWidgets
         },
     };
 
-    public static IReadOnlyList<UiWidgetSpec> All { get; } = [Heading, Text, Fields, Alert, Badge, Section, Columns, Divider, List, Link, Grid, Record, Layout];
+    public static IReadOnlyList<UiWidgetSpec> All { get; } = [Heading, Text, Fields, Alert, Badge, Stat, Tabs, Timeline, Section, Columns, Divider, List, Link, Grid, Record, Layout];
 
     private static UiPropSpec[] BasicFieldProps() =>
     [

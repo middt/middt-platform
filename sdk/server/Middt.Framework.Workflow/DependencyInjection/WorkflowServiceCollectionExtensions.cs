@@ -44,6 +44,8 @@ public static class WorkflowServiceCollectionExtensions
         services.AddSingleton<WorkflowTaskRegistry>();
         services.AddSingleton<WorkflowRegistry>();
         services.AddSingleton<WorkflowJobSignal>();
+        services.AddSingleton<WorkflowEventStreamHub>();
+        services.AddSingleton<IWorkflowEventHandler>(sp => sp.GetRequiredService<WorkflowEventStreamHub>());
         services.TryAddSingleton<WorkflowJobNotifier>();
         services.AddScoped<WorkflowEngine>();
         services.AddScoped<WorkflowInstanceDataQuery>();

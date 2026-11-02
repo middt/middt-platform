@@ -1,6 +1,6 @@
 # Playbook: add a layout widget
 
-> **Tip**: Before adding a new compiled C#/TypeScript widget, check if your component can be built by composing existing widgets (`columns`, `section`, `heading`, `text`, `fields`, `badge`, `alert`, `divider`, `link`, `grid`, `record`, `list`) inside a `kind: "view"` JSON layout and embedding it via `{ "widget": "layout", "key": "<layout-key>", "data": "<optional-expr>" }`. See [`backend-driven-json-ui.md`](backend-driven-json-ui.md).
+> **Tip**: Before adding a new compiled C#/TypeScript widget, check if your component can be built by composing existing widgets (`columns`, `section`, `tabs`, `heading`, `text`, `stat`, `fields`, `timeline`, `badge`, `alert`, `divider`, `link`, `grid`, `record`, `list`) inside a `kind: "view"` JSON layout and embedding it via `{ "widget": "layout", "key": "<layout-key>", "data": "<optional-expr>" }`. See [`backend-driven-json-ui.md`](backend-driven-json-ui.md).
 
 When you need a new **primitive** widget, it is a **contract** (spec) plus one implementation per renderer. All of them must ship together:
 

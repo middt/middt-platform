@@ -931,6 +931,57 @@ test('AgentApiClient routes and payloads for catalog, CRUD, validate, and playgr
   ]);
 });
 
+test('WorkflowApiClient.subscribeEvents parses SSE event frames', async () => {
+  const sseBody = [
+    ': connected',
+    '',
+    'event: workflow-event',
+    'data: {"type":"StateChanged","instanceId":"11111111-1111-1111-1111-111111111111","workflow":"order-approval","workflowVersion":1,"state":"approved","occurredAt":"2026-01-01T00:00:00Z"}',
+    '',
+  ].join('\n');
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(sseBody));
+      controller.close();
+    },
+  });
+
+  const calls: string[] = [];
+  const client = new WorkflowApiClient({
+    baseUrl: 'https://api.example.com',
+    fetch: async url => {
+      calls.push(url);
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    },
+  });
+
+  const events: unknown[] = [];
+  const unsubscribe = client.subscribeEvents({
+    workflow: 'order-approval',
+    instanceId: '11111111-1111-1111-1111-111111111111',
+    onEvent: ev => events.push(ev),
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 30));
+  unsubscribe();
+
+  assert.deepEqual(calls, [
+    'https://api.example.com/api/workflows/events?workflow=order-approval&instanceId=11111111-1111-1111-1111-111111111111',
+  ]);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    type: 'StateChanged',
+    instanceId: '11111111-1111-1111-1111-111111111111',
+    workflow: 'order-approval',
+    workflowVersion: 1,
+    state: 'approved',
+    occurredAt: '2026-01-01T00:00:00Z',
+  });
+});
+
+
 
 
 

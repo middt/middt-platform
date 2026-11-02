@@ -88,7 +88,10 @@
             "list",
             "record",
             "section",
-            "text"
+            "stat",
+            "tabs",
+            "text",
+            "timeline"
           ]
         }
       },
@@ -241,12 +244,48 @@
           "if": {
             "properties": {
               "widget": {
+                "const": "stat"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget-stat"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "widget": {
+                "const": "tabs"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget-tabs"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "widget": {
                 "const": "text"
               }
             }
           },
           "then": {
             "$ref": "#/$defs/widget-text"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "widget": {
+                "const": "timeline"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/widget-timeline"
           }
         }
       ]
@@ -1452,6 +1491,120 @@
       ],
       "additionalProperties": false
     },
+    "widget-stat": {
+      "type": "object",
+      "description": "Key performance indicator (KPI) metric card.",
+      "properties": {
+        "widget": {
+          "const": "stat",
+          "description": "Key performance indicator (KPI) metric card."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+          "description": "Unique id within the layout."
+        },
+        "visibleWhen": {
+          "type": "string",
+          "description": "Portable expression; the widget is hidden when it is false."
+        },
+        "label": {
+          "type": "string",
+          "x-middt": "template",
+          "description": "Metric title, e.g. Toplam Tutar."
+        },
+        "value": {
+          "type": "string",
+          "x-middt": "template",
+          "description": "Formatted metric value, e.g. {{ data.amount }}."
+        },
+        "format": {
+          "enum": [
+            "N0",
+            "N1",
+            "N2",
+            "N3",
+            "N4",
+            "N5",
+            "N6",
+            "F0",
+            "F1",
+            "F2",
+            "F3",
+            "F4",
+            "F5",
+            "F6",
+            "d",
+            "D",
+            "g",
+            "t"
+          ],
+          "description": "Optional number/date format (N0–N6, F0–F6, d, D, g, t)."
+        },
+        "subtitle": {
+          "type": "string",
+          "x-middt": "template",
+          "description": "Optional secondary description or trend text."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Optional Material icon name."
+        },
+        "color": {
+          "enum": [
+            "primary",
+            "secondary",
+            "success",
+            "warning",
+            "danger",
+            "info"
+          ]
+        }
+      },
+      "required": [
+        "widget",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "widget-tabs": {
+      "type": "object",
+      "description": "Organizes its visible children into switchable tab panels.",
+      "properties": {
+        "widget": {
+          "const": "tabs",
+          "description": "Organizes its visible children into switchable tab panels."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+          "description": "Unique id within the layout."
+        },
+        "visibleWhen": {
+          "type": "string",
+          "description": "Portable expression; the widget is hidden when it is false."
+        },
+        "children": {
+          "$ref": "#/$defs/nodes"
+        },
+        "titles": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number"
+            ]
+          },
+          "description": "Optional tab header labels corresponding to each child (defaults to child 'title' or 'Sekme N')."
+        }
+      },
+      "required": [
+        "widget",
+        "children"
+      ],
+      "additionalProperties": false
+    },
     "widget-text": {
       "type": "object",
       "description": "Paragraph.",
@@ -1486,6 +1639,103 @@
       "required": [
         "widget",
         "text"
+      ],
+      "additionalProperties": false
+    },
+    "widget-timeline": {
+      "type": "object",
+      "description": "Chronological event or step timeline.",
+      "properties": {
+        "widget": {
+          "const": "timeline",
+          "description": "Chronological event or step timeline."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+          "description": "Unique id within the layout."
+        },
+        "visibleWhen": {
+          "type": "string",
+          "description": "Portable expression; the widget is hidden when it is false."
+        },
+        "source": {
+          "type": "string",
+          "x-middt": "expression",
+          "description": "Optional expression returning an array of items (each item is 'row'), e.g. instance.agentRuns."
+        },
+        "title": {
+          "type": "string",
+          "x-middt": "template",
+          "description": "Item title template when 'source' is used, e.g. {{ row.agent }}."
+        },
+        "subtitle": {
+          "type": "string",
+          "x-middt": "template",
+          "description": "Optional item description template when 'source' is used."
+        },
+        "time": {
+          "type": "string",
+          "x-middt": "template",
+          "description": "Optional item timestamp/badge template when 'source' is used."
+        },
+        "color": {
+          "enum": [
+            "primary",
+            "secondary",
+            "success",
+            "warning",
+            "danger",
+            "info"
+          ],
+          "description": "Default dot color when 'source' is used."
+        },
+        "empty": {
+          "type": "string",
+          "description": "Text shown when 'source' is empty."
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "x-middt": "template"
+              },
+              "subtitle": {
+                "type": "string",
+                "x-middt": "template"
+              },
+              "time": {
+                "type": "string",
+                "x-middt": "template"
+              },
+              "color": {
+                "enum": [
+                  "primary",
+                  "secondary",
+                  "success",
+                  "warning",
+                  "danger",
+                  "info"
+                ]
+              },
+              "visibleWhen": {
+                "type": "string",
+                "x-middt": "expression"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "title"
+            ]
+          },
+          "description": "Static or template timeline entries."
+        }
+      },
+      "required": [
+        "widget"
       ],
       "additionalProperties": false
     }

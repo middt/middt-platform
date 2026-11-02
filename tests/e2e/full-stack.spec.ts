@@ -334,3 +334,101 @@ test('JSON-backed workflows execute end-to-end with ETag/304, task trace, SubFlo
   const riskInstance = (await riskStart.json()).data;
   expect(riskInstance.state).toBe('approved');
 });
+
+for (const [name, base] of [['Angular', angular], ['Blazor', blazor]] as const) {
+  test(`${name}: Real-time SSE updates workflow instance detail in browser without manual refresh and renders stat, tabs, timeline widgets`, async ({ page }) => {
+    // Sign in via Angular BFF first so page.request has BFF proxy cookie for external API triggers
+    await page.goto(angular);
+    await signIn(page);
+    const approveAngular = page.getByRole('button', { name: 'İzin ver' });
+    if (await approveAngular.isVisible()) await approveAngular.click();
+    await expect.poll(() => new URL(page.url()).origin, { timeout: 30_000 }).toBe(angular);
+    const user = await page.request.get(`${angular}/bff/user`, { headers: { 'X-CSRF': '1' } });
+    expect(user.ok()).toBeTruthy();
+    expect((await user.json()).isAuthenticated).toBe(true);
+
+    if (name === 'Blazor') {
+      await page.goto(blazor);
+      const approveBlazor = page.getByRole('button', { name: 'İzin ver' });
+      if (await approveBlazor.isVisible()) await approveBlazor.click();
+      await expect.poll(() => new URL(page.url()).origin, { timeout: 30_000 }).toBe(blazor);
+    }
+
+    // 1. Start a fresh sla-escalation instance via API (lands in 'waiting-agent')
+    const ticketTitle = `SSE-${name}-${Date.now()}`;
+    const slaStart = await page.request.post(`${angular}/api/workflows/sla-escalation/instances`, {
+      headers: { 'X-CSRF': '1' },
+      data: {
+        data: {
+          ticketTitle,
+          customerName: 'Canlı SSE Test A.Ş.',
+          amount: 45000,
+          severity: 'Yüksek',
+          slaDuration: '00:05:00',
+        },
+      },
+    });
+    expect(slaStart.ok()).toBeTruthy();
+    const slaInstance = (await slaStart.json()).data;
+    expect(slaInstance.state).toBe('waiting-agent');
+
+    // 2. Open the workflow page in the browser and select the instance
+    await page.goto(`${base}/workflow/sla-escalation`);
+    await page.locator(`.middt-wf-grid tr:has-text("${ticketTitle}")`).first().click();
+
+    // Verify the detail view loaded 'waiting-agent' and the live SSE badge is visible
+    await expect(page.locator('[data-testid="wf-sse-status"]')).toBeVisible();
+    await expect(page.locator('.middt-wf-diagram')).toHaveAttribute('data-current-state', 'waiting-agent');
+
+    // Give the browser/server SSE stream a brief moment to connect
+    await page.waitForTimeout(500);
+
+    // 3. Trigger 'resolve' externally via HTTP request (WITHOUT clicking anything in the browser UI!)
+    const resolveRes = await page.request.post(
+      `${angular}/api/workflows/sla-escalation/instances/${slaInstance.id}/transitions/resolve`,
+      {
+        headers: { 'X-CSRF': '1' },
+        data: { resolutionNote: 'Arka plandan SSE ile çözüldü' },
+      },
+    );
+    expect(resolveRes.ok()).toBeTruthy();
+
+    // 4. Assert that the browser UI automatically updates to 'resolved' via SSE without pressing Refresh!
+    await expect(page.locator('.middt-wf-diagram')).toHaveAttribute('data-current-state', 'resolved', { timeout: 10_000 });
+
+    // 5. Verify /ui-admin has stat, tabs, and timeline in palette & live preview renders them
+    await page.goto(`${base}/ui-admin`);
+    const statChip = page.locator('.middt-wf-palette-chip:has-text("KPI / Metrik Kartı (stat)")');
+    const tabsChip = page.locator('.middt-wf-palette-chip:has-text("Sekmeli Panel (tabs)")');
+    const timelineChip = page.locator('.middt-wf-palette-chip:has-text("Zaman Çizelgesi (timeline)")');
+
+    await expect(statChip).toBeVisible();
+    await expect(tabsChip).toBeVisible();
+    await expect(timelineChip).toBeVisible();
+
+    await statChip.dblclick();
+    await timelineChip.dblclick();
+    await tabsChip.dblclick();
+    await page.getByRole('button', { name: /Önizle/ }).click();
+
+    await expect(page.locator('.middt-ui-stat').first()).toBeVisible();
+    await expect(page.locator('.middt-ui-timeline').first()).toBeVisible();
+    await expect(page.locator('.middt-ui-tabs').first()).toBeVisible();
+
+    // Test interactive tab switching on the rendered tabs widget
+    await page.locator('.middt-ui-tab:has-text("Detaylar")').first().click();
+    await expect(page.getByText('İkinci sekme içeriği').first()).toBeVisible();
+
+    if (name === 'Angular') {
+      // 6. Verify 'AI Risk Analizi' on invoice-collection completes cleanly without hanging
+      await page.goto(`${base}/workflow/invoice-collection`);
+      await page.locator('.middt-wf-grid tr:has-text("INV-FTR-2026-3003")').first().click();
+      await page.getByRole('button', { name: /AI Risk Analizi/ }).first().click();
+      const dialog = page.locator('[role="dialog"]');
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole('button', { name: /AI Risk Analizi/ }).click();
+      await expect(dialog).toBeHidden({ timeout: 45_000 });
+    }
+  });
+}
+

@@ -341,4 +341,41 @@ public sealed class UiStaticRenderingTests
         text.Should().Contain("Yüksek tutar").And.Contain("Durum: Eskale edildi · Akış: order-approval");
         text.Should().NotContain("Firma bilgileri").And.NotContain("⚠").And.NotContain("Not:").And.NotContain("Ürün");
     }
+
+    [Fact]
+    public void Stat_tabs_and_timeline_render_html_and_encode_values()
+    {
+        var html = Render("""
+            [
+              { "widget": "stat", "label": "Toplam <Tutar>", "value": "{{ data.amount }}", "format": "N2", "subtitle": "Durum: {{ data.state }}", "icon": "📈", "color": "success" },
+              { "widget": "tabs", "titles": [ "Genel", "Geçmiş" ], "children": [
+                  { "widget": "text", "text": "Sekme 1: {{ data.customer }}" },
+                  { "widget": "timeline", "source": "data.events", "title": "{{ row.title }}", "subtitle": "{{ row.note }}", "time": "{{ row.at }}", "color": "{{ row.color }}" }
+                ]
+              }
+            ]
+            """, """
+            {
+              "amount": 1250.5,
+              "state": "Active",
+              "customer": "Anadolu A.Ş.",
+              "events": [
+                { "title": "Başvuru Alındı", "note": "Müşteri: <Ada>", "at": "10:00", "color": "success" },
+                { "title": "Onaylandı", "note": "Risk uygun", "at": "10:05", "color": "primary" }
+              ]
+            }
+            """);
+
+        html.Should().Contain("middt-ui-stat middt-ui-stat-success")
+            .And.Contain("Toplam &lt;Tutar&gt;")
+            .And.Contain("1,250.50")
+            .And.Contain("Durum: Active");
+        html.Should().Contain("middt-ui-tabs")
+            .And.Contain("role=\"tablist\"")
+            .And.Contain("Genel")
+            .And.Contain("Ge&#xE7;mi&#x15F;");
+        html.Should().Contain("middt-ui-timeline")
+            .And.Contain("M&#xFC;&#x15F;teri: &lt;Ada&gt;")
+            .And.Contain("middt-ui-timeline-dot-success");
+    }
 }
