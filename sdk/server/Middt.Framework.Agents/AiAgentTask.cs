@@ -109,13 +109,18 @@ public sealed class AiAgentTask : IWorkflowTask
         var effectiveMaxToolCalls = config["maxToolCalls"]?.GetValue<int>() ?? agentSettings?.DefaultMaxToolCalls;
         var effectiveMaxTotalTokens = config["maxTotalTokens"]?.GetValue<long>() ?? agentSettings?.DefaultMaxTotalTokens;
 
+        var inlineDef = config["inlineAgent"] is JsonObject inlineAgentObj
+            ? inlineAgentObj.Deserialize<AgentDefinition>(CamelCaseJsonOptions)
+            : null;
+        var resolvedBaseDef = inlineDef ?? (!string.IsNullOrWhiteSpace(agentName) ? registry.GetDefinition(agentName) : null);
+
         if (mode is "sequential" or "concurrent" or "parallel" or "handoff")
         {
             var participants = ResolveMultiAgents(config["agents"] as JsonArray, registry, context);
             var workflowName = !string.IsNullOrWhiteSpace(agentName) ? agentName : $"{context.Workflow}-{mode}";
             agent = registry.CreateWorkflowAgent(mode, participants, workflowName);
         }
-        else if (!string.IsNullOrWhiteSpace(agentName) && registry.GetDefinition(agentName) is { } registeredDef)
+        else if (resolvedBaseDef is { } registeredDef)
         {
             effectiveOutputSchema ??= registeredDef.OutputSchema;
             effectiveMaxToolCalls = config["maxToolCalls"]?.GetValue<int>() ?? registeredDef.MaxToolCalls ?? agentSettings?.DefaultMaxToolCalls;
@@ -141,7 +146,10 @@ public sealed class AiAgentTask : IWorkflowTask
                 mergedMcp.Add(s);
             }
 
-            var baseInstructions = !string.IsNullOrWhiteSpace(instructions) ? instructions : registeredDef.Instructions;
+            var rawInstructions = !string.IsNullOrWhiteSpace(instructions) ? instructions : registeredDef.Instructions;
+            var baseInstructions = !string.IsNullOrWhiteSpace(rawInstructions)
+                ? context.Expressions.RenderText(rawInstructions, context.Scope)
+                : rawInstructions;
             agent = registry.CreateAgent(new AgentDefinition
             {
                 Name = registeredDef.Name,

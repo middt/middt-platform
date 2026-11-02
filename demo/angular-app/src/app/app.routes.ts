@@ -26,6 +26,12 @@ export const routes: Routes = [
         canActivate: [middtRoleGuard('ui-admin')],
         title: 'Akış Tasarımı',
       },
+      {
+        path: 'agent-admin',
+        loadComponent: () => import('./pages/agent-admin.page').then(m => m.AgentAdminPage),
+        canActivate: [middtRoleGuard('ui-admin')],
+        title: 'AI Ajan Stüdyosu',
+      },
       // Every workflow (instance list + detail); the page sets the browser title to the workflow title.
       { path: 'workflow/:key', loadChildren: () => import('./pages/workflow.routes').then(m => m.workflowRoutes) },
       { path: '**', redirectTo: '' },

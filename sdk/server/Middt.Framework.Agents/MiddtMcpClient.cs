@@ -98,6 +98,9 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         _servers[server.Name] = server;
     }
 
+    internal bool RemoveServer(string serverName) =>
+        !string.IsNullOrWhiteSpace(serverName) && _servers.TryRemove(serverName, out _);
+
     public async Task<JsonArray> ListToolsAsync(string serverName, CancellationToken cancellationToken = default)
     {
         var server = RequireServer(serverName);

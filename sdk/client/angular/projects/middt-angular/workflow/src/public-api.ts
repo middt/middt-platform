@@ -1,3 +1,4 @@
+export * from './agent-designer.component';
 export * from './json-schema-form.component';
 export * from './workflow-client';
 export * from './workflow-designer.component';

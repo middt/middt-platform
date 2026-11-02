@@ -655,3 +655,185 @@ export class WorkflowApiClient extends ApiClientBase {
     return `${this.workflowRoute(workflow)}/instances/${pathSegment(id, 'Instance id')}`;
   }
 }
+
+/** Declarative AI agent specification in the AI Agent Studio (`/agent-admin`). */
+export interface AgentDefinitionModel {
+  name: string;
+  description?: string | null;
+  instructions?: string | null;
+  modelId?: string | null;
+  temperature?: number | null;
+  maxOutputTokens?: number | null;
+  maxToolCalls?: number | null;
+  maxTotalTokens?: number | null;
+  tools?: string[];
+  mcpServers?: string[];
+  allowedTransitions?: string[];
+  outputSchema?: WorkflowData | null;
+}
+
+/** Declarative AI tool specification (`expression`, `task`, `http`, or `mcp`). */
+export interface AgentToolDefinitionModel {
+  name: string;
+  description?: string | null;
+  kind?: string;
+  parameters?: WorkflowData | null;
+  task?: string | null;
+  config?: WorkflowData | null;
+  into?: string | null;
+  writeToWorkflowData?: boolean;
+  expression?: string | null;
+  output?: unknown;
+  method?: string | null;
+  url?: string | null;
+  queryParams?: WorkflowData | null;
+  headers?: WorkflowData | null;
+  body?: unknown;
+  mcpServer?: string | null;
+  mcpTool?: string | null;
+  roles?: string[];
+}
+
+/** Declarative Model Context Protocol (MCP) resource definition. */
+export interface McpResourceDefinitionModel {
+  uri: string;
+  name: string;
+  description?: string | null;
+  mimeType?: string;
+  content?: unknown;
+}
+
+/** Declarative Model Context Protocol (MCP) prompt template definition. */
+export interface McpPromptDefinitionModel {
+  name: string;
+  description?: string | null;
+  template: string;
+}
+
+/** Model Context Protocol (MCP) server configuration. */
+export interface McpServerDefinitionModel {
+  name: string;
+  description?: string | null;
+  endpoint?: string | null;
+  headers?: Record<string, string>;
+  tools?: AgentToolDefinitionModel[];
+  resources?: McpResourceDefinitionModel[];
+  prompts?: McpPromptDefinitionModel[];
+}
+
+/** Complete AI Agent, Declarative Tool, and MCP Server catalog (`GET /api/agents/catalog`). */
+export interface AgentCatalogModel {
+  provider?: string | null;
+  defaultModelId?: string | null;
+  useLocalFallback?: boolean;
+  hasExternalApiKey?: boolean;
+  agents: AgentDefinitionModel[];
+  tools: AgentToolDefinitionModel[];
+  mcpServers: McpServerDefinitionModel[];
+}
+
+/** Validation result for an AI agent, declarative tool, or MCP server catalog (`POST /api/agents/validate`). */
+export interface AgentValidationResultModel {
+  valid: boolean;
+  errors: string[];
+}
+
+/** Dry-run playground request for testing an AI agent (`POST /api/agents/test`). */
+export interface AgentPlaygroundRequest {
+  agent?: string | null;
+  definition?: AgentDefinitionModel | null;
+  prompt: string;
+  data?: WorkflowData | null;
+  allowedTransitions?: string[] | null;
+}
+
+/** Execution result of an interactive AI agent playground run (`POST /api/agents/test`). */
+export interface AgentPlaygroundResultModel {
+  agentName: string;
+  modelId?: string | null;
+  provider?: string | null;
+  usedLocalFallback: boolean;
+  prompt: string;
+  output?: unknown;
+  rawText?: string | null;
+  selectedTransition?: string | null;
+  allowedTransitions: WorkflowTransitionOptionModel[];
+  toolCalls: WorkflowAgentToolCallModel[];
+  dataAfter: WorkflowData;
+  durationMs: number;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  finishReason?: string | null;
+  responseId?: string | null;
+}
+
+export interface AgentApiClientOptions extends ApiClientOptions {
+  /** Route prefix of `MapMiddtAgents` (default `api/agents`). */
+  routePrefix?: string;
+}
+
+/** Client of the AI Agent Studio & Playground REST API mapped by `MapMiddtAgents` (default prefix `api/agents`). */
+export class AgentApiClient extends ApiClientBase {
+  readonly routePrefix: string;
+
+  constructor(options: AgentApiClientOptions = {}) {
+    super(options);
+    this.routePrefix = (options.routePrefix ?? 'api/agents').replace(/^\/+|\/+$/g, '');
+  }
+
+  /** Lists all registered AI agent definitions. */
+  listAgents(signal?: AbortSignal): Promise<BaseResponseDataModel<AgentDefinitionModel[]>> {
+    return this.send('GET', this.routePrefix, undefined, signal);
+  }
+
+  /** Loads the full AI agent, declarative tool, and MCP server catalog along with active provider info. */
+  getCatalog(signal?: AbortSignal): Promise<BaseResponseDataModel<AgentCatalogModel>> {
+    return this.send('GET', `${this.routePrefix}/catalog`, undefined, signal);
+  }
+
+  /** Deploys a full or partial catalog (`agents`, `tools`, `mcpServers`) and persists it (requires `ui-admin` role). */
+  deployCatalog(catalog: Partial<AgentCatalogModel>, signal?: AbortSignal): Promise<BaseResponseDataModel<string[]>> {
+    return this.send('POST', `${this.routePrefix}/catalog`, catalog, signal);
+  }
+
+  /** Creates or updates a single AI agent definition (requires `ui-admin` role). */
+  saveAgent(agent: AgentDefinitionModel, signal?: AbortSignal): Promise<BaseResponseDataModel<AgentDefinitionModel>> {
+    return this.send('PUT', `${this.routePrefix}/${pathSegment(agent.name, 'Agent name')}`, agent, signal);
+  }
+
+  /** Deletes an AI agent definition by name (requires `ui-admin` role). */
+  deleteAgent(name: string, signal?: AbortSignal): Promise<BaseResponseDataModel<boolean>> {
+    return this.send('DELETE', `${this.routePrefix}/${pathSegment(name, 'Agent name')}`, undefined, signal);
+  }
+
+  /** Creates or updates a single declarative AI tool (requires `ui-admin` role). */
+  saveTool(tool: AgentToolDefinitionModel, signal?: AbortSignal): Promise<BaseResponseDataModel<AgentToolDefinitionModel>> {
+    return this.send('PUT', `${this.routePrefix}/tools/${pathSegment(tool.name, 'Tool name')}`, tool, signal);
+  }
+
+  /** Deletes a declarative AI tool by name (requires `ui-admin` role). */
+  deleteTool(name: string, signal?: AbortSignal): Promise<BaseResponseDataModel<boolean>> {
+    return this.send('DELETE', `${this.routePrefix}/tools/${pathSegment(name, 'Tool name')}`, undefined, signal);
+  }
+
+  /** Creates or updates a Model Context Protocol (MCP) server configuration (requires `ui-admin` role). */
+  saveMcpServer(server: McpServerDefinitionModel, signal?: AbortSignal): Promise<BaseResponseDataModel<McpServerDefinitionModel>> {
+    return this.send('PUT', `${this.routePrefix}/mcp-servers/${pathSegment(server.name, 'MCP server name')}`, server, signal);
+  }
+
+  /** Deletes an MCP server configuration by name (requires `ui-admin` role). */
+  deleteMcpServer(name: string, signal?: AbortSignal): Promise<BaseResponseDataModel<boolean>> {
+    return this.send('DELETE', `${this.routePrefix}/mcp-servers/${pathSegment(name, 'MCP server name')}`, undefined, signal);
+  }
+
+  /** Validates a draft agent, tool, or catalog JSON object without saving it. */
+  validate(body: WorkflowData, signal?: AbortSignal): Promise<BaseResponseDataModel<AgentValidationResultModel>> {
+    return this.send('POST', `${this.routePrefix}/validate`, body, signal);
+  }
+
+  /** Executes an interactive dry-run playground test against a registered or inline draft AI agent. */
+  testPlayground(request: AgentPlaygroundRequest, signal?: AbortSignal): Promise<BaseResponseDataModel<AgentPlaygroundResultModel>> {
+    return this.send('POST', `${this.routePrefix}/test`, request, signal);
+  }
+}

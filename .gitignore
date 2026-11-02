@@ -26,3 +26,5 @@ node_modules/
 
 graphify-out/
 *.graphify-bak
+
+**/COMPETITIVE-ANALYSIS-AND-ROADMAP.md

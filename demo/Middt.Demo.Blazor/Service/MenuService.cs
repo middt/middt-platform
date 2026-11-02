@@ -13,6 +13,8 @@ public sealed class MenuService(UiApiClient uiClient, WorkflowApiClient workflow
 
     private static readonly MenuItem WorkflowDesignerItem = new() { Name = "Akış Tasarımı", Path = "/workflow-admin", Icon = "schema", Title = "Akış Tasarımı" };
 
+    private static readonly MenuItem AgentDesignerItem = new() { Name = "AI Ajan Stüdyosu", Path = "/agent-admin", Icon = "smart_toy", Title = "AI Ajan Stüdyosu" };
+
     private static readonly MenuItem Designer = new() { Name = "Ekran Tasarımı", Path = "/ui-admin", Icon = "dashboard_customize", Title = "Ekran Tasarımı" };
 
     // Per circuit (scoped service): the group's Expanded state and Children (loaded from GET /api/workflows) are mutable.
@@ -31,7 +33,7 @@ public sealed class MenuService(UiApiClient uiClient, WorkflowApiClient workflow
     public event Action? Changed;
 
     public IReadOnlyList<MenuItem> MenuItems => canDesign
-        ? [Home, workflowGroup, .. layoutItems, WorkflowDesignerItem, Designer]
+        ? [Home, workflowGroup, .. layoutItems, WorkflowDesignerItem, AgentDesignerItem, Designer]
         : [Home, workflowGroup, .. layoutItems];
 
     /// <summary>Shows or hides the layout editor entry (<c>/ui-admin</c>) based on the <c>ui-admin</c> role.</summary>

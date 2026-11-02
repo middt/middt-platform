@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AgentApiClient,
   formatWorkflowDate,
   isSuccess,
   parseWorkflowDate,
@@ -850,6 +851,86 @@ test('schema visibleWhen, requiredWhen, and disabledWhen with live ui.<field> an
   assert.deepEqual([...schemaDisabledFields(roleFields, roleInitial, instanceData, managerUser)], []);
   assert.deepEqual([...schemaRequiredFields(roleFields, roleInitial, instanceData, managerUser)], ['taxOffice']);
 });
+
+test('AgentApiClient routes and payloads for catalog, CRUD, validate, and playground test', async () => {
+  const { fetch, calls } = fakeFetch(
+    ok([{ name: 'dispute-orchestrator' }], 1),
+    ok({ provider: 'DeepSeek', defaultModelId: 'deepseek-chat', useLocalFallback: true, hasExternalApiKey: true, agents: [], tools: [], mcpServers: [] }, 0),
+    ok(['dispute-orchestrator'], 1),
+    ok({ name: 'dispute-orchestrator', instructions: 'Test' }, 1),
+    ok(true, 1),
+    ok({ name: 'evaluate_dispute_policy', kind: 'expression' }, 1),
+    ok(true, 1),
+    ok({ name: 'banking-mcp' }, 1),
+    ok(true, 1),
+    ok({ valid: true, errors: [] }, 1),
+    ok({
+      agentName: 'dispute-orchestrator',
+      provider: 'DeepSeek',
+      usedLocalFallback: false,
+      prompt: 'İncele',
+      selectedTransition: 'route-auto-refund',
+      allowedTransitions: [],
+      toolCalls: [],
+      dataAfter: {},
+      durationMs: 42,
+    }, 1),
+  );
+  const client = new AgentApiClient({ baseUrl: 'https://api.example.com', fetch });
+
+  const listed = await client.listAgents();
+  assert.equal(listed.data?.[0]?.name, 'dispute-orchestrator');
+
+  const catalog = await client.getCatalog();
+  assert.equal(catalog.data?.provider, 'DeepSeek');
+  assert.equal(catalog.data?.hasExternalApiKey, true);
+
+  const deployed = await client.deployCatalog({ agents: [{ name: 'dispute-orchestrator' }] });
+  assert.deepEqual(deployed.data, ['dispute-orchestrator']);
+
+  const savedAgent = await client.saveAgent({ name: 'dispute-orchestrator', instructions: 'Test' });
+  assert.equal(savedAgent.data?.name, 'dispute-orchestrator');
+
+  const deletedAgent = await client.deleteAgent('dispute-orchestrator');
+  assert.equal(deletedAgent.data, true);
+
+  const savedTool = await client.saveTool({ name: 'evaluate_dispute_policy', kind: 'expression' });
+  assert.equal(savedTool.data?.name, 'evaluate_dispute_policy');
+
+  const deletedTool = await client.deleteTool('evaluate_dispute_policy');
+  assert.equal(deletedTool.data, true);
+
+  const savedMcp = await client.saveMcpServer({ name: 'banking-mcp' });
+  assert.equal(savedMcp.data?.name, 'banking-mcp');
+
+  const deletedMcp = await client.deleteMcpServer('banking-mcp');
+  assert.equal(deletedMcp.data, true);
+
+  const validated = await client.validate({ name: 'dispute-orchestrator', instructions: 'Test' });
+  assert.equal(validated.data?.valid, true);
+
+  const tested = await client.testPlayground({
+    agent: 'dispute-orchestrator',
+    prompt: 'İncele',
+    data: { amount: 2500 },
+  });
+  assert.equal(tested.data?.selectedTransition, 'route-auto-refund');
+
+  assert.deepEqual(calls.map(c => `${c.init.method} ${c.url}`), [
+    'GET https://api.example.com/api/agents',
+    'GET https://api.example.com/api/agents/catalog',
+    'POST https://api.example.com/api/agents/catalog',
+    'PUT https://api.example.com/api/agents/dispute-orchestrator',
+    'DELETE https://api.example.com/api/agents/dispute-orchestrator',
+    'PUT https://api.example.com/api/agents/tools/evaluate_dispute_policy',
+    'DELETE https://api.example.com/api/agents/tools/evaluate_dispute_policy',
+    'PUT https://api.example.com/api/agents/mcp-servers/banking-mcp',
+    'DELETE https://api.example.com/api/agents/mcp-servers/banking-mcp',
+    'POST https://api.example.com/api/agents/validate',
+    'POST https://api.example.com/api/agents/test',
+  ]);
+});
+
 
 
 

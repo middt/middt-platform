@@ -111,9 +111,20 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         }
     }
 
+    /// <summary>Gets the active <see cref="AgentSettings"/> for runtime inspection by the Agent Studio.</summary>
+    public AgentSettings Settings => _settings;
+
+    /// <summary>Gets whether an external LLM provider or custom <see cref="IChatClient"/> is active.</summary>
+    public bool HasExternalProvider =>
+        _options.ChatClientFactory is not null
+        || _services.GetService<IChatClient>() is not null
+        || !string.IsNullOrWhiteSpace(_settings.ApiKey)
+        || string.Equals(_settings.Provider, "Ollama", StringComparison.OrdinalIgnoreCase);
+
     public void RegisterCatalog(AgentCatalogFile catalog)
     {
         ArgumentNullException.ThrowIfNull(catalog);
+        EnsurePersistedCatalogLoaded();
 
         foreach (var server in catalog.McpServers.Where(s => !string.IsNullOrWhiteSpace(s.Name)))
         {
@@ -133,8 +144,38 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         }
     }
 
-    internal AgentCatalogFile ExportCatalog()
+    public bool RemoveAgent(string name)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        EnsurePersistedCatalogLoaded();
+        return _definitions.TryRemove(name, out _);
+    }
+
+    public bool RemoveDeclarativeTool(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        EnsurePersistedCatalogLoaded();
+        var removedDecl = _declarativeTools.TryRemove(name, out _);
+        var removedTool = _tools.TryRemove(name, out _);
+        return removedDecl || removedTool;
+    }
+
+    public bool RemoveMcpServer(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        EnsurePersistedCatalogLoaded();
+        var prefix = $"mcp:{name}:";
+        foreach (var key in _tools.Keys.Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            _tools.TryRemove(key, out _);
+        }
+
+        return _mcpClient is MiddtMcpClient concreteMcp && concreteMcp.RemoveServer(name);
+    }
+
+    public AgentCatalogFile ExportCatalog()
+    {
+        EnsurePersistedCatalogLoaded();
         var servers = _mcpClient is MiddtMcpClient concreteMcp
             ? concreteMcp.GetRegisteredServersSnapshot()
             : _mcpClient.GetServers();
@@ -144,6 +185,104 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
             Tools = [.. _declarativeTools.Values.OrderBy(t => t.Name, StringComparer.Ordinal)],
             McpServers = [.. servers.OrderBy(s => s.Name, StringComparer.Ordinal)],
         };
+    }
+
+    /// <summary>Validates a draft <see cref="AgentCatalogFile"/> and returns any structural or reference errors.</summary>
+    public List<string> ValidateCatalog(AgentCatalogFile catalog)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+        EnsurePersistedCatalogLoaded();
+
+        var errors = new List<string>();
+        var knownTools = new HashSet<string>(_tools.Keys, StringComparer.OrdinalIgnoreCase);
+        var knownServers = new HashSet<string>(
+            (_mcpClient is MiddtMcpClient concreteMcp ? concreteMcp.GetRegisteredServersSnapshot() : _mcpClient.GetServers())
+                .Select(s => s.Name),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var server in catalog.McpServers)
+        {
+            if (string.IsNullOrWhiteSpace(server.Name))
+            {
+                errors.Add("MCP sunucu adı (name) boş olamaz.");
+                continue;
+            }
+
+            knownServers.Add(server.Name);
+            foreach (var tool in server.Tools)
+            {
+                if (string.IsNullOrWhiteSpace(tool.Name))
+                {
+                    errors.Add($"MCP sunucusu '{server.Name}' içinde adı boş olan bir araç (tool) var.");
+                }
+                else
+                {
+                    knownTools.Add(tool.Name);
+                    knownTools.Add($"mcp:{server.Name}:{tool.Name}");
+                }
+            }
+        }
+
+        foreach (var tool in catalog.Tools)
+        {
+            if (string.IsNullOrWhiteSpace(tool.Name))
+            {
+                errors.Add("Araç (tool) adı boş olamaz.");
+                continue;
+            }
+
+            var kind = (tool.Kind ?? "expression").Trim().ToLowerInvariant();
+            if (kind is not ("expression" or "task" or "http" or "mcp"))
+            {
+                errors.Add($"Araç '{tool.Name}': geçersiz kind '{tool.Kind}' (expression, task, http veya mcp olmalı).");
+            }
+            else if (kind == "task" && string.IsNullOrWhiteSpace(tool.Task))
+            {
+                errors.Add($"Araç '{tool.Name}': kind 'task' seçildiğinde 'task' alanı zorunludur.");
+            }
+            else if (kind == "http" && string.IsNullOrWhiteSpace(tool.Url))
+            {
+                errors.Add($"Araç '{tool.Name}': kind 'http' seçildiğinde 'url' alanı zorunludur.");
+            }
+            else if (kind == "mcp" && (string.IsNullOrWhiteSpace(tool.McpServer) || string.IsNullOrWhiteSpace(tool.McpTool)))
+            {
+                errors.Add($"Araç '{tool.Name}': kind 'mcp' seçildiğinde 'mcpServer' ve 'mcpTool' alanları zorunludur.");
+            }
+
+            knownTools.Add(tool.Name);
+        }
+
+        foreach (var agent in catalog.Agents)
+        {
+            if (string.IsNullOrWhiteSpace(agent.Name))
+            {
+                errors.Add("Ajan adı (name) boş olamaz.");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(agent.Instructions))
+            {
+                errors.Add($"Ajan '{agent.Name}': sistem talimatları (instructions) boş olamaz.");
+            }
+
+            foreach (var toolName in agent.Tools)
+            {
+                if (!string.IsNullOrWhiteSpace(toolName) && !knownTools.Contains(toolName))
+                {
+                    errors.Add($"Ajan '{agent.Name}': tanımsız araç '{toolName}' referans gösterildi.");
+                }
+            }
+
+            foreach (var serverName in agent.McpServers)
+            {
+                if (!string.IsNullOrWhiteSpace(serverName) && !knownServers.Contains(serverName))
+                {
+                    errors.Add($"Ajan '{agent.Name}': tanımsız MCP sunucusu '{serverName}' referans gösterildi.");
+                }
+            }
+        }
+
+        return errors;
     }
 
     private void RegisterMcpServerTools(McpServerDefinition server)

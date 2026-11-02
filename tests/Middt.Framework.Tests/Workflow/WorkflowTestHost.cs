@@ -171,6 +171,7 @@ public sealed class WorkflowTestHost : IAsyncDisposable
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapMiddtWorkflows("api/workflows");
+        app.MapMiddtAgents("api/agents");
         app.MapPost("api/v1/credit-bureau/check", async (Microsoft.AspNetCore.Http.HttpContext http) =>
         {
             JsonObject? payload = null;

@@ -1058,6 +1058,151 @@ public sealed class MiddtAgentTests
         instance.Error.Should().Contain("exceeded maximum tool calls");
     }
 
+    [Fact]
+    public async Task Agent_studio_crud_validation_and_live_playground_endpoints_roundtrip_end_to_end()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var host = await WorkflowTestHost.StartAsync([]);
+        host.Client.DefaultRequestHeaders.Add("X-Test-User", "studio-admin");
+        host.Client.DefaultRequestHeaders.Add("X-Test-Roles", "ui-admin,manager");
+
+        var session = new Middt.Framework.Tests.Client.CountingSessionState("test-token", "rt");
+        var tokens = new Middt.Framework.Tests.Client.FakeTokenService(_ => new Middt.Framework.Model.Authentication.TokenResponseModel());
+        var agentClient = new Middt.Framework.Client.Http.AgentApiClient(
+            host.Client,
+            session,
+            tokens,
+            Middt.Framework.Tests.Client.NullLoggers.For<Middt.Framework.Client.Http.AgentApiClient>());
+
+        // 1. Save a declarative tool via PUT /api/agents/tools/{name}
+        var saveToolResp = await agentClient.SaveToolAsync(new AgentToolDefinitionModel
+        {
+            Name = "calc_refund_bonus",
+            Description = "Calculates refund bonus amount from disputedAmount.",
+            Kind = "expression",
+            Parameters = JsonNode.Parse("""
+            {
+              "type": "object",
+              "required": ["disputedAmount"],
+              "properties": {
+                "disputedAmount": { "type": "number" }
+              }
+            }
+            """)!.AsObject(),
+            Output = JsonNode.Parse("""
+            {
+              "bonus": "{{ args.disputedAmount * 0.1 }}",
+              "eligible": "{{ args.disputedAmount >= 100 }}"
+            }
+            """)!.AsObject(),
+        }, ct);
+        saveToolResp.IsSuccess.Should().BeTrue();
+        saveToolResp.Data!.Name.Should().Be("calc_refund_bonus");
+
+        // 2. Save an MCP server via PUT /api/agents/mcp-servers/{name}
+        var saveMcpResp = await agentClient.SaveMcpServerAsync(new McpServerDefinitionModel
+        {
+            Name = "studio-mcp",
+            Description = "In-process test MCP server created in Studio.",
+            Tools =
+            [
+                new AgentToolDefinitionModel
+                {
+                    Name = "lookup_merchant_tier",
+                    Kind = "expression",
+                    Description = "Looks up merchant risk tier.",
+                    Output = JsonNode.Parse("""{ "tier": "GOLD", "verified": true }""")!.AsObject(),
+                },
+            ],
+        }, ct);
+        saveMcpResp.IsSuccess.Should().BeTrue();
+        saveMcpResp.Data!.Name.Should().Be("studio-mcp");
+
+        // 3. Save an AI agent via PUT /api/agents/{name}
+        var saveAgentResp = await agentClient.SaveAgentAsync(new AgentDefinitionModel
+        {
+            Name = "studio-dispute-agent",
+            Description = "Evaluates disputes in Studio.",
+            Instructions = "Evaluate dispute for {{ data.customerName }} ({{ data.disputedAmount }} TRY).",
+            Tools = ["calc_refund_bonus"],
+            McpServers = ["studio-mcp"],
+            AllowedTransitions = ["route-auto-refund", "route-specialist-review"],
+            OutputSchema = JsonNode.Parse("""
+            {
+              "type": "object",
+              "required": ["verdict", "confidence", "nextTransition"],
+              "properties": {
+                "verdict": { "type": "string", "default": "AUTO_REFUND" },
+                "confidence": { "type": "number", "default": 0.94 },
+                "nextTransition": { "type": "string", "default": "route-auto-refund" }
+              }
+            }
+            """)!.AsObject(),
+        }, ct);
+        saveAgentResp.IsSuccess.Should().BeTrue();
+        saveAgentResp.Data!.Name.Should().Be("studio-dispute-agent");
+
+        // 4. GET /api/agents/catalog returns the persisted agent, tool, MCP server, and runtime provider metadata
+        var catalogResp = await agentClient.GetCatalogAsync(ct);
+        catalogResp.IsSuccess.Should().BeTrue();
+        catalogResp.Data!.Agents.Should().Contain(a => a.Name == "studio-dispute-agent");
+        catalogResp.Data.Tools.Should().Contain(t => t.Name == "calc_refund_bonus");
+        catalogResp.Data.McpServers.Should().Contain(m => m.Name == "studio-mcp");
+
+        // 5. POST /api/agents/validate catches broken references and approves valid catalogs
+        var invalidBody = JsonNode.Parse("""
+        {
+          "agents": [
+            {
+              "name": "broken-agent",
+              "instructions": "Test",
+              "tools": ["non_existent_tool"],
+              "mcpServers": ["missing_mcp"]
+            }
+          ]
+        }
+        """)!.AsObject();
+        var invalidCatalogResp = await agentClient.ValidateAsync(invalidBody, ct);
+        invalidCatalogResp.IsSuccess.Should().BeTrue();
+        invalidCatalogResp.Data!.Valid.Should().BeFalse();
+        invalidCatalogResp.Data.Errors.Should().HaveCountGreaterThanOrEqualTo(2);
+
+        var validBody = System.Text.Json.JsonSerializer.SerializeToNode(catalogResp.Data, System.Text.Json.JsonSerializerOptions.Web)!.AsObject();
+        var validCatalogResp = await agentClient.ValidateAsync(validBody, ct);
+        validCatalogResp.IsSuccess.Should().BeTrue();
+        validCatalogResp.Data!.Valid.Should().BeTrue();
+
+        // 6. POST /api/agents/test executes the agent in the Live Playground (both saved and unsaved inline draft)
+        var playgroundResp = await agentClient.TestPlaygroundAsync(new AgentPlaygroundRequest
+        {
+            Agent = "studio-dispute-agent",
+            Definition = saveAgentResp.Data,
+            Prompt = "Analyze dispute TX-100 for {{ data.customerName }}.",
+            Data = JsonNode.Parse("""
+            {
+              "customerName": "Ayşe Demir",
+              "disputedAmount": 250
+            }
+            """)!.AsObject(),
+        }, ct);
+        playgroundResp.IsSuccess.Should().BeTrue();
+        playgroundResp.Data!.AgentName.Should().Be("studio-dispute-agent");
+        playgroundResp.Data.SelectedTransition.Should().Be("route-auto-refund");
+        playgroundResp.Data.Output.Should().NotBeNull();
+        playgroundResp.Data.Output!["verdict"]!.GetValue<string>().Should().Be("AUTO_REFUND");
+        playgroundResp.Data.ToolCalls.Should().NotBeEmpty();
+
+        // 7. DELETE endpoints remove the agent, tool, and MCP server cleanly
+        (await agentClient.DeleteAgentAsync("studio-dispute-agent", ct)).IsSuccess.Should().BeTrue();
+        (await agentClient.DeleteToolAsync("calc_refund_bonus", ct)).IsSuccess.Should().BeTrue();
+        (await agentClient.DeleteMcpServerAsync("studio-mcp", ct)).IsSuccess.Should().BeTrue();
+
+        var afterDeleteCatalog = await agentClient.GetCatalogAsync(ct);
+        afterDeleteCatalog.Data!.Agents.Should().NotContain(a => a.Name == "studio-dispute-agent");
+        afterDeleteCatalog.Data.Tools.Should().NotContain(t => t.Name == "calc_refund_bonus");
+        afterDeleteCatalog.Data.McpServers.Should().NotContain(m => m.Name == "studio-mcp");
+    }
+
     private sealed class ToolTestingChatClient(string modelId) : IChatClient
     {
         public ChatClientMetadata Metadata { get; } = new("test-tool-client", null, modelId);

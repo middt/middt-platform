@@ -38,6 +38,7 @@ export class MenuService {
       ? [
           { name: 'Ekran Tasarımı', path: '/ui-admin', icon: 'dashboard_customize' },
           { name: 'Akış Tasarımı', path: '/workflow-admin', icon: 'schema' },
+          { name: 'AI Ajan Stüdyosu', path: '/agent-admin', icon: 'smart_toy' },
         ]
       : []),
   ]);

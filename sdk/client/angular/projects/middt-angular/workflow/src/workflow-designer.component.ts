@@ -131,6 +131,13 @@ interface CanvasEdge {
                 (click)="openScreenModal(null, null)">
                 🖥️ Ekran Tasarımcısı
               </button>
+              <button
+                type="button"
+                class="middt-wf-tab"
+                title="Görsel AI Ajan, Araç (Tool) & MCP Stüdyosu"
+                (click)="openAgentStudio()">
+                🤖 AI Ajan Stüdyosu
+              </button>
             </div>
 
             <div class="middt-ui-toolbar">
@@ -1912,6 +1919,10 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
       queryParams['workflow'] = wfKey;
     }
     this.#router?.navigate(['/ui-admin'], { queryParams });
+  }
+
+  protected openAgentStudio(): void {
+    this.#router?.navigate(['/agent-admin']);
   }
 
   protected async onSelectWorkflow(key: string): Promise<void> {

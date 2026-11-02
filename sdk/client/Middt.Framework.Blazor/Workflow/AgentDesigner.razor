@@ -1,0 +1,1252 @@
+@namespace Middt.Framework.Blazor.Workflow
+@using System.Globalization
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Middt.Framework.Client.Http
+@using Middt.Framework.Model.Workflow
+
+<div class="middt-wf-studio" data-testid="agent-designer">
+    <RadzenCard>
+        <div class="middt-ui-toolbar" style="justify-content: space-between; flex-wrap: wrap; gap: .5rem">
+            <div class="middt-ui-toolbar" style="flex-wrap: wrap; gap: .5rem">
+                <div class="middt-wf-tabs" style="margin: 0; border: 0; padding: 0" role="tablist" aria-label="AI Stüdyo Bölümleri">
+                    <button type="button"
+                            class="@(activeSection == "agents" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                            @onclick="@(() => SwitchSection("agents"))">
+                        🤖 AI Ajanları (@catalog.Agents.Count)
+                    </button>
+                    <button type="button"
+                            class="@(activeSection == "tools" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                            @onclick="@(() => SwitchSection("tools"))">
+                        🛠️ Araçlar (@catalog.Tools.Count)
+                    </button>
+                    <button type="button"
+                            class="@(activeSection == "mcp" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                            @onclick="@(() => SwitchSection("mcp"))">
+                        🔌 MCP Sunucuları (@catalog.McpServers.Count)
+                    </button>
+                </div>
+
+                @if (catalog.HasExternalApiKey)
+                {
+                    <span class="middt-ui-badge middt-ui-badge-success" data-testid="agent-provider-badge" title="Harici LLM sağlayıcısı ve API anahtarı aktif">
+                        🟢 Sağlayıcı: @(catalog.Provider ?? "External") (@(string.IsNullOrWhiteSpace(catalog.DefaultModelId) ? "varsayılan" : catalog.DefaultModelId) · Canlı API)
+                    </span>
+                }
+                else
+                {
+                    <span class="middt-ui-badge middt-ui-badge-warning" data-testid="agent-provider-badge" title="Harici API anahtarı tanımlı değil; deterministik yerel yedekleme aktif">
+                        🟡 Sağlayıcı: @(catalog.Provider ?? "Local") (Deterministik Yerel Yedekleme)
+                    </span>
+                }
+            </div>
+
+            <div class="middt-wf-tabs" style="margin: 0; border: 0; padding: 0" role="tablist" aria-label="Editör Görünümü">
+                <button type="button"
+                        class="@(editorMode == "visual" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                        @onclick="@(() => SwitchEditorMode("visual"))">
+                    🎨 Görsel Editör
+                </button>
+                <button type="button"
+                        class="@(editorMode == "json" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                        @onclick="@(() => SwitchEditorMode("json"))">
+                    { } JSON Kodu
+                </button>
+                <button type="button"
+                        class="middt-wf-tab"
+                        title="İş Akışı Tasarımcısını Aç"
+                        @onclick="@(() => Navigation.NavigateTo("/workflow-admin"))">
+                    🔀 Akış Tasarımcısı
+                </button>
+            </div>
+
+            <div class="middt-ui-toolbar">
+                <RadzenButton Icon="add" Text="Yeni Ekle" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light" Click="CreateNewItem" />
+                <RadzenButton Icon="rule" Text="Doğrula" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Secondary" Click="ValidateCurrentAsync" />
+                <RadzenButton Icon="save" Text="Kaydet" Size="ButtonSize.Small" Click="SaveCurrentAsync" IsBusy="busy" />
+                @if (!isNewItem)
+                {
+                    <RadzenButton Icon="delete" Text="Sil" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Danger" Click="DeleteCurrentAsync" Disabled="busy" />
+                }
+            </div>
+        </div>
+
+        @if (errors.Count > 0)
+        {
+            <div class="middt-ui-alert middt-ui-alert-danger rz-mt-2" role="alert">
+                <strong>@errors.Count hata:</strong>
+                <ul class="middt-ui-list">
+                    @foreach (var err in errors)
+                    {
+                        <li>@err</li>
+                    }
+                </ul>
+            </div>
+        }
+        else if (statusMessage is not null)
+        {
+            <div class="middt-ui-alert middt-ui-alert-success rz-mt-2" role="status">@statusMessage</div>
+        }
+    </RadzenCard>
+
+    <div class="middt-ui-admin" style="grid-template-columns: minmax(240px, 290px) 1fr @(activeSection == "agents" ? "minmax(360px, 460px)" : "0px"); gap: 1rem; margin-top: .75rem">
+        @* 1. Left Catalog Sidebar *@
+        <RadzenCard>
+            <div style="display: flex; flex-direction: column; gap: .5rem">
+                <input class="middt-wf-input"
+                       placeholder="Katalogda ara..."
+                       @bind="searchFilter"
+                       @bind:event="oninput"
+                       aria-label="Katalogda ara" />
+
+                @if (activeSection == "agents")
+                {
+                    <ul class="middt-ui-admin-items" aria-label="AI Ajanları">
+                        @foreach (var ag in FilteredAgents())
+                        {
+                            <li>
+                                <button type="button"
+                                        class="@(selectedAgentName == ag.Name ? "middt-ui-admin-item middt-ui-admin-item-active" : "middt-ui-admin-item")"
+                                        @onclick="@(() => SelectAgent(ag.Name))">
+                                    <strong>🤖 @ag.Name</strong>
+                                    <small>@(string.IsNullOrWhiteSpace(ag.Description) ? "Açıklama yok" : ag.Description)</small>
+                                    <small>🛠️ @ag.Tools.Count araç · 🔌 @ag.McpServers.Count MCP</small>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+                else if (activeSection == "tools")
+                {
+                    <ul class="middt-ui-admin-items" aria-label="Declarative Araçlar">
+                        @foreach (var tl in FilteredTools())
+                        {
+                            <li>
+                                <button type="button"
+                                        class="@(selectedToolName == tl.Name ? "middt-ui-admin-item middt-ui-admin-item-active" : "middt-ui-admin-item")"
+                                        @onclick="@(() => SelectTool(tl.Name))">
+                                    <strong>🛠️ @tl.Name</strong>
+                                    <small>Tür: @(string.IsNullOrWhiteSpace(tl.Task) ? tl.Kind : $"task ({tl.Task})")</small>
+                                    <small>@(string.IsNullOrWhiteSpace(tl.Description) ? "Açıklama yok" : tl.Description)</small>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <ul class="middt-ui-admin-items" aria-label="MCP Sunucuları">
+                        @foreach (var srv in FilteredMcpServers())
+                        {
+                            <li>
+                                <button type="button"
+                                        class="@(selectedMcpName == srv.Name ? "middt-ui-admin-item middt-ui-admin-item-active" : "middt-ui-admin-item")"
+                                        @onclick="@(() => SelectMcpServer(srv.Name))">
+                                    <strong>🔌 @srv.Name</strong>
+                                    <small>@(string.IsNullOrWhiteSpace(srv.Endpoint) ? "Yerel (In-Process)" : srv.Endpoint)</small>
+                                    <small>🛠️ @srv.Tools.Count araç · 📄 @srv.Resources.Count kaynak</small>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+        </RadzenCard>
+
+        @* 2. Center Visual / JSON Inspector *@
+        <RadzenCard>
+            @if (editorMode == "json")
+            {
+                <div style="display: flex; flex-direction: column; gap: .5rem">
+                    <div style="display: flex; justify-content: space-between; align-items: center">
+                        <strong>JSON Tanımı (@GetCurrentItemTitle())</strong>
+                        <RadzenButton Icon="check" Text="JSON'dan Forma Uygula" Size="ButtonSize.ExtraSmall" ButtonStyle="ButtonStyle.Light" Click="ApplyRawJsonToDraft" />
+                    </div>
+                    <textarea class="middt-wf-input middt-wf-code"
+                              rows="24"
+                              style="font-family: monospace; font-size: .84rem"
+                              aria-label="JSON Tanımı"
+                              @bind="rawJsonText"
+                              @bind:event="oninput"></textarea>
+                </div>
+            }
+            else if (activeSection == "agents")
+            {
+                <div style="display: flex; flex-direction: column; gap: .75rem">
+                    <h3 style="margin: 0; font-size: 1.05rem">🤖 AI Ajan Yapılandırması (@(string.IsNullOrWhiteSpace(draftAgent.Name) ? "Yeni Ajan" : draftAgent.Name))</h3>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: .75rem">
+                        <div>
+                            <label class="middt-wf-label" for="ag-name">Ajan Adı (name) *</label>
+                            <input id="ag-name" class="middt-wf-input" placeholder="örn. dispute-orchestrator" @bind="draftAgent.Name" @bind:event="oninput" />
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="ag-model">Model Kimliği (modelId)</label>
+                            <input id="ag-model" class="middt-wf-input" placeholder="@($"Varsayılan: {(string.IsNullOrWhiteSpace(catalog.DefaultModelId) ? "deepseek-chat" : catalog.DefaultModelId)}")" @bind="draftAgent.ModelId" @bind:event="oninput" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="ag-desc">Açıklama (description)</label>
+                        <input id="ag-desc" class="middt-wf-input" placeholder="Ajanın görevini ve çoklu-ajan devir (handoff) amacını açıklayın" @bind="draftAgent.Description" @bind:event="oninput" />
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: .75rem">
+                        <div>
+                            <label class="middt-wf-label" for="ag-temp">Sıcaklık (0-2)</label>
+                            <input id="ag-temp" type="number" step="0.1" min="0" max="2" class="middt-wf-input" @bind="draftAgent.Temperature" />
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="ag-max-out">Maks. Çıktı Token</label>
+                            <input id="ag-max-out" type="number" min="1" class="middt-wf-input" @bind="draftAgent.MaxOutputTokens" />
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="ag-max-tools">Maks. Araç Çağrısı</label>
+                            <input id="ag-max-tools" type="number" min="1" class="middt-wf-input" @bind="draftAgent.MaxToolCalls" />
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="ag-max-tokens">Maks. Toplam Token</label>
+                            <input id="ag-max-tokens" type="number" min="1" class="middt-wf-input" @bind="draftAgent.MaxTotalTokens" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="ag-instructions">Sistem Talimatları (instructions — <code>{{ data.* }}</code> şablonları desteklenir) *</label>
+                        <textarea id="ag-instructions" class="middt-wf-input" rows="5" placeholder="Sen otonom bir iş akışı ajanısın..." @bind="draftAgent.Instructions" @bind:event="oninput"></textarea>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: .75rem">
+                        <div>
+                            <label class="middt-wf-label">Yetkili Araçlar (tools)</label>
+                            <div style="border: 1px solid var(--rz-border-color, #dee2e6); border-radius: 6px; padding: .5rem; max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: .35rem">
+                                @foreach (var toolName in AvailableToolNames())
+                                {
+                                    var checkedTool = draftAgent.Tools.Contains(toolName, StringComparer.OrdinalIgnoreCase);
+                                    <label style="display: flex; align-items: center; gap: .4rem; font-size: .85rem; cursor: pointer">
+                                        <input type="checkbox" checked="@checkedTool" @onchange="@(e => ToggleAgentTool(toolName, e.Value is true))" />
+                                        <span><code>@toolName</code></span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="middt-wf-label">Bağlı MCP Sunucuları (mcpServers)</label>
+                            <div style="border: 1px solid var(--rz-border-color, #dee2e6); border-radius: 6px; padding: .5rem; max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: .35rem">
+                                @foreach (var srv in catalog.McpServers)
+                                {
+                                    var checkedMcp = draftAgent.McpServers.Contains(srv.Name, StringComparer.OrdinalIgnoreCase);
+                                    <label style="display: flex; align-items: center; gap: .4rem; font-size: .85rem; cursor: pointer">
+                                        <input type="checkbox" checked="@checkedMcp" @onchange="@(e => ToggleAgentMcpServer(srv.Name, e.Value is true))" />
+                                        <span><code>@srv.Name</code> (@srv.Tools.Count araç)</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="ag-transitions">İzin Verilen İş Akışı Geçişleri (allowedTransitions — virgülle ayrılmış, opsiyonel)</label>
+                        <input id="ag-transitions" class="middt-wf-input" placeholder="örn. route-auto-refund, route-specialist-review, route-fraud-investigation" value="@allowedTransitionsCsv" @oninput="OnAllowedTransitionsInput" />
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="ag-schema">Yapılandırılmış Çıktı Şeması (outputSchema — JSON Schema)</label>
+                        <textarea id="ag-schema" class="middt-wf-input middt-wf-code" rows="8" style="font-family: monospace; font-size: .82rem" @bind="agentOutputSchemaText" @bind:event="oninput"></textarea>
+                    </div>
+                </div>
+            }
+            else if (activeSection == "tools")
+            {
+                <div style="display: flex; flex-direction: column; gap: .75rem">
+                    <h3 style="margin: 0; font-size: 1.05rem">🛠️ Declarative Araç Yapılandırması (@(string.IsNullOrWhiteSpace(draftTool.Name) ? "Yeni Araç" : draftTool.Name))</h3>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .75rem">
+                        <div>
+                            <label class="middt-wf-label" for="tl-name">Araç Adı (name) *</label>
+                            <input id="tl-name" class="middt-wf-input" placeholder="örn. evaluate_dispute_policy" @bind="draftTool.Name" @bind:event="oninput" />
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="tl-kind">Çalışma Türü (kind)</label>
+                            <select id="tl-kind" class="middt-wf-input" @bind="draftTool.Kind">
+                                <option value="expression">expression (İfade / Şablon)</option>
+                                <option value="task">task (IWorkflowTask Köprüsü)</option>
+                                <option value="http">http (HTTP Çağrısı)</option>
+                                <option value="mcp">mcp (MCP Sunucu Aracı)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="tl-roles">Yetkili Roller (virgülle)</label>
+                            <input id="tl-roles" class="middt-wf-input" placeholder="Boş = tüm roller" value="@toolRolesCsv" @oninput="OnToolRolesInput" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="tl-desc">Açıklama (description — LLM bu açıklamaya göre aracı çağırır)</label>
+                        <input id="tl-desc" class="middt-wf-input" placeholder="Aracın ne zaman ve hangi parametrelerle çağrılacağını açıklayın" @bind="draftTool.Description" @bind:event="oninput" />
+                    </div>
+
+                    @if (draftTool.Kind == "expression")
+                    {
+                        <div>
+                            <label class="middt-wf-label" for="tl-expr">Tekil İfade (expression — opsiyonel, <code>args.*</code> ve <code>data.*</code> kullanılabilir)</label>
+                            <input id="tl-expr" class="middt-wf-input" placeholder="örn. args.amount * 1.2" @bind="draftTool.Expression" @bind:event="oninput" />
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="tl-output">Yapılandırılmış Çıktı Şablonu (output JSON — <code>{{ args.* }}</code> şablonları)</label>
+                            <textarea id="tl-output" class="middt-wf-input middt-wf-code" rows="6" style="font-family: monospace; font-size: .82rem" @bind="toolOutputText" @bind:event="oninput"></textarea>
+                        </div>
+                    }
+                    else if (draftTool.Kind == "task")
+                    {
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .75rem; align-items: end">
+                            <div>
+                                <label class="middt-wf-label" for="tl-task">İş Akışı Görevi (task) *</label>
+                                <select id="tl-task" class="middt-wf-input" @bind="draftTool.Task">
+                                    <option value="set">set</option>
+                                    <option value="http">http</option>
+                                    <option value="cache">cache</option>
+                                    <option value="operation">operation</option>
+                                    <option value="publish">publish</option>
+                                    <option value="rabbitmq">rabbitmq</option>
+                                    <option value="loadWorkflow">loadWorkflow</option>
+                                    <option value="queryWorkflow">queryWorkflow</option>
+                                    <option value="updateWorkflow">updateWorkflow</option>
+                                    <option value="triggerWorkflow">triggerWorkflow</option>
+                                    <option value="startWorkflow">startWorkflow</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="middt-wf-label" for="tl-into">Sonuç Yolu (into)</label>
+                                <input id="tl-into" class="middt-wf-input" placeholder="örn. evaluation" @bind="draftTool.Into" @bind:event="oninput" />
+                            </div>
+                            <label style="display: flex; align-items: center; gap: .4rem; font-size: .86rem; padding-bottom: .4rem; cursor: pointer">
+                                <input type="checkbox" @bind="draftTool.WriteToWorkflowData" />
+                                <span>Akış Verisine Yaz (writeToWorkflowData)</span>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="tl-config">Görev Konfigürasyonu (config JSON)</label>
+                            <textarea id="tl-config" class="middt-wf-input middt-wf-code" rows="6" style="font-family: monospace; font-size: .82rem" @bind="toolConfigText" @bind:event="oninput"></textarea>
+                        </div>
+                    }
+                    else if (draftTool.Kind == "http")
+                    {
+                        <div style="display: grid; grid-template-columns: 140px 1fr; gap: .75rem">
+                            <div>
+                                <label class="middt-wf-label" for="tl-method">HTTP Metodu</label>
+                                <select id="tl-method" class="middt-wf-input" @bind="draftTool.Method">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="middt-wf-label" for="tl-url">Hedef URL Şablonu (url) *</label>
+                                <input id="tl-url" class="middt-wf-input" placeholder="http://mockoon:3000/api/registry/{{ args.taxId }}" @bind="draftTool.Url" @bind:event="oninput" />
+                            </div>
+                        </div>
+                    }
+                    else if (draftTool.Kind == "mcp")
+                    {
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: .75rem">
+                            <div>
+                                <label class="middt-wf-label" for="tl-mcp-srv">MCP Sunucu Adı (mcpServer) *</label>
+                                <input id="tl-mcp-srv" class="middt-wf-input" placeholder="banking-mcp" @bind="draftTool.McpServer" @bind:event="oninput" />
+                            </div>
+                            <div>
+                                <label class="middt-wf-label" for="tl-mcp-tool">MCP Araç Adı (mcpTool)</label>
+                                <input id="tl-mcp-tool" class="middt-wf-input" placeholder="lookup_chargeback_history" @bind="draftTool.McpTool" @bind:event="oninput" />
+                            </div>
+                        </div>
+                    }
+
+                    <div>
+                        <label class="middt-wf-label" for="tl-params">Girdi Parametre Şeması (parameters — JSON Schema)</label>
+                        <textarea id="tl-params" class="middt-wf-input middt-wf-code" rows="6" style="font-family: monospace; font-size: .82rem" @bind="toolParametersText" @bind:event="oninput"></textarea>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div style="display: flex; flex-direction: column; gap: .75rem">
+                    <h3 style="margin: 0; font-size: 1.05rem">🔌 MCP Sunucu Yapılandırması (@(string.IsNullOrWhiteSpace(draftMcp.Name) ? "Yeni MCP Sunucusu" : draftMcp.Name))</h3>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: .75rem">
+                        <div>
+                            <label class="middt-wf-label" for="mcp-name">Sunucu Adı (name) *</label>
+                            <input id="mcp-name" class="middt-wf-input" placeholder="örn. banking-mcp" @bind="draftMcp.Name" @bind:event="oninput" />
+                        </div>
+                        <div>
+                            <label class="middt-wf-label" for="mcp-endpoint">Uzak JSON-RPC Endpoint (boşsa yerel çalışır)</label>
+                            <input id="mcp-endpoint" class="middt-wf-input" placeholder="https://mcp.ornek.com/rpc" @bind="draftMcp.Endpoint" @bind:event="oninput" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="mcp-desc">Açıklama (description)</label>
+                        <input id="mcp-desc" class="middt-wf-input" @bind="draftMcp.Description" @bind:event="oninput" />
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="mcp-tools-json">MCP Araçları (tools JSON Dizisi)</label>
+                        <textarea id="mcp-tools-json" class="middt-wf-input middt-wf-code" rows="7" style="font-family: monospace; font-size: .82rem" @bind="mcpToolsText" @bind:event="oninput"></textarea>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="mcp-res-json">MCP Kaynakları (resources JSON Dizisi)</label>
+                        <textarea id="mcp-res-json" class="middt-wf-input middt-wf-code" rows="5" style="font-family: monospace; font-size: .82rem" @bind="mcpResourcesText" @bind:event="oninput"></textarea>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="mcp-prompts-json">MCP İstem Şablonları (prompts JSON Dizisi)</label>
+                        <textarea id="mcp-prompts-json" class="middt-wf-input middt-wf-code" rows="4" style="font-family: monospace; font-size: .82rem" @bind="mcpPromptsText" @bind:event="oninput"></textarea>
+                    </div>
+                </div>
+            }
+        </RadzenCard>
+
+        @* 3. Right Interactive AI Agent Playground *@
+        @if (activeSection == "agents")
+        {
+            <RadzenCard data-testid="agent-playground">
+                <div style="display: flex; flex-direction: column; gap: .65rem">
+                    <div style="display: flex; justify-content: space-between; align-items: center">
+                        <h3 style="margin: 0; font-size: 1.02rem">▶️ Canlı Test Playground</h3>
+                        <RadzenButton Icon="play_arrow"
+                                      Text="Çalıştır"
+                                      Size="ButtonSize.Small"
+                                      ButtonStyle="ButtonStyle.Success"
+                                      Click="RunPlaygroundAsync"
+                                      IsBusy="playgroundBusy"
+                                      data-testid="agent-playground-run" />
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="pg-preset">Hazır Test Senaryosu</label>
+                        <select id="pg-preset" class="middt-wf-input" @onchange="@(e => ApplyPlaygroundPreset(e.Value?.ToString()))">
+                            <option value="">-- Senaryo Seçin veya Elle Girin --</option>
+                            <option value="dispute-low">İtiraz Analizi — Düşük Tutar (Otomatik İade)</option>
+                            <option value="dispute-fraud">İtiraz Analizi — Yetkisiz İşlem (Fraud Eskalasyonu)</option>
+                            <option value="dispute-specialist">İtiraz Uzman Copilot — Tazminat Hesaplama</option>
+                            <option value="credit-risk">Ticari Limit & Risk Değerlendirmesi</option>
+                            <option value="invoice-audit">Fatura Ödeme & Mutabakat Denetimi</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="pg-prompt">İstem Metni (prompt) *</label>
+                        <textarea id="pg-prompt"
+                                  class="middt-wf-input"
+                                  rows="3"
+                                  placeholder="Ajanın gerçekleştirmesini istediğiniz görevi yazın..."
+                                  @bind="playgroundPrompt"
+                                  @bind:event="oninput"></textarea>
+                    </div>
+
+                    <div>
+                        <label class="middt-wf-label" for="pg-data">Örnek İş Akışı Verisi (data JSON)</label>
+                        <textarea id="pg-data"
+                                  class="middt-wf-input middt-wf-code"
+                                  rows="5"
+                                  style="font-family: monospace; font-size: .8rem"
+                                  @bind="playgroundDataText"
+                                  @bind:event="oninput"></textarea>
+                    </div>
+
+                    @if (playgroundError is not null)
+                    {
+                        <div class="middt-ui-alert middt-ui-alert-danger" role="alert">@playgroundError</div>
+                    }
+
+                    @if (playgroundResult is not null)
+                    {
+                        <div style="border-top: 1px solid var(--rz-border-color, #dee2e6); padding-top: .65rem; display: flex; flex-direction: column; gap: .55rem" data-testid="agent-playground-result">
+                            <div style="display: flex; flex-wrap: wrap; gap: .35rem">
+                                <span class="middt-ui-badge middt-ui-badge-info">⏱️ @playgroundResult.DurationMs ms</span>
+                                <span class="middt-ui-badge @(playgroundResult.UsedLocalFallback ? "middt-ui-badge-warning" : "middt-ui-badge-success")">
+                                    @(playgroundResult.UsedLocalFallback ? "Yerel Yedekleme" : $"Canlı: {playgroundResult.Provider}")
+                                </span>
+                                @if (playgroundResult.TotalTokens is { } tot)
+                                {
+                                    <span class="middt-ui-badge middt-ui-badge-secondary">
+                                        🪙 @tot token (@(playgroundResult.InputTokens ?? 0) girdi / @(playgroundResult.OutputTokens ?? 0) çıktı)
+                                    </span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(playgroundResult.SelectedTransition))
+                                {
+                                    <span class="middt-ui-badge middt-ui-badge-primary">
+                                        🔀 Seçilen Geçiş: @playgroundResult.SelectedTransition
+                                    </span>
+                                }
+                            </div>
+
+                            @if (playgroundResult.ToolCalls.Count > 0)
+                            {
+                                <div>
+                                    <strong style="font-size: .84rem">🛠️ Çağrılan Araçlar (@playgroundResult.ToolCalls.Count):</strong>
+                                    <div style="display: flex; flex-direction: column; gap: .35rem; margin-top: .25rem">
+                                        @foreach (var tc in playgroundResult.ToolCalls)
+                                        {
+                                            <div style="background: var(--rz-base-100, #f8f9fa); border: 1px solid var(--rz-border-color, #dee2e6); border-radius: 4px; padding: .4rem .55rem; font-size: .8rem">
+                                                <div><strong>#@(tc.Order + 1) <code>@tc.Name</code></strong></div>
+                                                @if (tc.Arguments is not null)
+                                                {
+                                                    <div style="color: #555">Argümanlar: <code>@tc.Arguments.ToJsonString()</code></div>
+                                                }
+                                                @if (tc.Result is not null)
+                                                {
+                                                    <div style="color: #0b5ed7">Sonuç: <code>@tc.Result.ToJsonString()</code></div>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            <div>
+                                <strong style="font-size: .84rem">📤 Ajan Çıktısı (output):</strong>
+                                <pre style="background: var(--rz-base-100, #f8f9fa); border: 1px solid var(--rz-border-color, #dee2e6); border-radius: 4px; padding: .5rem; font-size: .78rem; max-height: 220px; overflow: auto; margin: .25rem 0 0">@FormatNode(playgroundResult.Output)</pre>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </RadzenCard>
+        }
+    </div>
+</div>
+
+@code {
+    private static readonly JsonSerializerOptions IndentedJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true,
+    };
+
+    [Inject]
+    private AgentApiClient AgentClient { get; set; } = default!;
+
+    [Inject]
+    private NavigationManager Navigation { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private AgentCatalogModel catalog = new();
+    private string activeSection = "agents";
+    private string editorMode = "visual";
+    private string searchFilter = string.Empty;
+    private bool busy;
+    private bool isNewItem;
+    private List<string> errors = [];
+    private string? statusMessage;
+
+    private string? selectedAgentName;
+    private string? selectedToolName;
+    private string? selectedMcpName;
+
+    private AgentDefinitionModel draftAgent = new();
+    private string allowedTransitionsCsv = string.Empty;
+    private string agentOutputSchemaText = "{\n  \"type\": \"object\",\n  \"properties\": {}\n}";
+
+    private AgentToolDefinitionModel draftTool = new();
+    private string toolRolesCsv = string.Empty;
+    private string toolParametersText = "{\n  \"type\": \"object\",\n  \"properties\": {}\n}";
+    private string toolOutputText = "{}";
+    private string toolConfigText = "{}";
+
+    private McpServerDefinitionModel draftMcp = new();
+    private string mcpToolsText = "[]";
+    private string mcpResourcesText = "[]";
+    private string mcpPromptsText = "[]";
+
+    private string rawJsonText = "{}";
+
+    private bool playgroundBusy;
+    private string playgroundPrompt = "Verilen işlem itirazını analiz et, araçları çağır ve uygun geçiş kararını (nextTransition) üret.";
+    private string playgroundDataText = "{\n  \"disputeNo\": \"DSP-2026-0101\",\n  \"customerName\": \"Anadolu Lojistik A.Ş.\",\n  \"amount\": 3200,\n  \"category\": \"Mükerrer Çekim\",\n  \"merchantName\": \"Bulut Market A.Ş.\",\n  \"transactionRef\": \"TRX-9981\"\n}";
+    private string? playgroundError;
+    private AgentPlaygroundResultModel? playgroundResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadCatalogAsync();
+        ApplyQuerySelection();
+    }
+
+    private async Task ReloadCatalogAsync()
+    {
+        var resp = await AgentClient.GetCatalogAsync();
+        if (resp.IsSuccess && resp.Data is not null)
+        {
+            catalog = resp.Data;
+            if (selectedAgentName is null && catalog.Agents.Count > 0)
+            {
+                SelectAgent(catalog.Agents[0].Name);
+            }
+            else if (selectedAgentName is not null && catalog.Agents.Any(a => string.Equals(a.Name, selectedAgentName, StringComparison.OrdinalIgnoreCase)))
+            {
+                SelectAgent(selectedAgentName);
+            }
+            else if (catalog.Agents.Count == 0)
+            {
+                CreateNewAgent();
+            }
+
+            if (selectedToolName is null && catalog.Tools.Count > 0)
+            {
+                LoadToolIntoDraft(catalog.Tools[0]);
+            }
+
+            if (selectedMcpName is null && catalog.McpServers.Count > 0)
+            {
+                LoadMcpIntoDraft(catalog.McpServers[0]);
+            }
+        }
+    }
+
+    private void ApplyQuerySelection()
+    {
+        var uri = new Uri(Navigation.Uri);
+        var query = uri.Query.TrimStart('?');
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return;
+        }
+
+        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var kv = part.Split('=', 2);
+            if (kv.Length != 2)
+            {
+                continue;
+            }
+
+            var k = Uri.UnescapeDataString(kv[0]);
+            var v = Uri.UnescapeDataString(kv[1]);
+            if (string.Equals(k, "agent", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(v))
+            {
+                activeSection = "agents";
+                if (catalog.Agents.Any(a => string.Equals(a.Name, v, StringComparison.OrdinalIgnoreCase)))
+                {
+                    SelectAgent(v);
+                }
+            }
+            else if (string.Equals(k, "tool", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(v))
+            {
+                activeSection = "tools";
+                if (catalog.Tools.Any(t => string.Equals(t.Name, v, StringComparison.OrdinalIgnoreCase)))
+                {
+                    SelectTool(v);
+                }
+            }
+            else if (string.Equals(k, "mcp", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(v))
+            {
+                activeSection = "mcp";
+                if (catalog.McpServers.Any(s => string.Equals(s.Name, v, StringComparison.OrdinalIgnoreCase)))
+                {
+                    SelectMcpServer(v);
+                }
+            }
+        }
+    }
+
+    private void SwitchSection(string section)
+    {
+        errors.Clear();
+        statusMessage = null;
+        activeSection = section;
+        if (section == "agents" && selectedAgentName is null && catalog.Agents.Count > 0)
+        {
+            SelectAgent(catalog.Agents[0].Name);
+        }
+        else if (section == "tools" && selectedToolName is null && catalog.Tools.Count > 0)
+        {
+            SelectTool(catalog.Tools[0].Name);
+        }
+        else if (section == "mcp" && selectedMcpName is null && catalog.McpServers.Count > 0)
+        {
+            SelectMcpServer(catalog.McpServers[0].Name);
+        }
+
+        SyncDraftToRawJson();
+    }
+
+    private void SwitchEditorMode(string mode)
+    {
+        if (editorMode == "json" && mode == "visual")
+        {
+            ApplyRawJsonToDraft();
+        }
+        else if (mode == "json")
+        {
+            SyncDraftToRawJson();
+        }
+
+        editorMode = mode;
+    }
+
+    private void SelectAgent(string name)
+    {
+        var found = catalog.Agents.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (found is null)
+        {
+            return;
+        }
+
+        isNewItem = false;
+        selectedAgentName = found.Name;
+        draftAgent = CloneJson(found);
+        allowedTransitionsCsv = string.Join(", ", draftAgent.AllowedTransitions);
+        agentOutputSchemaText = draftAgent.OutputSchema?.ToJsonString(IndentedJson) ?? "{\n  \"type\": \"object\",\n  \"properties\": {}\n}";
+        SyncDraftToRawJson();
+    }
+
+    private void SelectTool(string name)
+    {
+        var found = catalog.Tools.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (found is not null)
+        {
+            isNewItem = false;
+            LoadToolIntoDraft(found);
+            SyncDraftToRawJson();
+        }
+    }
+
+    private void LoadToolIntoDraft(AgentToolDefinitionModel tool)
+    {
+        selectedToolName = tool.Name;
+        draftTool = CloneJson(tool);
+        if (!string.IsNullOrWhiteSpace(draftTool.Task) && string.Equals(draftTool.Kind, "expression", StringComparison.OrdinalIgnoreCase))
+        {
+            draftTool.Kind = "task";
+        }
+
+        toolRolesCsv = string.Join(", ", draftTool.Roles);
+        toolParametersText = draftTool.Parameters?.ToJsonString(IndentedJson) ?? "{\n  \"type\": \"object\",\n  \"properties\": {}\n}";
+        toolOutputText = draftTool.Output?.ToJsonString(IndentedJson) ?? "{}";
+        toolConfigText = draftTool.Config?.ToJsonString(IndentedJson) ?? "{}";
+    }
+
+    private void SelectMcpServer(string name)
+    {
+        var found = catalog.McpServers.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (found is not null)
+        {
+            isNewItem = false;
+            LoadMcpIntoDraft(found);
+            SyncDraftToRawJson();
+        }
+    }
+
+    private void LoadMcpIntoDraft(McpServerDefinitionModel srv)
+    {
+        selectedMcpName = srv.Name;
+        draftMcp = CloneJson(srv);
+        mcpToolsText = JsonSerializer.Serialize(draftMcp.Tools, IndentedJson);
+        mcpResourcesText = JsonSerializer.Serialize(draftMcp.Resources, IndentedJson);
+        mcpPromptsText = JsonSerializer.Serialize(draftMcp.Prompts, IndentedJson);
+    }
+
+    private void CreateNewItem()
+    {
+        errors.Clear();
+        statusMessage = null;
+        isNewItem = true;
+        if (activeSection == "agents")
+        {
+            CreateNewAgent();
+        }
+        else if (activeSection == "tools")
+        {
+            selectedToolName = null;
+            draftTool = new AgentToolDefinitionModel
+            {
+                Name = "yeni_arac",
+                Kind = "expression",
+                Description = "Yeni deklaratif AI aracı",
+            };
+            toolRolesCsv = string.Empty;
+            toolParametersText = "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"amount\": { \"type\": \"number\" }\n  }\n}";
+            toolOutputText = "{\n  \"approved\": \"{{ args.amount <= 10000 }}\"\n}";
+            toolConfigText = "{}";
+        }
+        else
+        {
+            selectedMcpName = null;
+            draftMcp = new McpServerDefinitionModel
+            {
+                Name = "yeni-mcp",
+                Description = "Yeni Model Context Protocol Sunucusu",
+            };
+            mcpToolsText = "[]";
+            mcpResourcesText = "[]";
+            mcpPromptsText = "[]";
+        }
+
+        SyncDraftToRawJson();
+    }
+
+    private void CreateNewAgent()
+    {
+        selectedAgentName = null;
+        draftAgent = new AgentDefinitionModel
+        {
+            Name = "yeni-ai-ajan",
+            Description = "İş akışı karar ve analiz ajanı",
+            Instructions = "Sen uzman bir iş akışı ajanısın. Verilen veriyi analiz ederek JSON şemasına uygun yanıt üret.",
+            MaxToolCalls = 8,
+            MaxTotalTokens = 12000,
+        };
+        allowedTransitionsCsv = string.Empty;
+        agentOutputSchemaText = "{\n  \"type\": \"object\",\n  \"required\": [\"decision\", \"summary\"],\n  \"properties\": {\n    \"decision\": { \"type\": \"string\", \"default\": \"Onaylandı\" },\n    \"summary\": { \"type\": \"string\", \"default\": \"Değerlendirme tamamlandı.\" }\n  }\n}";
+    }
+
+    private IEnumerable<AgentDefinitionModel> FilteredAgents() =>
+        catalog.Agents.Where(a =>
+            string.IsNullOrWhiteSpace(searchFilter)
+            || a.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
+            || (a.Description?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private IEnumerable<AgentToolDefinitionModel> FilteredTools() =>
+        catalog.Tools.Where(t =>
+            string.IsNullOrWhiteSpace(searchFilter)
+            || t.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
+            || (t.Description?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private IEnumerable<McpServerDefinitionModel> FilteredMcpServers() =>
+        catalog.McpServers.Where(s =>
+            string.IsNullOrWhiteSpace(searchFilter)
+            || s.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
+            || (s.Description?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private IReadOnlyList<string> AvailableToolNames()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in catalog.Tools)
+        {
+            names.Add(t.Name);
+        }
+
+        foreach (var s in catalog.McpServers)
+        {
+            foreach (var mt in s.Tools)
+            {
+                names.Add(mt.Name);
+            }
+        }
+
+        foreach (var existing in draftAgent.Tools)
+        {
+            names.Add(existing);
+        }
+
+        return [.. names.OrderBy(n => n, StringComparer.Ordinal)];
+    }
+
+    private void ToggleAgentTool(string toolName, bool enabled)
+    {
+        if (enabled)
+        {
+            if (!draftAgent.Tools.Contains(toolName, StringComparer.OrdinalIgnoreCase))
+            {
+                draftAgent.Tools.Add(toolName);
+            }
+        }
+        else
+        {
+            draftAgent.Tools.RemoveAll(t => string.Equals(t, toolName, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private void ToggleAgentMcpServer(string serverName, bool enabled)
+    {
+        if (enabled)
+        {
+            if (!draftAgent.McpServers.Contains(serverName, StringComparer.OrdinalIgnoreCase))
+            {
+                draftAgent.McpServers.Add(serverName);
+            }
+        }
+        else
+        {
+            draftAgent.McpServers.RemoveAll(s => string.Equals(s, serverName, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private void OnAllowedTransitionsInput(ChangeEventArgs e)
+    {
+        allowedTransitionsCsv = e.Value?.ToString() ?? string.Empty;
+        draftAgent.AllowedTransitions = [.. allowedTransitionsCsv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)];
+    }
+
+    private void OnToolRolesInput(ChangeEventArgs e)
+    {
+        toolRolesCsv = e.Value?.ToString() ?? string.Empty;
+        draftTool.Roles = [.. toolRolesCsv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)];
+    }
+
+    private bool TrySyncVisualFieldsToModels(out string? error)
+    {
+        error = null;
+        try
+        {
+            if (activeSection == "agents")
+            {
+                draftAgent.OutputSchema = string.IsNullOrWhiteSpace(agentOutputSchemaText)
+                    ? null
+                    : JsonNode.Parse(agentOutputSchemaText) as JsonObject;
+            }
+            else if (activeSection == "tools")
+            {
+                draftTool.Parameters = string.IsNullOrWhiteSpace(toolParametersText)
+                    ? null
+                    : JsonNode.Parse(toolParametersText) as JsonObject;
+                if (draftTool.Kind == "expression")
+                {
+                    draftTool.Output = string.IsNullOrWhiteSpace(toolOutputText)
+                        ? null
+                        : JsonNode.Parse(toolOutputText);
+                }
+                else if (draftTool.Kind == "task")
+                {
+                    draftTool.Config = string.IsNullOrWhiteSpace(toolConfigText)
+                        ? null
+                        : JsonNode.Parse(toolConfigText) as JsonObject;
+                }
+            }
+            else
+            {
+                draftMcp.Tools = JsonSerializer.Deserialize<List<AgentToolDefinitionModel>>(mcpToolsText, IndentedJson) ?? [];
+                draftMcp.Resources = JsonSerializer.Deserialize<List<McpResourceDefinitionModel>>(mcpResourcesText, IndentedJson) ?? [];
+                draftMcp.Prompts = JsonSerializer.Deserialize<List<McpPromptDefinitionModel>>(mcpPromptsText, IndentedJson) ?? [];
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"JSON alanı ayrıştırılamadı: {ex.Message}";
+            return false;
+        }
+    }
+
+    private void SyncDraftToRawJson()
+    {
+        _ = TrySyncVisualFieldsToModels(out _);
+        rawJsonText = activeSection switch
+        {
+            "agents" => JsonSerializer.Serialize(draftAgent, IndentedJson),
+            "tools" => JsonSerializer.Serialize(draftTool, IndentedJson),
+            _ => JsonSerializer.Serialize(draftMcp, IndentedJson),
+        };
+    }
+
+    private void ApplyRawJsonToDraft()
+    {
+        errors.Clear();
+        try
+        {
+            if (activeSection == "agents")
+            {
+                var parsed = JsonSerializer.Deserialize<AgentDefinitionModel>(rawJsonText, IndentedJson);
+                if (parsed is not null)
+                {
+                    draftAgent = parsed;
+                    allowedTransitionsCsv = string.Join(", ", draftAgent.AllowedTransitions);
+                    agentOutputSchemaText = draftAgent.OutputSchema?.ToJsonString(IndentedJson) ?? "{}";
+                }
+            }
+            else if (activeSection == "tools")
+            {
+                var parsed = JsonSerializer.Deserialize<AgentToolDefinitionModel>(rawJsonText, IndentedJson);
+                if (parsed is not null)
+                {
+                    LoadToolIntoDraft(parsed);
+                }
+            }
+            else
+            {
+                var parsed = JsonSerializer.Deserialize<McpServerDefinitionModel>(rawJsonText, IndentedJson);
+                if (parsed is not null)
+                {
+                    LoadMcpIntoDraft(parsed);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"Geçersiz JSON: {ex.Message}");
+        }
+    }
+
+    private async Task ValidateCurrentAsync()
+    {
+        errors.Clear();
+        statusMessage = null;
+        if (editorMode == "json")
+        {
+            ApplyRawJsonToDraft();
+            if (errors.Count > 0)
+            {
+                return;
+            }
+        }
+        else if (!TrySyncVisualFieldsToModels(out var syncErr))
+        {
+            errors.Add(syncErr!);
+            return;
+        }
+
+        JsonObject payload = activeSection switch
+        {
+            "agents" => new JsonObject { ["agents"] = new JsonArray(JsonSerializer.SerializeToNode(draftAgent, IndentedJson)) },
+            "tools" => new JsonObject { ["tools"] = new JsonArray(JsonSerializer.SerializeToNode(draftTool, IndentedJson)) },
+            _ => new JsonObject { ["mcpServers"] = new JsonArray(JsonSerializer.SerializeToNode(draftMcp, IndentedJson)) },
+        };
+
+        var resp = await AgentClient.ValidateAsync(payload);
+        if (!resp.IsSuccess)
+        {
+            errors.Add(resp.ErrorText);
+            return;
+        }
+
+        if (resp.Data is { Valid: false } invalid)
+        {
+            errors.AddRange(invalid.Errors);
+            return;
+        }
+
+        statusMessage = "Tanım doğrulandı; hata bulunmadı.";
+    }
+
+    private async Task SaveCurrentAsync()
+    {
+        errors.Clear();
+        statusMessage = null;
+        if (editorMode == "json")
+        {
+            ApplyRawJsonToDraft();
+            if (errors.Count > 0)
+            {
+                return;
+            }
+        }
+        else if (!TrySyncVisualFieldsToModels(out var syncErr))
+        {
+            errors.Add(syncErr!);
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            if (activeSection == "agents")
+            {
+                var resp = await AgentClient.SaveAgentAsync(draftAgent);
+                if (!resp.IsSuccess)
+                {
+                    errors.Add(resp.ErrorText);
+                    return;
+                }
+
+                selectedAgentName = draftAgent.Name;
+                statusMessage = $"'{draftAgent.Name}' AI ajanı kaydedildi.";
+            }
+            else if (activeSection == "tools")
+            {
+                var resp = await AgentClient.SaveToolAsync(draftTool);
+                if (!resp.IsSuccess)
+                {
+                    errors.Add(resp.ErrorText);
+                    return;
+                }
+
+                selectedToolName = draftTool.Name;
+                statusMessage = $"'{draftTool.Name}' aracı kaydedildi.";
+            }
+            else
+            {
+                var resp = await AgentClient.SaveMcpServerAsync(draftMcp);
+                if (!resp.IsSuccess)
+                {
+                    errors.Add(resp.ErrorText);
+                    return;
+                }
+
+                selectedMcpName = draftMcp.Name;
+                statusMessage = $"'{draftMcp.Name}' MCP sunucusu kaydedildi.";
+            }
+
+            isNewItem = false;
+            await ReloadCatalogAsync();
+            if (OnChanged.HasDelegate)
+            {
+                await OnChanged.InvokeAsync();
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task DeleteCurrentAsync()
+    {
+        errors.Clear();
+        statusMessage = null;
+        busy = true;
+        try
+        {
+            if (activeSection == "agents" && !string.IsNullOrWhiteSpace(selectedAgentName))
+            {
+                var deletedName = selectedAgentName;
+                var resp = await AgentClient.DeleteAgentAsync(deletedName);
+                if (!resp.IsSuccess)
+                {
+                    errors.Add(resp.ErrorText);
+                    return;
+                }
+
+                selectedAgentName = null;
+                statusMessage = $"'{deletedName}' ajanı silindi.";
+            }
+            else if (activeSection == "tools" && !string.IsNullOrWhiteSpace(selectedToolName))
+            {
+                var deletedName = selectedToolName;
+                var resp = await AgentClient.DeleteToolAsync(deletedName);
+                if (!resp.IsSuccess)
+                {
+                    errors.Add(resp.ErrorText);
+                    return;
+                }
+
+                selectedToolName = null;
+                statusMessage = $"'{deletedName}' aracı silindi.";
+            }
+            else if (activeSection == "mcp" && !string.IsNullOrWhiteSpace(selectedMcpName))
+            {
+                var deletedName = selectedMcpName;
+                var resp = await AgentClient.DeleteMcpServerAsync(deletedName);
+                if (!resp.IsSuccess)
+                {
+                    errors.Add(resp.ErrorText);
+                    return;
+                }
+
+                selectedMcpName = null;
+                statusMessage = $"'{deletedName}' MCP sunucusu silindi.";
+            }
+
+            await ReloadCatalogAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ApplyPlaygroundPreset(string? preset)
+    {
+        switch (preset)
+        {
+            case "dispute-low":
+                playgroundPrompt = "Düşük tutarlı mükerrer çekim itirazını evaluate_dispute_policy ve banking-mcp araçlarıyla değerlendir, uygun iş akışı geçişini (nextTransition) seç.";
+                playgroundDataText = "{\n  \"disputeNo\": \"DSP-2026-0101\",\n  \"customerName\": \"Anadolu Lojistik A.Ş.\",\n  \"amount\": 3200,\n  \"category\": \"Mükerrer Çekim\",\n  \"merchantName\": \"Bulut Market A.Ş.\",\n  \"transactionRef\": \"TRX-9981\"\n}";
+                break;
+            case "dispute-fraud":
+                playgroundPrompt = "Yüksek tutarlı yetkisiz işlem bildirimini incele ve güvenlik / fraud eskalasyon kararını üret.";
+                playgroundDataText = "{\n  \"disputeNo\": \"DSP-2026-0102\",\n  \"customerName\": \"Kuzey Denizcilik A.Ş.\",\n  \"amount\": 48000,\n  \"category\": \"Yetkisiz İşlem\",\n  \"merchantName\": \"Global Elektronik\",\n  \"transactionRef\": \"TRX-9982\"\n}";
+                break;
+            case "dispute-specialist":
+                playgroundPrompt = "Uzman incelemesindeki dosya için calculate_reimbursement aracını kullanarak iade ve iyi niyet kredisini hesapla.";
+                playgroundDataText = "{\n  \"disputeNo\": \"DSP-2026-0103\",\n  \"customerName\": \"Marmara Tekstil Ltd.\",\n  \"amount\": 14500,\n  \"category\": \"Hizmet Kusuru\",\n  \"merchantName\": \"Lojistik Ekspres\"\n}";
+                break;
+            case "credit-risk":
+                playgroundPrompt = "Müşterinin kredi tahsis ve teminat verilerini analiz ederek kredi notunu (creditGrade) ve yönlendirme kararını üret.";
+                playgroundDataText = "{\n  \"customerName\": \"Ege Otomotiv Sanayi A.Ş.\",\n  \"segment\": \"Kurumsal\",\n  \"requestedAmount\": 750000,\n  \"monthlyIncome\": 420000,\n  \"collateralAmount\": 900000,\n  \"sector\": \"Üretim\"\n}";
+                break;
+            case "invoice-audit":
+                playgroundPrompt = "Fatura tahsilat ve kısmi ödeme geçmişini denetleyerek mutabakat risk raporunu oluştur.";
+                playgroundDataText = "{\n  \"invoiceNo\": \"FTR-2026-0001\",\n  \"customerName\": \"Anadolu Lojistik A.Ş.\",\n  \"total\": 12500,\n  \"paidAmount\": 5000,\n  \"remainingAmount\": 7500\n}";
+                break;
+        }
+    }
+
+    private async Task RunPlaygroundAsync()
+    {
+        playgroundError = null;
+        playgroundResult = null;
+        if (!TrySyncVisualFieldsToModels(out var syncErr))
+        {
+            playgroundError = syncErr;
+            return;
+        }
+
+        JsonObject? dataObj = null;
+        if (!string.IsNullOrWhiteSpace(playgroundDataText))
+        {
+            try
+            {
+                dataObj = JsonNode.Parse(playgroundDataText) as JsonObject;
+            }
+            catch (Exception ex)
+            {
+                playgroundError = $"Örnek veri JSON formatı hatalı: {ex.Message}";
+                return;
+            }
+        }
+
+        playgroundBusy = true;
+        try
+        {
+            var req = new AgentPlaygroundRequest
+            {
+                Agent = draftAgent.Name,
+                Definition = draftAgent,
+                Prompt = playgroundPrompt,
+                Data = dataObj,
+                AllowedTransitions = draftAgent.AllowedTransitions.Count > 0
+                    ? draftAgent.AllowedTransitions
+                    : ["route-auto-refund", "route-specialist-review", "route-fraud-investigation"],
+            };
+
+            var resp = await AgentClient.TestPlaygroundAsync(req);
+            if (!resp.IsSuccess || resp.Data is null)
+            {
+                playgroundError = resp.ErrorText;
+                return;
+            }
+
+            playgroundResult = resp.Data;
+        }
+        finally
+        {
+            playgroundBusy = false;
+        }
+    }
+
+    private string GetCurrentItemTitle() => activeSection switch
+    {
+        "agents" => string.IsNullOrWhiteSpace(draftAgent.Name) ? "Yeni Ajan" : draftAgent.Name,
+        "tools" => string.IsNullOrWhiteSpace(draftTool.Name) ? "Yeni Araç" : draftTool.Name,
+        _ => string.IsNullOrWhiteSpace(draftMcp.Name) ? "Yeni MCP Sunucusu" : draftMcp.Name,
+    };
+
+    private static string FormatNode(JsonNode? node) =>
+        node is null ? "null" : node.ToJsonString(IndentedJson);
+
+    private static T CloneJson<T>(T source)
+    {
+        var json = JsonSerializer.Serialize(source, IndentedJson);
+        return JsonSerializer.Deserialize<T>(json, IndentedJson)!;
+    }
+}
+

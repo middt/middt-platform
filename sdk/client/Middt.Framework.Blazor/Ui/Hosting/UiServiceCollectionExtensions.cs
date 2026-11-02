@@ -22,6 +22,7 @@ public static class UiServiceCollectionExtensions
         services.AddSingleton(widgets.Catalog);
         services.AddMiddtApiClient<UiApiClient>();
         services.AddMiddtApiClient<UiDataClient>();
+        services.AddMiddtApiClient<AgentApiClient>();
         services.AddScoped<UiLookupCache>();
         return services;
     }
