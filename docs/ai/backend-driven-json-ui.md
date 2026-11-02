@@ -215,7 +215,7 @@ You can build reusable partial layouts (`kind: "view"`) and embed them inside an
 
 ## 6. Verification Checklist
 
-Whenever you add or modify a JSON layout or workflow seed in `demo/Middt.Demo.Api/`:
+Whenever you add or modify a JSON layout or workflow seed in `demo/Middt.Demo.Workflows/`:
 
 1. Run schema & sample validation tests:
    ```bash

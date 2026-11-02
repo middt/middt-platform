@@ -11,7 +11,7 @@ namespace Middt.Framework.Tests.Workflow;
 public sealed class WorkflowDefinitionTests
 {
     private static string SampleDefinition(string file) =>
-        File.ReadAllText(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Workflows", file));
+        File.ReadAllText(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Workflows", file));
 
     private static string RepositoryRoot()
     {
@@ -89,7 +89,7 @@ public sealed class WorkflowDefinitionTests
     [Fact]
     public void All_sample_definition_versions_load_together_and_the_wizard_is_latest()
     {
-        var files = Directory.GetFiles(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Workflows"), "*.json")
+        var files = Directory.GetFiles(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Workflows"), "*.json")
             .Select(f => SampleDefinition(Path.GetFileName(f)))
             .ToArray();
 
@@ -123,14 +123,14 @@ public sealed class WorkflowDefinitionTests
     [Fact]
     public void Sample_definitions_validate_like_at_api_startup()
     {
-        // Same registrations as demo/Middt.Demo.Api/Program.cs: general tasks and Rebus tasks.
+        // Same registrations as runtime/Middt.Workflow.Runtime/Program.cs: general tasks and Rebus tasks.
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddMiddtWorkflow(o =>
         {
             o.UseDbContext(db => db.UseSqlite("DataSource=:memory:"));
             o.EnableJobProcessor = false;
-            o.AddDefinitionsFromDirectory(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Workflows"));
+            o.AddDefinitionsFromDirectory(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Workflows"));
             o.AddRebusTasks();
             o.AddAgentTasks();
         });

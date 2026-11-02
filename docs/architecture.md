@@ -127,11 +127,11 @@ In addition to core instance execution, `Middt.Framework.Workflow` exposes enter
 - **Unified Human Task Inbox (`GET /api/workflows/inbox`)**: aggregates active human-state instances across all workflows where the caller has at least one executable manual transition (`CanExecute` including `roles`, `denyRoles`, `$previousUser`, and transition `rule`).
 - **Operations Center & Batch Retry (`GET /api/workflows/operations`, `POST /api/workflows/operations/retry-batch`)**: surfaces faulted instances, unresolved incidents, and pending jobs, and supports batch retry with per-item input overrides.
 - **Dry-Run Simulator (`POST /api/workflows/{workflow}/simulate`)**: executes a workflow definition (or an inline candidate definition) through a sequence of transitions on an isolated in-memory clone without writing to the database or calling external HTTP/message brokers.
-- **Portable Bundle Export/Import (`GET /api/workflows/bundle`, `POST /api/workflows/bundle/import`) & Retention Purge (`POST /api/workflows/maintenance/purge`)**: exports and imports workflows, layouts, and agent/tool/MCP JSON assets with SHA-256 integrity verification and `dryRun` support for CI/CD promotion, and purges terminal (`Completed`, `Cancelled`, `Faulted`) instances older than a retention threshold in bounded batches.
+- **Portable Bundle Export/Import (`GET /api/workflows/bundle`, `POST /api/workflows/bundle/import`), Runtime Deployment (`POST /api/agents/catalog`, `POST /api/workflows/definitions`, `POST /api/ui/layouts/seed`), & Retention Purge (`POST /api/workflows/maintenance/purge`)**: deploys AI agent catalogs, workflow definitions, and UI layouts to the standalone runtime over HTTP, exports and imports complete bundles with SHA-256 integrity verification and `dryRun` support for CI/CD promotion, and purges terminal (`Completed`, `Cancelled`, `Faulted`) instances older than a retention threshold in bounded batches.
 
 ## Project map
 
-Folders follow the layers: `sdk/shared` (contracts), `sdk/server` (backend), `sdk/client` (`.NET` client SDK, BFF, Blazor, TypeScript `ui-core`, Angular), `identity/Middt.Identity`, and `demo/` (`Middt.Demo.*` + `angular-app`); `spec`, `tests`, `docs` at the root.
+Folders follow the layers: `sdk/shared` (contracts), `sdk/server` (backend), `sdk/client` (`.NET` client SDK, BFF, Blazor, TypeScript `ui-core`, Angular), `runtime/Middt.Workflow.Runtime`, `identity/Middt.Identity`, and `demo/` (`Middt.Demo.Workflows`, `Middt.Demo.Blazor`, `Middt.Demo.Angular`, `angular-app`); `spec`, `tests`, `docs` at the root.
 
 | Project | Layer | Notes |
 |---|---|---|
@@ -143,7 +143,9 @@ Folders follow the layers: `sdk/shared` (contracts), `sdk/server` (backend), `sd
 | Middt.Framework.Workflow | backend | engine, endpoints, `IWorkflowViewRenderer`, `WorkflowInstanceDataQuery` |
 | Middt.Framework.Ui.Server | backend | layout store, endpoints, `UiHtmlRenderer` |
 | Middt.Framework.Rebus | backend | messaging on Rebus (RabbitMQ / in-memory), `publish` workflow task |
-| Middt.Framework.Agents | backend | Microsoft Agent Framework (`Microsoft.Agents.AI` + `Microsoft.Extensions.AI`), `agent` & `mcp` workflow tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing |
+| Middt.Framework.Agents | backend | Microsoft Agent Framework (`Microsoft.Agents.AI` + `Microsoft.Extensions.AI`), `agent` & `mcp` workflow tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing, `GET /api/agents` & `POST /api/agents/catalog` |
+| Middt.Workflow.Runtime | standalone runtime | generic container image (`runtime/Middt.Workflow.Runtime`) hosting the workflow engine, JSON UI server, AI agents/MCP runtime, Rebus/RabbitMQ, and dynamic CRUD controller with zero domain flows/layouts |
+| Middt.Demo.Workflows | demo deployer | domain `Agents/`, `Layouts/`, `Workflows/`, and `Seeds/initial-instances.json` deployed over HTTP to `Middt.Workflow.Runtime` |
 | Middt.Framework.Client | client SDK | typed API clients, token refresh |
 | Middt.Framework.Bff | frontends | cookie session, token store + refresh, login pages, `/bff/user`, `/api` proxy (YARP) |
 | Middt.Framework.Blazor | Blazor | BFF auth, workflow screens (`Workflow/`), layout widgets/hosts/editor (`Ui/`) |

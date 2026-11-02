@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using Microsoft.Extensions.Options;
-using Middt.Framework.Client.Security;
 using Middt.Framework.Model.Configuration;
 using Middt.Demo.Blazor.Model;
 using Middt.Demo.Blazor.Service;

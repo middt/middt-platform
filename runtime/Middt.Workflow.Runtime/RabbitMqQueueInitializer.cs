@@ -1,7 +1,7 @@
 using Middt.Framework.Workflow.Definitions;
 using RabbitMQ.Client;
 
-namespace Middt.Demo.Api;
+namespace Middt.Workflow.Runtime;
 
 /// <summary>
 /// Pre-declares queues referenced by workflow definitions (or configured under <c>RabbitMq:Queues</c>) in RabbitMQ so that

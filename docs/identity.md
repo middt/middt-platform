@@ -10,7 +10,7 @@ over OIDC. Everything deployment specific is **configuration**, not code.
 
 | Folder | Contents |
 |---|---|
-| `Program.cs` | Host: reads the configuration below, maps protocol endpoints, UI, health (`/health`). |
+| `Program.cs` | Host: reads the configuration below, maps protocol endpoints, UI, health (`/health`, `/alive`). |
 | `Endpoints/`, `Data/`, `Seeding/`, `Messaging/` | Protocol (OpenIddict 7 server: authorization code + PKCE, PAR, device authorization, token exchange, password, refresh token, client credentials, end session, revocation, introspection, userinfo), users/roles/OAuth2 entities (ASP.NET Core Identity + OpenIddict custom stores over `WorkflowDbContext.Instances` in schema `wf_idp`), seeding, development mailbox. |
 | `Journeys/` | `IAuthJourneyService`, workflow tasks, default authentication journeys (`auth-*.json`), and entity workflow definitions (`idp-user.json`, `idp-role.json`, `oauth-application.json`, `oauth-scope.json`, `oauth-authorization.json`, `oauth-token.json`). |
 | `Seeds/` | `identity.json` – seed configuration (`Identity:ConfigFile`: roles, scopes, clients, demo users). |
@@ -244,8 +244,8 @@ Environment variables (containers): `Bff__Oidc__Authority=http://localhost:8083/
 `Authentication__BackchannelAuthority`, `Authentication__Audience`, `Authentication__RequireHttpsMetadata`.
 
 Demo clients: `middt-blazor` (confidential, `http://localhost:8080/signin-oidc`), `middt-angular` (confidential,
-`http://localhost:8081/signin-oidc`); scopes `openid profile email roles offline_access api`. Demo users:
-`test@test.com` / `test` (roles `manager`, `ui-admin`, `idp-admin`), `user@test.com` / `test` (no roles).
+`http://localhost:8081/signin-oidc`), `middt-postman` (public, password & refresh token grants for CLI/Postman/seeding); scopes `openid profile email roles offline_access api`. Demo users:
+`test@test.com` / `test` (roles `manager`, `ui-admin`, `idp-admin`), `manager2@test.com` / `test` (role `manager`, for 4-eyes / Maker-Checker testing), `user@test.com` / `test` (no roles).
 
 ## Demo (:8083)
 

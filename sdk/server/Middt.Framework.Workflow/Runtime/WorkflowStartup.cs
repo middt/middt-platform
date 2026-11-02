@@ -86,13 +86,11 @@ internal sealed class WorkflowStartup(
 
             var rows = await db.Definitions
                 .AsNoTracking()
+                .Where(d => !d.Key.StartsWith("__"))
                 .OrderBy(d => d.Version)
                 .ToListAsync(cancellationToken);
 
-            foreach (var row in rows)
-            {
-                registry.RestorePersistedDefinition(row.Content);
-            }
+            registry.RestorePersistedDefinitions(rows.Select(r => r.Content));
         }
         catch
         {
@@ -129,6 +127,11 @@ internal sealed class WorkflowStartup(
 
             // history: delta rows keep a patch instead of a snapshot.
             $"ALTER TABLE \"{schema}\".\"WorkflowHistory\" ALTER COLUMN \"Data\" DROP NOT NULL;",
+
+            // WorkflowDefinitions column alignment across versions.
+            $"ALTER TABLE \"{schema}\".\"WorkflowDefinitions\" RENAME COLUMN \"Json\" TO \"Content\";",
+            $"ALTER TABLE \"{schema}\".\"WorkflowDefinitions\" DROP COLUMN IF EXISTS \"Checksum\";",
+            $"ALTER TABLE \"{schema}\".\"WorkflowDefinitions\" DROP COLUMN IF EXISTS \"Source\";",
         };
 
         foreach (var sql in statements)

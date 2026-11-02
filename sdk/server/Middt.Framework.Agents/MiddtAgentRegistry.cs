@@ -18,13 +18,23 @@ namespace Middt.Framework.Agents;
 /// </summary>
 public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
 {
+    private static readonly JsonSerializerOptions CatalogJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
     private readonly IServiceProvider _services;
     private readonly AgentSettings _settings;
     private readonly MiddtAgentOptions _options;
     private readonly IMiddtMcpClient _mcpClient;
     private readonly ILoggerFactory _loggerFactory;
-    private readonly Dictionary<string, AgentDefinition> _definitions = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, AITool> _tools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AgentDefinition> _definitions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AITool> _tools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AgentToolDefinition> _declarativeTools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Lock _sync = new();
+    private volatile bool _persistedLoaded;
 
     public MiddtAgentRegistry(
         IServiceProvider services,
@@ -52,6 +62,7 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
                 declTool.Name = key;
             }
 
+            _declarativeTools[declTool.Name] = declTool;
             _tools[declTool.Name] = new DeclarativeAiFunction(declTool, services, mcpClient);
         }
 
@@ -62,27 +73,16 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
                 declTool.Name = key;
             }
 
+            _declarativeTools[declTool.Name] = declTool;
             _tools[declTool.Name] = new DeclarativeAiFunction(declTool, services, mcpClient);
         }
 
-        foreach (var server in mcpClient.GetServers())
+        var initialServers = mcpClient is MiddtMcpClient concreteMcp
+            ? concreteMcp.GetRegisteredServersSnapshot()
+            : mcpClient.GetServers();
+        foreach (var server in initialServers)
         {
-            foreach (var mcpTool in server.Tools)
-            {
-                var boundTool = new AgentToolDefinition
-                {
-                    Name = mcpTool.Name,
-                    Description = mcpTool.Description,
-                    Kind = "mcp",
-                    McpServer = server.Name,
-                    McpTool = mcpTool.Name,
-                    Parameters = mcpTool.Parameters,
-                    Roles = [.. mcpTool.Roles],
-                };
-                var fn = new DeclarativeAiFunction(boundTool, services, mcpClient);
-                _tools.TryAdd(mcpTool.Name, fn);
-                _tools[$"mcp:{server.Name}:{mcpTool.Name}"] = new DeclarativeAiFunction(boundTool, services, mcpClient, $"{server.Name}_{mcpTool.Name}");
-            }
+            RegisterMcpServerTools(server);
         }
 
         foreach (var (name, tool) in options.Tools)
@@ -111,13 +111,120 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         }
     }
 
-    public AgentDefinition? GetDefinition(string name) =>
-        !string.IsNullOrWhiteSpace(name) && _definitions.TryGetValue(name, out var def) ? def : null;
+    public void RegisterCatalog(AgentCatalogFile catalog)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
 
-    public IReadOnlyCollection<AgentDefinition> GetAllDefinitions() => _definitions.Values;
+        foreach (var server in catalog.McpServers.Where(s => !string.IsNullOrWhiteSpace(s.Name)))
+        {
+            _mcpClient.RegisterServer(server);
+            RegisterMcpServerTools(server);
+        }
+
+        foreach (var declTool in catalog.Tools.Where(t => !string.IsNullOrWhiteSpace(t.Name)))
+        {
+            _declarativeTools[declTool.Name] = declTool;
+            _tools[declTool.Name] = new DeclarativeAiFunction(declTool, _services, _mcpClient);
+        }
+
+        foreach (var agent in catalog.Agents.Where(a => !string.IsNullOrWhiteSpace(a.Name)))
+        {
+            _definitions[agent.Name] = agent;
+        }
+    }
+
+    internal AgentCatalogFile ExportCatalog()
+    {
+        var servers = _mcpClient is MiddtMcpClient concreteMcp
+            ? concreteMcp.GetRegisteredServersSnapshot()
+            : _mcpClient.GetServers();
+        return new()
+        {
+            Agents = [.. _definitions.Values.OrderBy(a => a.Name, StringComparer.Ordinal)],
+            Tools = [.. _declarativeTools.Values.OrderBy(t => t.Name, StringComparer.Ordinal)],
+            McpServers = [.. servers.OrderBy(s => s.Name, StringComparer.Ordinal)],
+        };
+    }
+
+    private void RegisterMcpServerTools(McpServerDefinition server)
+    {
+        foreach (var mcpTool in server.Tools)
+        {
+            var boundTool = new AgentToolDefinition
+            {
+                Name = mcpTool.Name,
+                Description = mcpTool.Description,
+                Kind = "mcp",
+                McpServer = server.Name,
+                McpTool = mcpTool.Name,
+                Parameters = mcpTool.Parameters,
+                Roles = [.. mcpTool.Roles],
+            };
+            var fn = new DeclarativeAiFunction(boundTool, _services, _mcpClient);
+            _tools.TryAdd(mcpTool.Name, fn);
+            _tools[$"mcp:{server.Name}:{mcpTool.Name}"] = new DeclarativeAiFunction(boundTool, _services, _mcpClient, $"{server.Name}_{mcpTool.Name}");
+        }
+    }
+
+    private void EnsurePersistedCatalogLoaded()
+    {
+        if (_persistedLoaded)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (_persistedLoaded)
+            {
+                return;
+            }
+
+            try
+            {
+                using var scope = _services.CreateScope();
+                var db = scope.ServiceProvider.GetService<Middt.Framework.Workflow.Persistence.WorkflowDbContext>();
+                if (db is null)
+                {
+                    _persistedLoaded = true;
+                    return;
+                }
+
+                var record = Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Definitions)
+                    .FirstOrDefault(d => d.Key == AgentEndpoints.PersistedCatalogKey && d.Version == 1);
+                if (record is not null && !string.IsNullOrWhiteSpace(record.Content))
+                {
+                    var catalog = JsonSerializer.Deserialize<AgentCatalogFile>(record.Content, CatalogJsonOptions);
+                    if (catalog is not null)
+                    {
+                        RegisterCatalog(catalog);
+                    }
+                }
+
+                _persistedLoaded = true;
+            }
+            catch
+            {
+                // Database or table may not be initialized yet; will retry on subsequent calls.
+            }
+        }
+    }
+
+    public AgentDefinition? GetDefinition(string name)
+    {
+        EnsurePersistedCatalogLoaded();
+        return !string.IsNullOrWhiteSpace(name) && _definitions.TryGetValue(name, out var def) ? def : null;
+    }
+
+    public IReadOnlyCollection<AgentDefinition> GetAllDefinitions()
+    {
+        EnsurePersistedCatalogLoaded();
+        return [.. _definitions.Values];
+    }
 
     public AITool? GetTool(string name)
     {
+        EnsurePersistedCatalogLoaded();
         if (string.IsNullOrWhiteSpace(name))
         {
             return null;
@@ -146,7 +253,11 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         return null;
     }
 
-    public IReadOnlyCollection<AITool> GetAllTools() => _tools.Values;
+    public IReadOnlyCollection<AITool> GetAllTools()
+    {
+        EnsurePersistedCatalogLoaded();
+        return [.. _tools.Values];
+    }
 
     public AIAgent CreateAgent(
         string agentName,

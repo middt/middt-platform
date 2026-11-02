@@ -21,6 +21,9 @@ public interface IMiddtAgentRegistry
     /// <summary>Returns all registered <see cref="AITool"/> functions.</summary>
     IReadOnlyCollection<AITool> GetAllTools();
 
+    /// <summary>Registers or updates agents, declarative tools, and MCP servers at runtime from an <see cref="AgentCatalogFile"/>.</summary>
+    void RegisterCatalog(AgentCatalogFile catalog);
+
     /// <summary>
     /// Creates a <see cref="ChatClientAgent"/> (<see cref="AIAgent"/>) from a registered <paramref name="agentName"/>,
     /// with optional runtime overrides.

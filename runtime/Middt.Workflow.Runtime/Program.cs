@@ -8,9 +8,8 @@ using Middt.Framework.Ui.Server.Endpoints;
 using Middt.Framework.Workflow.DependencyInjection;
 using Middt.Framework.Workflow.Endpoints;
 using Middt.Framework.Workflow.Runtime;
-using Middt.Framework.Workflow.Tasks;
-using Middt.Demo.Api;
-using Middt.Demo.Api.Handlers;
+using Middt.Workflow.Runtime;
+using Middt.Workflow.Runtime.Handlers;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
@@ -18,7 +17,7 @@ builder.Configuration.AddEnvironmentVariables();
 builder.Configuration.AddCommandLine(args);
 
 builder.AddMiddtOpenTelemetry();
-builder.AddMiddtApi(options => options.Title = "Middt Sample API");
+builder.AddMiddtApi(options => options.Title = "Middt Workflow Runtime");
 
 // Optional infrastructure: enabled only when a connection string is configured (Docker Compose injects them).
 if (builder.Configuration.GetConnectionString("redis") is { Length: > 0 } redis)
@@ -41,33 +40,50 @@ builder.Services.AddHostedService<RabbitMqQueueInitializer>();
 
 var dbConnectionString = builder.Configuration.GetConnectionString("WorkflowDb");
 
-// AI Agents (Microsoft Agent Framework): JSON agent definitions from ./Agents, OpenAI/compatible provider or local deterministic fallback.
+// AI Agents (Microsoft Agent Framework): JSON agent definitions deployed via /api/agents/catalog or optional ./Agents folder.
 builder.Services.AddMiddtAgents(
     builder.Configuration,
-    agents => agents.AddAgentsFromDirectory("Agents"));
+    agents =>
+    {
+        var agentsDir = Path.Combine(builder.Environment.ContentRootPath, "Agents");
+        if (Directory.Exists(agentsDir))
+        {
+            agents.AddAgentsFromDirectory("Agents");
+        }
+    });
 
-// Workflow engine: JSON definitions from ./Workflows, all domain data stored in WorkflowInstanceData.Data JSONB ("wf" schema).
+// Workflow engine: definitions are persisted in wf."WorkflowDefinitions" and deployed via POST /api/workflows/definitions.
+// Optional ./Workflows directory is loaded only when present.
 builder.Services.AddMiddtWorkflow(workflow =>
 {
     workflow.UseDbContext(db => db.UseNpgsql(dbConnectionString));
     workflow.AutoCreateSchema = true;
     workflow.ExposeErrorDetails = builder.Environment.IsDevelopment();
-    workflow.AddDefinitionsFromDirectory("Workflows");
+    var workflowsDir = Path.Combine(builder.Environment.ContentRootPath, "Workflows");
+    if (Directory.Exists(workflowsDir))
+    {
+        workflow.AddDefinitionsFromDirectory("Workflows");
+    }
 });
-builder.Services.AddHostedService<DemoWorkflowSeeder>();
 
-// Server driven UI: JSON layouts (pages and workflow state views) in the "ui" schema, seeded from ./Layouts and editable at runtime.
+// Server-driven UI: JSON layouts (pages and workflow state views) in the "ui" schema, deployed via POST /api/ui/layouts/seed.
+// Optional ./Layouts directory is loaded only when present.
 builder.Services.AddMiddtUi(ui =>
 {
     ui.UseDbContext(db => db.UseNpgsql(dbConnectionString));
     ui.AutoCreateSchema = true;
-    ui.AddLayoutsFromDirectory("Layouts");
+    var layoutsDir = Path.Combine(builder.Environment.ContentRootPath, "Layouts");
+    if (Directory.Exists(layoutsDir))
+    {
+        ui.AddLayoutsFromDirectory("Layouts");
+    }
 });
 builder.Services.AddScoped<IWorkflowViewRenderer, WorkflowLayoutRenderer>();
 
 var app = builder.Build();
 
 app.UseMiddtApi();
+app.MapMiddtAgents("api/agents");
 app.MapMiddtWorkflows("api/workflows");
 app.MapMiddtUi("api/ui");
 

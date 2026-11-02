@@ -505,7 +505,7 @@ Limit aşımlarında Genel Müdürlük ya da Şube Müdürü ayrımı otomatik a
 
 ### A. Birleşik Görev Kutusu (`GET /api/workflows/inbox`)
 
-`WorkflowEngine.GetInboxAsync` (`GET /api/workflows/inbox`) tüm iş akışlarındaki aktif ve `subType: "Human"` durumundaki kayıtları tarar; her kaydın kendi tanım sürümündeki (`WorkflowVersion`) `roles` ve `instanceAccess` kurallarını ve durumdaki manuel geçişlerin `CanExecute` koşullarını (`roles`, `denyRoles`, `$previousUser` 4-göz ilkesi ve geçiş `rule` ifadesi) değerlendirir. Yalnızca çağrıyı yapan kullanıcının o anda tetikleyebileceği en az bir manuel geçişi bulunan kayıtlar (`AvailableTransitions`) ve kullanıcının rolüne göre maskelenmiş (`ApplySchemaReadAccess`) veri özeti döndürülür.
+`WorkflowEngine.ListInboxAsync` (`GET /api/workflows/inbox`) tüm iş akışlarındaki aktif ve `subType: "Human"` durumundaki kayıtları tarar; her kaydın kendi tanım sürümündeki (`WorkflowVersion`) `roles` ve `instanceAccess` kurallarını ve durumdaki manuel geçişlerin `CanExecute` koşullarını (`roles`, `denyRoles`, `$previousUser` 4-göz ilkesi ve geçiş `rule` ifadesi) değerlendirir. Yalnızca çağrıyı yapan kullanıcının o anda tetikleyebileceği en az bir manuel geçişi bulunan kayıtlar (`AvailableTransitions`) ve kullanıcının rolüne göre maskelenmiş (`ApplySchemaReadAccess`) veri özeti döndürülür.
 
 ### B. Liste Sorgularında SQL Seviyesinde Şube Filtreleme
 

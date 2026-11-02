@@ -1,11 +1,11 @@
 # demo – workflow & server-driven UI demo (read the root AGENTS.md first)
 
-Flat project structure: `Middt.Demo.Api`,
+Flat project structure: `Middt.Demo.Workflows` (JSON workflows, AI agents, layouts, seeds, and HTTP deployer targeting `runtime/Middt.Workflow.Runtime`),
 `Middt.Demo.Blazor`, `Middt.Demo.Angular` (BFF host) + `angular-app` (Angular SPA workspace).
-The demo shows framework usage – keep framework logic in `sdk/`.
+The demo shows framework usage – keep framework logic in `sdk/` and the standalone runtime host in `runtime/Middt.Workflow.Runtime`.
 
-- Seeds: `Middt.Demo.Api/Layouts/*.json` (layouts, `$schema` → `spec/ui-layout.schema.json`),
-  `Workflows/*.json` (JSONC), `Agents/` (`Agents/*.json`, `Agents/Tools/*.json`, `Agents/McpServers/*.json`), and `Seeds/initial-instances.json` (declarative initial workflow instances seeded by `DemoWorkflowSeeder`). Layouts and workflows are validated at startup. Bump a layout's `version` to overwrite the stored copy.
+- Seeds: `Middt.Demo.Workflows/Layouts/*.json` (layouts, `$schema` → `spec/ui-layout.schema.json`),
+  `Workflows/*.json` (JSONC), `Agents/` (`Agents/*.json`, `Agents/Tools/*.json`, `Agents/McpServers/*.json`), and `Seeds/initial-instances.json` (declarative initial workflow instances). Agents, workflows, layouts, and initial instances are deployed over HTTP by `DemoFlowDeployer` (`POST /api/agents/catalog`, `POST /api/workflows/definitions`, `POST /api/ui/layouts/seed`, `POST /api/workflows/{workflow}/instances`). Bump a layout's `version` to overwrite the stored copy.
 - Everything is 100% backend-driven from JSON (see [`docs/ai/backend-driven-json-ui.md`](../docs/ai/backend-driven-json-ui.md)):
   - Sidebar workflow menu items (`icon`, `title`, `/workflow/{key}`) come from `GET /api/workflows`.
   - Sidebar layout menu items are ordered by `menu.order` (then `menu.title`) in both Blazor and Angular.

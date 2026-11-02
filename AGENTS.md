@@ -37,8 +37,9 @@ sdk/                              the framework (NuGet + npm packages)
     ui-core/                      @middt/ui-core – TS twin of the contracts + API clients
     angular/                      @middt/angular (library workspace) – Angular frontend
 identity/Middt.Identity           OAuth2/OIDC server – ONE runnable service (+ Journeys/, Seeds/identity.json; docs/identity.md)
+runtime/Middt.Workflow.Runtime    Standalone workflow, AI agent & server-driven JSON UI runtime image (zero domain flows/layouts; accepts HTTP deployment)
 demo/                             100% backend-driven JSON demo (KYC, credit, order orchestration, invoice collection, AI dispute resolution)
-  Middt.Demo.Api                  API + Layouts/*.json + Workflows/*.json + Agents/**/*.json + Seeds/*.json seeds (zero hardcoded domain views/tables)
+  Middt.Demo.Workflows            Layouts/*.json + Workflows/*.json + Agents/**/*.json + Seeds/*.json + HTTP flow/layout/agent deployer
   Middt.Demo.Blazor               Blazor demo (:8080)
   Middt.Demo.Angular              Angular BFF host (:8081)
   angular-app/                    Angular demo SPA workspace
@@ -110,7 +111,7 @@ docker compose up -d --build        # Blazor :8080 · Angular :8081 · IdP :8083
 - `WorkflowDbContext`'s model depends on the workflow schema: EF caches it per schema (`WorkflowModelCacheKeyFactory`);
   without that, a second schema in the same process silently used the first one's tables (`UiDbContext` does the same via `UiModelCacheKeyFactory`). More workflow pitfalls:
   [`docs/ai/gotchas.md`](docs/ai/gotchas.md).
-- Seeds (`demo/Middt.Demo.Api/Layouts`, `Workflows`, `Agents`) are validated at startup – an invalid file stops the API.
+- Seeds (`demo/Middt.Demo.Workflows/Layouts`, `Workflows`, `Agents`) are validated at startup or when deployed over HTTP (`POST /api/agents/catalog`, `POST /api/workflows/definitions`, `POST /api/ui/layouts/seed`).
 - E2E (Playwright) suites live in `tests/e2e`; see `docs/ai/testing.md`.
 - Identity admin pages materialize an `IAsyncEnumerable` from OpenIddict/EF before querying per row on the same connection.
 - Radzen grids with `LoadData` lose the initial load across prerendering: call `grid.Reload()` in

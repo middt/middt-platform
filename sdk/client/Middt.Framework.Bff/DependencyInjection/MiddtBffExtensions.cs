@@ -169,7 +169,8 @@ public static class MiddtBffExtensions
             BffOidc.Add(authentication, options.Oidc, options.CookieName, builder.Environment);
         }
 
-        services.AddHealthChecks();
+        services.AddHealthChecks()
+            .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(), ["live"]);
         return options;
     }
 
@@ -240,6 +241,10 @@ public static class MiddtBffExtensions
         app.MapMiddtBffEndpoints();
         app.MapMiddtBffProxy();
         app.MapHealthChecks("/health");
+        app.MapHealthChecks("/alive", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+        {
+            Predicate = r => r.Tags.Contains("live"),
+        });
         app.MapFallbackToFile(fallbackFile, SpaHosting.StaticFileOptions(cacheable: false)).RequireAuthorization();
         return app;
     }

@@ -39,7 +39,8 @@ builder.AddMiddtIdentityServer(o =>
 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMiddtIdentityUi();
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(), ["live"]);
 
 // With Redis Data Protection keys (cookies, antiforgery) are shared between instances and survive restarts.
 if (builder.Configuration.GetConnectionString("redis") is { Length: > 0 } redis)
@@ -73,6 +74,10 @@ app.UseAntiforgery();
 
 app.MapStaticAssets();
 app.MapHealthChecks("/health");
+app.MapHealthChecks("/alive", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("live"),
+});
 app.MapMiddtIdentity();
 app.MapMiddtIdentityUi();
 

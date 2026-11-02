@@ -87,16 +87,16 @@ Bir iş akışı (`Workflows/*.json`) tanımladığınızda platform otomatik ol
 
 ## 2. Proje Klasör Yapısı (Nereye Ne Eklenir?)
 
-Citizen Developer olarak tüm geliştirmelerinizi `demo/Middt.Demo.Api` (veya kendi API projenizin) altındaki şu klasörlerde yaparsınız:
+Citizen Developer olarak tüm geliştirmelerinizi `demo/Middt.Demo.Workflows` (veya kendi API projenizin) altındaki şu klasörlerde yaparsınız:
 
 | Klasör / Dosya | Amacı |
 |---|---|
-| `demo/Middt.Demo.Api/Workflows/*.json` | İş akışı tanımları (durumlar, geçişler, formlar, görevler, veri şeması). |
-| `demo/Middt.Demo.Api/Agents/*.json` | Yapay zeka ajanı tanımları (sistem talimatları, kullandığı araçlar, çıktı şeması). |
-| `demo/Middt.Demo.Api/Agents/Tools/*.json` | AI ajanlarının çağırdığı kodsuz araçlar (`expression`, `http`, `task`, `mcp`). |
-| `demo/Middt.Demo.Api/Agents/McpServers/*.json` | Model Context Protocol (MCP) sunucu tanımları, kaynakları ve şablonları. |
-| `demo/Middt.Demo.Api/Layouts/*.json` | Sunucu güdümlü ekran tasarımları (`nav-menu.json`, durum görünümleri, özel sayfalar). |
-| `demo/Middt.Demo.Api/Seeds/*.json` | Uygulama ilk kalktığında otomatik oluşturulacak örnek iş akışı kayıtları. |
+| `demo/Middt.Demo.Workflows/Workflows/*.json` | İş akışı tanımları (durumlar, geçişler, formlar, görevler, veri şeması). |
+| `demo/Middt.Demo.Workflows/Agents/*.json` | Yapay zeka ajanı tanımları (sistem talimatları, kullandığı araçlar, çıktı şeması). |
+| `demo/Middt.Demo.Workflows/Agents/Tools/*.json` | AI ajanlarının çağırdığı kodsuz araçlar (`expression`, `http`, `task`, `mcp`). |
+| `demo/Middt.Demo.Workflows/Agents/McpServers/*.json` | Model Context Protocol (MCP) sunucu tanımları, kaynakları ve şablonları. |
+| `demo/Middt.Demo.Workflows/Layouts/*.json` | Sunucu güdümlü ekran tasarımları (`kind: "page"` menü sayfaları, `kind: "view"` durum görünümleri ve ortak alt bileşenler). |
+| `demo/Middt.Demo.Workflows/Seeds/*.json` | Uygulama ilk kalktığında otomatik oluşturulacak örnek iş akışı kayıtları. |
 | `demo/mockoon/mockoon-env.json` | `http` görevleri ve AI `http` araçları için Mockoon dış servis simülasyon uçları. |
 
 ---
@@ -682,7 +682,7 @@ Başka bir akış kaydını `key`, `id` veya **`where`** (instance data koşulu)
 |---|---|---|
 | `transition` | `string` | Hedef akışta doğrudan tetiklenecek geçişin anahtarı (ör. `"approve"`, `"cancel"`). `event` ile birlikte kullanılmaz. |
 | `event` | `string` | Hedef akışta `"trigger": "Event"` olan geçişe gönderilecek olay adı (ör. `"PaymentCaptured"`). |
-| `bufferFor` | `string` | Yalnızca `event` modunda geçerlidir (`"00:05:00"` veya `"PT5M"`). Hedef akış o anda başka bir işlemle meşgulse veya **henüz o olayı bekleyen duruma (`state`) gelmemişse**, mesajı çöpe atmak yerine belirtilen süre boyunca `WorkflowMessageBuffers` tablosunda bekletir; hedef akış ilgili duruma girdiği anda mesaj otomatik işlenir. |
+| `bufferFor` | `string` | Yalnızca `event` modunda geçerlidir (`"00:05:00"` veya `"PT5M"`). Hedef akış o anda başka bir işlemle meşgulse veya **henüz o olayı bekleyen duruma (`state`) gelmemişse**, mesajı çöpe atmak yerine belirtilen süre boyunca `WorkflowJobs` tablosunda (`Kind = "Message"`) bekletir; hedef akış ilgili duruma girdiği anda mesaj otomatik işlenir. |
 | `runAsync` | `boolean` | `false` (varsayılan) \| `true`. Yalnızca `transition` modunda geçerlidir:<br>• **`false`**: Geçişi anında senkron çalıştırır ve yeni durumu `into` alanına yazar.<br>• **`true`**: Geçişi arka plan işi (`WorkflowJobs`) olarak kuyruğa alır ve mevcut akışı bekletmeden devam eder (`into` içinde `"queued": true` döner). |
 | `all` | `boolean` | `false` (varsayılan) \| `true`. `where` kullanıldığında eşleşen **tüm** kayıtlarda geçişi/olayı tetikler. |
 | `input` *(veya `data`)* | `object` | Hedef geçişe veya olaya gönderilecek girdi verisi (`input`). |
@@ -1070,7 +1070,7 @@ Middt Platform, **Microsoft Agent Framework** (`Microsoft.Agents.AI`) üzerinde 
 
 ### 4.1. AI Ajanı Tanımlama (`Agents/*.json`)
 
-`demo/Middt.Demo.Api/Agents/risk-limit-underwriter.json` örneği:
+`demo/Middt.Demo.Workflows/Agents/risk-limit-underwriter.json` örneği:
 
 ```json
 {
@@ -1241,24 +1241,25 @@ Middt Platform'da iki yerde ifade kullanılır:
 
 ## 6. Bölüm 4: Sunucu Güdümlü Ekran Tasarımı (`Layouts/*.json`)
 
-Tüm ekranlar `demo/Middt.Demo.Api/Layouts/*.json` altında tanımlanır ve `spec/ui-layout.schema.json` şemasına göre doğrulanır.
+Tüm ekranlar `demo/Middt.Demo.Workflows/Layouts/*.json` altında tanımlanır ve `spec/ui-layout.schema.json` şemasına göre doğrulanır.
 
 ### 6.1. Ekran Bileşenleri (Widgets) Kataloğu
 
 | Widget | Amacı | Temel Özellikler |
 |---|---|---|
-| `section` | Başlıklı kart/bölüm kutusu | `title`, `visibleWhen`, `children` |
-| `columns` | Yan yana sütun yerleşimi | `widths` (ör. `[2, 1]`), `children` |
-| `fields` | Etiket–Değer (`dt`/`dd`) özet listesi | `items`: `[{ "label": "...", "value": "{{ ... }}", "format": "N2", "visibleWhen": "..." }]` |
-| `list` | Dizi (`JsonArray`) öğelerini tekrarlı listeleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `empty`, `children` (her öğe `row` değişkeniyle okunur) |
-| `alert` | Bilgi/Uyarı/Hata kutusu | `severity` (`info`, `success`, `warning`, `danger`), `text`, `visibleWhen` |
-| `badge` | Renkli durum etiketi | `color` (`primary`, `success`, `warning`, `danger`, `info`, `secondary`), `text` |
-| `text` | Paragraf veya başlık metni | `text`, `variant` (`body`, `lead`, `muted`, `code`) |
-| `action` | İş akışı geçişini tetikleyen buton | `transition` (geçiş `key`'i), `text`, `style`, `confirm` |
-| `kpi-row` | Sayfa üstü özet KPI sayaç kartları | `entity`, `cards`: `[{ "label": "...", "aggregate": "count\|sum\|avg", "field": "amount", "filter": { ... } }]` |
-| `grid` *(veya `data-grid`)* | Sunucu sayfalamalı, sıralamalı, aramalı tablo | `entity`, `pageSize`, `columns`, `search` (`visibleWhen`, `disabledWhen` destekli arama alanları), `form` (`visibleWhen`, `requiredWhen`, `disabledWhen` destekli CRUD form alanları) |
-| `crud-page` | KPI + Arama + Tablo birleşik yönetim ekranı | `title`, `entity`, `kpis`, `columns`, `fields` |
-| `layout` | Başka bir layout'u alt bileşen olarak gömme | `key` (ör. `{"widget": "layout", "key": "workflow-footer"}`) |
+| `heading` | Başlık (H1–H6) ve alt başlık | `text`, `level` (`1`–`6`), `subtitle`, `visibleWhen` |
+| `text` | Paragraf metni | `text`, `muted`, `visibleWhen` |
+| `section` | Başlıklı kart/bölüm kutusu | `title`, `subtitle`, `collapsible`, `collapsed`, `visibleWhen`, `children` |
+| `columns` | Yan yana sütun yerleşimi | `widths` (ör. `[2, 1]`), `visibleWhen`, `children` |
+| `divider` | Yatay ayırıcı çizgi | `visibleWhen` |
+| `fields` | Etiket–Değer (`dt`/`dd`) özet listesi | `columns` (`1`–`4`), `items`: `[{ "label": "...", "value": "{{ ... }}", "format": "N2", "badge": "success", "visibleWhen": "..." }]` |
+| `list` | Dizi (`JsonArray`) öğelerini tablo veya kart olarak listeleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `mode` (`table` \| `cards`), `columns`, `rowTransition` / `rowTransitions`, `children` (her öğe `row` değişkeniyle okunur) |
+| `alert` | Bilgi/Uyarı/Hata kutusu | `severity` (`info`, `success`, `warning`, `danger`), `title`, `text`, `visibleWhen` |
+| `badge` | Renkli durum etiketi | `variant` (`neutral`, `info`, `success`, `warning`, `danger`), `text`, `visibleWhen` |
+| `link` | Uygulama içi yönlendirme bağlantısı / butonu | `text`, `href` (`/` ile başlayan yerel adres), `variant` (`default`, `primary`, `outline`), `visibleWhen` |
+| `layout` | Başka bir `kind: "view"` layout'u alt bileşen olarak gömme | `key` (ör. `{"widget": "layout", "key": "workflow-footer"}`), `data` (isteğe bağlı alt nesne ifadesi) |
+| `grid` | Sunucu sayfalamalı, sıralamalı, aramalı veri tablosu | `entity`, `pageSize`, `defaultSort`, `columns`, `search` (`visibleWhen`, `disabledWhen` destekli arama alanları), `rowHref`, `createHref`, `form` (`visibleWhen`, `requiredWhen`, `disabledWhen` destekli CRUD form alanları) |
+| `record` | Tekil kayıt (`getbyid`) yükleyici kapsayıcı | `entity`, `id` (ör. `"{{ query.id }}"`), `notFoundText`, `children` (yüklenen kayıt `record` değişkeniyle okunur) |
 
 **Durum Görünümü (`view`) Örneği (`Layouts/risk-detail.json`)**:
 ```json
@@ -1394,7 +1395,7 @@ Platform, tasarlanan iş akışlarının güvenli yayımlanması ve işletilmesi
 - İş akışı `http` görevlerinden ve AI `http` araçlarından `http://mockoon:3000/api/v1/...` tam adresiyle çağrılır.
 - Mockoon Handlebars şablonlarını (`{{body 'amount' 0}}`, `{{urlParam 'entity'}}`, `{{faker 'string.alphanumeric' length=8 casing='upper'}}`, `{{now}}`) destekler.
 
-### 7.2. Başlangıç Verileri (`demo/Middt.Demo.Api/Seeds/initial-instances.json`)
+### 7.2. Başlangıç Verileri (`demo/Middt.Demo.Workflows/Seeds/initial-instances.json`)
 Uygulama ilk kez ayağa kalktığında listelerin boş gelmemesi için `Seeds/initial-instances.json` içine başlangıç kayıtları eklenir:
 ```json
 [
@@ -1420,7 +1421,7 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
 `routes` listesine `POST api/v1/budget/check` rotasını ekleyin (ör. `{"budgetStatus": "Uygun", "costCenterRef": "CC-2026-01"}`).
 
 ### Adım 2: AI Aracı ve Ajanını Oluştur (`Agents/Tools/` & `Agents/`)
-1. `demo/Middt.Demo.Api/Agents/Tools/verify-department-budget-http.json`:
+1. `demo/Middt.Demo.Workflows/Agents/Tools/verify-department-budget-http.json`:
 ```json
 {
   "name": "verify_department_budget_http",
@@ -1444,7 +1445,7 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
   }
 }
 ```
-2. `demo/Middt.Demo.Api/Agents/procurement-approver.json`:
+2. `demo/Middt.Demo.Workflows/Agents/procurement-approver.json`:
    - `tools`: `["verify_department_budget_http"]`
    - `outputSchema`: `decision`, `riskLevel`, `budgetStatus`, `summary`, `recommendation`.
 
@@ -1459,7 +1460,7 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
   - `rejected` (`type: "Finish"`, `subType: "Error"`, `view.layout: "purchase-detail"`).
 
 ### Adım 4: Durum Ekranını Tanımla (`Layouts/`)
-1. `demo/Middt.Demo.Api/Layouts/purchase-detail.json` dosyasını oluşturun (veya `/workflow-admin` içinden **"+ Yeni Ekran Oluştur & Tasarla"** butonuyla oluşturun; `data.*`, `instance.agents.*` ve `instance.toolCalls` alanlarını gösteren `section`, `fields`, `list` bileşenleriyle).
+1. `demo/Middt.Demo.Workflows/Layouts/purchase-detail.json` dosyasını oluşturun (veya `/workflow-admin` içinden **"+ Yeni Ekran Oluştur & Tasarla"** butonuyla oluşturun; `data.*`, `instance.agents.*` ve `instance.toolCalls` alanlarını gösteren `section`, `fields`, `list` bileşenleriyle).
 2. İş akışı `Workflows/purchase-request.json` olarak kaydedildiğinde sol menüdeki **İş Akışları** grubunun altında (`title` ve `icon` bilgileriyle) otomatik olarak görünür; ayrıca bir menü dosyası düzenlemenize gerek yoktur. (Bağımsız `kind: "page"` ekranlarının sol menüde görünmesi için ise layout JSON'una `"menu": { "title": "...", "icon": "...", "order": 10 }` eklenir.)
 
 ### Adım 5: Çalıştır ve Görüntüle

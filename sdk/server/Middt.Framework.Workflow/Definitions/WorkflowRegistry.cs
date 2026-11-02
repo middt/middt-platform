@@ -227,6 +227,186 @@ public sealed class WorkflowRegistry
         return CommitSaved(definition, preparedJson);
     }
 
+    /// <summary>
+    /// Validates, persists to the database, and registers one or more JSON workflow definitions at runtime.
+    /// Ensures PostgreSQL partitions and indexes are created for newly deployed flows.
+    /// </summary>
+    public async Task<IReadOnlyList<WorkflowSummaryModel>> DeployAsync(
+        IReadOnlyList<string> rawJsonDocuments,
+        string? deployedBy,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(rawJsonDocuments);
+        if (rawJsonDocuments.Count == 0)
+        {
+            throw new WorkflowValidationException(["At least one workflow definition JSON document is required."]);
+        }
+
+        var parsedItems = new List<(WorkflowDefinition Definition, JsonObject RawObj, string NormalizedJson)>();
+        var errors = new List<string>();
+
+        for (var i = 0; i < rawJsonDocuments.Count; i++)
+        {
+            var raw = rawJsonDocuments[i];
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                errors.Add($"Document[{i}]: empty workflow definition.");
+                continue;
+            }
+
+            try
+            {
+                var rawObj = JsonNode.Parse(raw, documentOptions: new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true,
+                }) as JsonObject;
+                var definition = JsonSerializer.Deserialize<WorkflowDefinition>(raw, WorkflowJson.Options);
+                if (definition is null || rawObj is null || string.IsNullOrWhiteSpace(definition.Key))
+                {
+                    errors.Add($"Document[{i}]: 'key' is required.");
+                    continue;
+                }
+
+                if (definition.Version < 1)
+                {
+                    definition.Version = 1;
+                    rawObj["version"] = 1;
+                }
+
+                parsedItems.Add((definition, rawObj, rawObj.ToJsonString()));
+            }
+            catch (JsonException ex)
+            {
+                errors.Add($"Document[{i}]: {ex.Message}");
+            }
+        }
+
+        if (errors.Count > 0)
+        {
+            throw new WorkflowValidationException(errors);
+        }
+
+        Dictionary<string, SortedList<int, WorkflowDefinition>> candidateMap;
+        lock (sync)
+        {
+            var current = Definitions;
+            candidateMap = new Dictionary<string, SortedList<int, WorkflowDefinition>>(StringComparer.Ordinal);
+            foreach (var (k, v) in current)
+            {
+                var copy = new SortedList<int, WorkflowDefinition>();
+                foreach (var (ver, def) in v)
+                {
+                    copy[ver] = def;
+                }
+
+                candidateMap[k] = copy;
+            }
+
+            foreach (var (def, _, _) in parsedItems)
+            {
+                if (!candidateMap.TryGetValue(def.Key, out var versions))
+                {
+                    versions = [];
+                    candidateMap[def.Key] = versions;
+                }
+
+                versions[def.Version] = def;
+            }
+        }
+
+        using (var validationScope = services.CreateScope())
+        {
+            foreach (var (def, _, _) in parsedItems)
+            {
+                errors.AddRange(
+                    WorkflowDefinitionValidator.Validate(
+                        def,
+                        expressions,
+                        tasks,
+                        validationScope.ServiceProvider,
+                        key => candidateMap.ContainsKey(key))
+                    .Select(e => $"{def.Key} v{def.Version}: {e}"));
+            }
+        }
+
+        if (errors.Count > 0)
+        {
+            throw new WorkflowValidationException(errors);
+        }
+
+        await using (var dbScope = services.CreateAsyncScope())
+        {
+            var db = dbScope.ServiceProvider.GetService<Persistence.WorkflowDbContext>();
+            if (db is not null)
+            {
+                var now = DateTime.UtcNow;
+                foreach (var (def, _, normalizedJson) in parsedItems)
+                {
+                    var existing = await db.Definitions
+                        .FirstOrDefaultAsync(d => d.Key == def.Key && d.Version == def.Version, cancellationToken);
+                    if (existing is null)
+                    {
+                        db.Definitions.Add(new Persistence.WorkflowDefinitionRecord
+                        {
+                            Key = def.Key,
+                            Version = def.Version,
+                            Title = string.IsNullOrWhiteSpace(def.Title) ? def.Key : def.Title,
+                            Content = normalizedJson,
+                            UpdatedBy = deployedBy,
+                            UpdatedAt = now,
+                        });
+                    }
+                    else
+                    {
+                        existing.Title = string.IsNullOrWhiteSpace(def.Title) ? def.Key : def.Title;
+                        existing.Content = normalizedJson;
+                        existing.UpdatedBy = deployedBy;
+                        existing.UpdatedAt = now;
+                    }
+                }
+
+                await db.SaveChangesAsync(cancellationToken);
+            }
+        }
+
+        lock (sync)
+        {
+            foreach (var (def, rawObj, _) in parsedItems)
+            {
+                runtimeDefinitions[(def.Key, def.Version)] = (def, (JsonObject)rawObj.DeepClone());
+            }
+
+            var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
+            rawJsonByVersion = rawMap;
+            currentDefinitions = loaded;
+        }
+
+        await using (var partitionScope = services.CreateAsyncScope())
+        {
+            var db = partitionScope.ServiceProvider.GetService<Persistence.WorkflowDbContext>();
+            if (db is not null && options.Value.AutoCreateSchema)
+            {
+                await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(
+                    db,
+                    this,
+                    options.Value.Schema,
+                    logger: null,
+                    cancellationToken);
+            }
+        }
+
+        return parsedItems
+            .Select(x => new WorkflowSummaryModel
+            {
+                Key = x.Definition.Key,
+                Version = x.Definition.Version,
+                Title = x.Definition.Title,
+                Icon = x.Definition.Icon,
+            })
+            .ToList();
+    }
+
     private void SyncPersistedDefinitions(string? key = null)
     {
         try
@@ -238,7 +418,9 @@ public sealed class WorkflowRegistry
                 return;
             }
 
-            IQueryable<Persistence.WorkflowDefinitionRecord> query = db.Definitions.AsNoTracking();
+            IQueryable<Persistence.WorkflowDefinitionRecord> query = db.Definitions
+                .AsNoTracking()
+                .Where(d => !d.Key.StartsWith("__"));
             if (!string.IsNullOrEmpty(key))
             {
                 query = query.Where(d => d.Key == key);
@@ -248,6 +430,7 @@ public sealed class WorkflowRegistry
                 .OrderBy(d => d.Version)
                 .ToList();
 
+            var pending = new List<string>();
             foreach (var row in rows)
             {
                 bool alreadyLoaded;
@@ -258,8 +441,13 @@ public sealed class WorkflowRegistry
 
                 if (!alreadyLoaded)
                 {
-                    RestorePersistedDefinition(row.Content);
+                    pending.Add(row.Content);
                 }
+            }
+
+            if (pending.Count > 0)
+            {
+                RestorePersistedDefinitions(pending);
             }
         }
         catch
@@ -269,37 +457,53 @@ public sealed class WorkflowRegistry
     }
 
     /// <summary>Restores a persisted workflow definition loaded from <c>wf.WorkflowDefinitions</c> on startup.</summary>
-    internal void RestorePersistedDefinition(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return;
-        }
+    internal void RestorePersistedDefinition(string json) => RestorePersistedDefinitions([json]);
 
+    /// <summary>Restores persisted workflow definitions in a batch so cross-workflow subflow references validate together.</summary>
+    internal void RestorePersistedDefinitions(IEnumerable<string> jsons)
+    {
         try
         {
-            if (JsonNode.Parse(json) is not JsonObject rawObj)
-            {
-                return;
-            }
-
-            var definition = rawObj.Deserialize<WorkflowDefinition>(WorkflowJson.Options);
-            if (definition is null || string.IsNullOrWhiteSpace(definition.Key))
-            {
-                return;
-            }
-
-            if (definition.Version < 1)
-            {
-                definition.Version = 1;
-            }
-
             lock (sync)
             {
-                runtimeDefinitions[(definition.Key, definition.Version)] = (definition, rawObj);
-                var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
-                rawJsonByVersion = rawMap;
-                currentDefinitions = loaded;
+                var anyAdded = false;
+                foreach (var json in jsons)
+                {
+                    if (string.IsNullOrWhiteSpace(json))
+                    {
+                        continue;
+                    }
+
+                    if (JsonNode.Parse(json, documentOptions: new JsonDocumentOptions
+                    {
+                        CommentHandling = JsonCommentHandling.Skip,
+                        AllowTrailingCommas = true,
+                    }) is not JsonObject rawObj)
+                    {
+                        continue;
+                    }
+
+                    var definition = rawObj.Deserialize<WorkflowDefinition>(WorkflowJson.Options);
+                    if (definition is null || string.IsNullOrWhiteSpace(definition.Key) || definition.Key.StartsWith("__", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (definition.Version < 1)
+                    {
+                        definition.Version = 1;
+                    }
+
+                    runtimeDefinitions[(definition.Key, definition.Version)] = (definition, rawObj);
+                    anyAdded = true;
+                }
+
+                if (anyAdded)
+                {
+                    var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
+                    rawJsonByVersion = rawMap;
+                    currentDefinitions = loaded;
+                }
             }
         }
         catch

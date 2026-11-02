@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <UserSecretsId>fdef3700-fe48-43e5-9f52-498750917b24</UserSecretsId>
-    <ContainerRepository>middt-demo-api</ContainerRepository>
+    <ContainerRepository>middt-workflow-runtime</ContainerRepository>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,11 +22,5 @@
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Ui.Server\Middt.Framework.Ui.Server.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Update="Agents\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Update="Workflows\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Update="Layouts\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Update="Seeds\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-  </ItemGroup>
-
 </Project>
+

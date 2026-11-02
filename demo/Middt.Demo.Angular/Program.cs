@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Middt.Framework.Bff.DependencyInjection;
 
 // Backend-for-frontend of the Angular demo (../angular-app): serves the SPA, the login/logout pages
-// and proxies /api to Middt.Demo.Api with the session's token – the browser never sees a token.
+// and proxies /api to Middt.Workflow.Runtime with the session's token – the browser never sees a token.
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, WebRootPath = SpaWebRoot() });
 
 // Own cookie name: the Blazor sample runs on the same host (cookies are not separated by port).

@@ -71,6 +71,25 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<WorkflowValidationResultModel>.Success(result, 1);
         }).WithName("ValidateWorkflowDefinition");
 
+        group.MapPost("definitions", async (JsonNode? body, WorkflowRegistry registry, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var user = WorkflowUser.From(principal);
+            if (requireAuthorization && !user.IsInRole("ui-admin") && !user.IsInRole("idp-admin"))
+            {
+                throw new WorkflowForbiddenException("Deploying workflow definitions requires the 'ui-admin' or 'idp-admin' role.");
+            }
+
+            var rawDocs = body switch
+            {
+                JsonArray arr => arr.Where(n => n is not null).Select(n => n!.ToJsonString()).ToList(),
+                JsonObject obj => [obj.ToJsonString()],
+                _ => throw new WorkflowValidationException(["Request body must be a workflow definition JSON object or an array of workflow definition objects."]),
+            };
+
+            var deployed = await registry.DeployAsync(rawDocs, user.Id, ct);
+            return BaseResponseDataModel<List<WorkflowSummaryModel>>.Success([.. deployed], deployed.Count);
+        }).WithName("DeployWorkflowDefinitions");
+
         group.MapGet("{workflow}/definition", (string workflow, int? version, WorkflowRegistry registry, ClaimsPrincipal principal) =>
         {
             var definition = version is { } v ? registry.Get(workflow, v) : registry.GetLatest(workflow);

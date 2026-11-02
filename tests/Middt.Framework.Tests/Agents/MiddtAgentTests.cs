@@ -350,9 +350,9 @@ public sealed class MiddtAgentTests
     public async Task Demo_invoice_collection_executes_ai_risk_audit_and_renders_in_invoice_detail_layout()
     {
         var ct = TestContext.Current.CancellationToken;
-        var workflowsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Workflows");
-        var agentsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Agents");
-        var layoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Layouts", "invoice-detail.json");
+        var workflowsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Workflows");
+        var agentsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Agents");
+        var layoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Layouts", "invoice-detail.json");
         var workflowDefinitions = Directory.GetFiles(workflowsDir, "*.json").Select(File.ReadAllText).ToArray();
 
         await using var host = await WorkflowTestHost.StartAsync(
@@ -534,7 +534,7 @@ public sealed class MiddtAgentTests
         }
         """;
 
-        var agentsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Agents");
+        var agentsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Agents");
         await using var host = await WorkflowTestHost.StartAsync(
             [definition],
             services: s => s.AddMiddtAgents(configure: a => a.AddAgentsFromDirectory(agentsDir)));
@@ -562,10 +562,10 @@ public sealed class MiddtAgentTests
     public async Task Demo_ai_dispute_resolution_workflow_routes_auto_refund_specialist_review_and_fraud_via_agent_tools_and_mcp()
     {
         var ct = TestContext.Current.CancellationToken;
-        var workflowsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Workflows");
-        var agentsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Agents");
-        var detailLayoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Layouts", "ai-dispute-detail.json");
-        var resultLayoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Layouts", "ai-dispute-result.json");
+        var workflowsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Workflows");
+        var agentsDir = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Agents");
+        var detailLayoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Layouts", "ai-dispute-detail.json");
+        var resultLayoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Layouts", "ai-dispute-result.json");
         var workflowDefinitions = Directory.GetFiles(workflowsDir, "*.json").Select(File.ReadAllText).ToArray();
 
         await using var host = await WorkflowTestHost.StartAsync(

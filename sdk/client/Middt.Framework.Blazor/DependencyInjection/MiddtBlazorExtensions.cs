@@ -120,6 +120,10 @@ public static class MiddtBlazorExtensions
         app.MapRazorPages().WithStaticAssets();
         app.MapBlazorHub();
         app.MapHealthChecks("/health");
+        app.MapHealthChecks("/alive", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+        {
+            Predicate = r => r.Tags.Contains("live"),
+        });
         app.MapFallbackToPage(hostPage);
 
         return app;

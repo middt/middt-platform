@@ -21,7 +21,7 @@ services:
       dockerfile: demo/Middt.Demo.Blazor/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ApiSettings__URL: http://middt-sample-api:8080
+      ApiSettings__URL: http://middt-workflow-runtime:8080
       ConnectionStrings__redis: redis:6379
       # Sign-in at the identity provider: browsers are redirected to localhost:8083 (= the issuer), server-to-server
       # calls (discovery, token, revocation) go to the container directly.
@@ -36,8 +36,10 @@ services:
         # Fixed address: the API trusts X-Forwarded-For only from the two BFFs (see ForwardedHeaders__KnownProxies).
         ipv4_address: 172.29.0.250
     depends_on:
-      middt-sample-api:
+      middt-workflow-runtime:
         condition: service_started
+      middt-demo-workflows:
+        condition: service_completed_successfully
       middt-identity:
         condition: service_started
       redis:
@@ -49,7 +51,7 @@ services:
       dockerfile: demo/Middt.Demo.Angular/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ApiSettings__URL: http://middt-sample-api:8080
+      ApiSettings__URL: http://middt-workflow-runtime:8080
       ConnectionStrings__redis: redis:6379
       # Sign-in at the identity provider: browsers are redirected to localhost:8083 (= the issuer), server-to-server
       # calls (discovery, token, revocation) go to the container directly.
@@ -63,17 +65,20 @@ services:
       backend:
         ipv4_address: 172.29.0.251
     depends_on:
-      middt-sample-api:
+      middt-workflow-runtime:
         condition: service_started
+      middt-demo-workflows:
+        condition: service_completed_successfully
       middt-identity:
         condition: service_started
       redis:
         condition: service_healthy
 
-  middt-sample-api:
+  # Standalone Workflow, AI Agent & Server-Driven UI Runtime (zero domain flows/layouts baked in; accepts deployments via HTTP).
+  middt-workflow-runtime:
     build:
       context: .
-      dockerfile: demo/Middt.Demo.Api/Dockerfile
+      dockerfile: runtime/Middt.Workflow.Runtime/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__WorkflowDb: "Host=db_server;Port=5432;Database=middt_workflow;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD (see .env.example)}"
@@ -87,7 +92,7 @@ services:
       # (the per-IP login rate limiter depends on it).
       ForwardedHeaders__KnownProxies__0: 172.29.0.250
       ForwardedHeaders__KnownProxies__1: 172.29.0.251
-      OTEL_SERVICE_NAME: middt-sample-api
+      OTEL_SERVICE_NAME: middt-workflow-runtime
       OTEL_EXPORTER_OTLP_ENDPOINT: *otlp-endpoint
       OTEL_EXPORTER_OTLP_PROTOCOL: *otlp-protocol
       OTEL_EXPORTER_OTLP_HEADERS: *otlp-headers
@@ -96,7 +101,7 @@ services:
       AgentSettings__Endpoint: ${AGENT_ENDPOINT:-https://api.deepseek.com/v1}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes:
-      - ./demo/Middt.Demo.Api/appsettings.Local.json:/app/appsettings.Local.json:ro
+      - ./runtime/Middt.Workflow.Runtime/appsettings.Local.json:/app/appsettings.Local.json:ro
     ports:
       # Local tooling only (Scalar, curl); browsers go through the BFFs.
       - "127.0.0.1:8180:8080"
@@ -111,6 +116,25 @@ services:
       openobserve:
         condition: service_started
       mockoon:
+        condition: service_started
+
+  # One-shot deployer that loads demo/Middt.Demo.Workflows/{Agents,Workflows,Layouts,Seeds}/*.json into middt-workflow-runtime over HTTP.
+  middt-demo-workflows:
+    build:
+      context: .
+      dockerfile: demo/Middt.Demo.Workflows/Dockerfile
+    environment:
+      Runtime__Url: http://middt-workflow-runtime:8080
+      Identity__Url: http://middt-identity:8080
+      Identity__ClientId: middt-blazor
+      Identity__ClientSecret: *blazor-client-secret
+      Identity__Username: test@test.com
+      Identity__Password: test
+    networks: [backend]
+    depends_on:
+      middt-workflow-runtime:
+        condition: service_started
+      middt-identity:
         condition: service_started
 
   # Middt Identity (identity/Middt.Identity) – the OAuth 2.0 / OpenID Connect server, configured by

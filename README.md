@@ -34,8 +34,8 @@ Sign-in, registration, password reset and authenticator enrollment run as workfl
 
 ### Repository layout
 
-The repository has two main folders: **`sdk/`** (the framework packages, split into `shared`, `server` and `client`) and
-**`demo/`** (the 100% backend-driven JSON demo).
+The repository is organized into **`sdk/`** (the framework packages, split into `shared`, `server` and `client`),
+**`runtime/`** (the standalone workflow, AI agent & JSON UI runtime container), **`identity/`** (the OAuth 2.0 / OIDC service), and **`demo/`** (the 100% backend-driven JSON demo and HTTP deployer).
 
 ```
 sdk/                              the framework (NuGet / npm packages)
@@ -48,8 +48,9 @@ sdk/                              the framework (NuGet / npm packages)
     ui-core/                      @middt/ui-core – TypeScript contract, expressions, API clients
     angular/                      @middt/angular – Angular frontend (library workspace)
 identity/Middt.Identity           the OAuth 2.0 / OpenID Connect server: one ready to run service (+ Journeys/, Seeds/identity.json)
+runtime/Middt.Workflow.Runtime    standalone workflow, AI agent & server-driven JSON UI runtime image (zero domain flows/layouts; accepts HTTP deployment)
 demo/                             the 100% backend-driven JSON demo
-  Middt.Demo.Api                  API (+ Layouts/, Workflows/, Agents/, Seeds/ seeds)
+  Middt.Demo.Workflows            Layouts/, Workflows/, Agents/, Seeds/ + HTTP flow/layout/agent deployer
   Middt.Demo.Blazor               Blazor Server demo
   Middt.Demo.Angular              Angular BFF host
   angular-app/                    Angular demo SPA using @middt/angular as a package
@@ -137,7 +138,7 @@ builder.Services.AddMiddtWorkflow(o =>
 app.MapMiddtWorkflows("api/workflows");                     // REST API (authorized)
 ```
 
-A definition ([full example](demo/Middt.Demo.Api/Workflows/customer-onboarding.json)):
+A definition ([full example](demo/Middt.Demo.Workflows/Workflows/customer-onboarding.json)):
 
 ```jsonc
 {
@@ -166,7 +167,7 @@ A definition ([full example](demo/Middt.Demo.Api/Workflows/customer-onboarding.j
 |---|---|
 | States | `Initial`, `Intermediate`, `Finish`, `SubFlow`; sub types `Human`, `Success`, `Error`, `Cancelled`, `Timeout` |
 | Transitions | `Manual` (API, `roles`, optional availability `rule`, declarative `style` and `icon`), `Automatic` (`rule`, one `default` else-branch, chained), `Scheduled` (`after`), `Event` (`event` name; triggered by a message, see [Messages](#messages-event-transitions)), shared transitions (`availableIn`), `$self` (data update), workflow `timeout` |
-| Wizards | `step` numbers on states (progress indicator), `"view": { "inline": true }` on transitions (step form rendered inside the screen, pre-filled from `input.into` when a step is revisited), manual transitions with a `rule` (availability condition, e.g. one "Back" per branch); see [credit-allocation.json](demo/Middt.Demo.Api/Workflows/credit-allocation.json) |
+| Wizards | `step` numbers on states (progress indicator), `"view": { "inline": true }` on transitions (step form rendered inside the screen, pre-filled from `input.into` when a step is revisited), manual transitions with a `rule` (availability condition, e.g. one "Back" per branch); see [credit-allocation.json](demo/Middt.Demo.Workflows/Workflows/credit-allocation.json) |
 | Input | JSON Schema subset (`type`, `properties`, `required`, `additionalProperties`, `enum`, `const`, min/max, lengths, `pattern`, `format`, `items`); optional `input.rule` expression validated against `input` + `data` before execution; the body is only written when the transition declares an `input.schema` (`into` path; `into: "items[]"` appends the validated object to a JSON array), or – with `"format": "jsonPatch"` – the body is a JSON Patch on the data at `into` (see [JSON Patch](#updating-data-with-a-json-patch-inputformat-jsonpatch)); `set` computes values (an input without schema ignores the body, and paths like `items[-1].paidAt` target the last element of an array). UI & reactive rules on schema properties: `"visibleWhen"` (or `"x-visibleWhen"`), `"requiredWhen"` (or `"x-requiredWhen"`), and `"disabledWhen"` (or `"x-disabledWhen"`) evaluate portable expressions against live form values (`ui.<field>`), persisted instance data (`data.<field>`, falling back to `ui` on start), and the caller's `user` (enforced both in the UI before submit and by `JsonSchemaValidator` on the server: hidden fields are stripped from the input, conditional requiredness is validated unless hidden or disabled, and modifications to disabled fields are rejected); `"x-lookup": { "entity": "CustomerOnboarding", "valueField": "key", "textField": "fullName" }` renders a select whose options come from `api/v{version}/{entity}/getall` (capped at `200` items), and `"x-enumFrom": "partialPayment.reference"` populates `enum` and `default` dynamically from an array in the instance's `data` |
 | Tasks | `onEntry`, `onExit`, `onExecute`; general `set`, `setKey` (gives the instance its business key once it is known, e.g. `CUST-{{ data.identityNumber }}`), `log`, `http` (templated, host placeholders forbidden, values URL-encoded; supports `into` for full response or `select` / `output` field array/mapping object to write only selected response fields), `publish` (`IWorkflowMessagePublisher`, e.g. Rebus), `startWorkflow`, `loadWorkflow` (with `select` field array/mapping), `queryWorkflow` (with `select` and `aggregate`), `updateWorkflow`, `triggerWorkflow`, `fanOut`, `cache`, `operation` (dispatches an explicitly allowed application operation), `agent` (Microsoft Agent Framework single/multi-agent execution with tool calls, `outputSchema`, `allowedTransitions` / `transitionInto`, and `toolCallsInto`), and `mcp` (Model Context Protocol `callTool`, `listTools`, `readResource`, `listResources`, `getPrompt`); `when` condition; `"background": true` on a state's `onEntry` task runs it outside the instance lock (see [Long tasks](#long-tasks-background)) |
 | Errors | per task / workflow `onError`: `maxAttempts` + exponential `delay`, then `Fault` (incident, `retry` endpoint), `Continue` or `Transition` (rolls the failed step back, then runs the given transition) |
@@ -182,7 +183,7 @@ Task attempts use separate data snapshots. A failed attempt cannot leave partial
 Child cancellation, parent resumption and event delivery are written as jobs in the same commit as the state change. The engine tries them after commit for prompt results; the background processor handles work left by failures or restarts. Event delivery can repeat, so handlers should be idempotent. A job that still fails after 20 attempts is atomically removed and recorded as a workflow incident in a single database transaction for investigation; delivery is not guaranteed after that point.
 
 REST API (all responses use the `BaseResponseDataModel<T>` envelope; errors are ProblemDetails):
-`GET /api/workflows`, `GET /{workflow}`, `GET /{workflow}/definition`, `PUT /{workflow}/definition` (immutable versioning: bumps to `v2`, `v3`, … when a definition already exists so running instances keep their version), `GET /{workflow}/versions`, `GET /{workflow}/diff?fromVersion=1&toVersion=2` (structural + RFC 6902 JSON Patch diff), `POST /{workflow}/versions/{version}/rollback`, `POST /validate`, `GET /tasks`,
+`GET /api/workflows`, `POST /definitions` (batch deploy/seed definitions), `GET /{workflow}`, `GET /{workflow}/definition`, `PUT /{workflow}/definition` (immutable versioning: bumps to `v2`, `v3`, … when a definition already exists so running instances keep their version), `GET /{workflow}/versions`, `GET /{workflow}/diff?fromVersion=1&toVersion=2` (structural + RFC 6902 JSON Patch diff), `POST /{workflow}/versions/{version}/rollback`, `POST /validate`, `GET /tasks`,
 `POST /{workflow}/instances`, `GET /{workflow}/instances`,
 `GET /{workflow}/instances/{id}` (includes the caller's available transitions and their input schemas),
 `POST` or `PATCH /{workflow}/instances/{id}/transitions/{key}[?async=true]`, `GET …/history`, `GET …/incidents`, `POST …/retry` (re-validates transition `roles`, `denyRoles`, `$previousUser`, `rule`, `input.rule`, and `DataSchema` `x-roles`/`readOnly` guards; accepts an optional override body or JSON Patch array for `input.format: jsonPatch` with `application/json` or `application/json-patch+json`),
@@ -209,7 +210,7 @@ message and the first whose `rule` holds is taken – `input` is the message bod
 A message is correlated to one instance by its id or by the workflow's business key
 (`WorkflowEngine.DeliverMessageAsync(new WorkflowMessage { Name, Workflow, Key | InstanceId, Data, BufferFor }, user)` or the
 REST endpoints above). The sender needs read access to the instance and must satisfy the `roles` of at least one event
-transition for that message ([invoice-collection.json](demo/Middt.Demo.Api/Workflows/invoice-collection.json) is a
+transition for that message ([invoice-collection.json](demo/Middt.Demo.Workflows/Workflows/invoice-collection.json) is a
 complete example: full and partial payments, a late payment after the due date). When the instance cannot take the message now (busy, faulted, or in a state without a matching
 transition) it is rejected with 409 – or, with `BufferFor`, kept as a durable job and delivered as soon as the instance enters
 a state that waits for it; it is dropped when it expires. Event transitions are never offered as buttons.
@@ -224,7 +225,7 @@ automatic transitions run. The outcome is stored on the job before it is applied
 runs the task twice; a result that arrives after the instance left the state is discarded. A failure follows the task's
 `onError` (`Fault` → `retry` runs the task again, `Transition`, `Continue`). Background tasks are allowed in `onEntry` of
 non-finish, non-subflow states only, and not for `setKey`; they receive no transition `input`. Example: the `post-ledger`
-task of [invoice-collection.json](demo/Middt.Demo.Api/Workflows/invoice-collection.json).
+task of [invoice-collection.json](demo/Middt.Demo.Workflows/Workflows/invoice-collection.json).
 
 ### History modes (and how JSON Patch is used)
 
@@ -307,7 +308,7 @@ POST /api/workflows/invoice-collection/instances/{id}/transitions/update-billing
 
 - **Paths are relative to `into`**, which is required: the patch can only change the part of the data the transition
   owns (`data.billingContact` for an object schema, or an array like `data.partialPayment` when `schema.type` is `"array"`), never fields written by tasks or other transitions. `schema` is required too and
-  validates that part after the patch; if `input.rule` is also declared, it is evaluated against the patched `data` and rolls back with 409 if false (for example, `patch-payment` in [invoice-collection.json](demo/Middt.Demo.Api/Workflows/invoice-collection.json) validates `data.partialPayment.Sum("amount") <= data.total`).
+  validates that part after the patch; if `input.rule` is also declared, it is evaluated against the patched `data` and rolls back with 409 if false (for example, `patch-payment` in [invoice-collection.json](demo/Middt.Demo.Workflows/Workflows/invoice-collection.json) validates `data.partialPayment.Sum("amount") <= data.total`).
 - **Operations**: `add`, `remove`, `replace`, `move`, `copy`, `test`; array indexes (`/0`, `/1`, …) and `-` (append) work as in the RFC both on nested arrays and when `into` itself points to a root array.
   The patch is atomic – applied completely or not at all. An invalid operation or a result the schema rejects answers
   400, a failed `test` or `input.rule` 409 (an optimistic check: "only change the phone or remove the payment if it is still the one I saw"); either way the
@@ -332,12 +333,13 @@ POST /api/workflows/invoice-collection/instances/{id}/transitions/update-billing
 ```csharp
 builder.Services.AddMiddtAgents(builder.Configuration, a =>
 {
-    a.AddAgentsFromDirectory("Agents"); // loads Agents/*.json, Agents/Tools/*.json, Agents/McpServers/*.json
+    a.AddAgentsFromDirectory("Agents"); // optional local directory seed; or deploy at runtime via POST /api/agents/catalog
 });
+app.MapMiddtAgents(); // GET /api/agents, POST /api/agents/catalog
 ```
 
 - **Single & Multi-Agent Workflow Tasks (`task: "agent"` / `"aiAgent"`)**: Execute a single agent or a multi-agent orchestration (`mode: "sequential" | "concurrent" | "handoff"`) with structured `outputSchema` validation, session persistence (`session` / `sessionInto`), tool-call audit capture (`toolCallsInto`), and execution metadata (`metaInto`).
-- **AI-Driven Workflow Routing (`transitionInto`)**: `AiAgentTask` dynamically discovers the active workflow state's transitions from `WorkflowRegistry`, injects them into the agent's context (`allowedTransitions` and `stateTransitions`) and into `outputSchema.properties.nextTransition.enum`, validates the returned `nextTransition` against the state's available transitions, and writes it to `data.<transitionInto>` for automatic transition rules (see [ai-dispute-resolution.json](demo/Middt.Demo.Api/Workflows/ai-dispute-resolution.json) and [dispute-orchestrator.json](demo/Middt.Demo.Api/Agents/dispute-orchestrator.json)).
+- **AI-Driven Workflow Routing (`transitionInto`)**: `AiAgentTask` dynamically discovers the active workflow state's transitions from `WorkflowRegistry`, injects them into the agent's context (`allowedTransitions` and `stateTransitions`) and into `outputSchema.properties.nextTransition.enum`, validates the returned `nextTransition` against the state's available transitions, and writes it to `data.<transitionInto>` for automatic transition rules (see [ai-dispute-resolution.json](demo/Middt.Demo.Workflows/Workflows/ai-dispute-resolution.json) and [dispute-orchestrator.json](demo/Middt.Demo.Workflows/Agents/dispute-orchestrator.json)).
 - **Unified Declarative Tools & `IWorkflowTask` Bridge (`Agents/Tools/*.json`)**: Tools invoked by AI agents can run portable expressions (`kind: "expression"`), **any registered `IWorkflowTask`** from `WorkflowTaskRegistry` (`kind: "task"`, `"task": "set" | "cache" | "http" | "operation" | "publish" | "rabbitmq" | "loadWorkflow" | "startWorkflow"` with `into` and optional `writeToWorkflowData: true`), HTTP calls (`kind: "http"`, delegated to `HttpTask`), or MCP tools (`kind: "mcp"`). Active workflow context (`WorkflowTaskAmbientContext`) is automatically propagated so tools can read `data.*`, `args.*`, `input.*`, `instance.*`, and `user.*`.
 - **Model Context Protocol (`task: "mcp"` + `Agents/McpServers/*.json`)**: Call MCP tools (`callTool`), read resources (`readResource`), list tools/resources, or render prompt templates (`getPrompt`) against remote HTTP JSON-RPC 2.0 MCP servers or declarative in-process MCP servers (`banking-mcp.json`).
 - **Providers & Local Testing**: Supports `OpenAI`, `DeepSeek` (`AgentSettings:Provider = "DeepSeek"` / `DEEPSEEK_API_KEY`, or local git-ignored `appsettings.Local.json`), `Ollama`, custom `IChatClient`, and a zero-dependency deterministic `LocalAgentChatClient` fallback (`UseLocalFallback: true`).
@@ -418,8 +420,8 @@ HTML (`UiHtmlRenderer`), and Angular renders it with `@middt/angular` (on `@midd
   `integer`, `date`, `datetime`, `checkbox`, `select` (static `options` or a `lookup` entity) and `picker` (search
   dialog over a lookup entity).
 - **Reusable nested layouts (`"widget": "layout"`)**: Common UI blocks (such as `workflow-footer.json`, `customer-summary-card.json`, `risk-eval-card.json`) can be defined once as a `kind: "view"` layout and embedded inside any number of parent layouts via `{ "widget": "layout", "key": "workflow-footer", "data": "<optional-sub-object-expr>" }`. See [`docs/ai/backend-driven-json-ui.md`](docs/ai/backend-driven-json-ui.md).
-- **API**: `builder.Services.AddMiddtUi(o => o.UseDbContext(...).AddLayoutsFromDirectory("Layouts"))` and
-  `app.MapMiddtUi()`. Seed files are validated at startup (a broken file stops the app) and overwrite stored layouts
+- **API**: `builder.Services.AddMiddtUi(o => o.UseDbContext(...))` and
+  `app.MapMiddtUi()`. Layouts can be loaded from disk (`AddLayoutsFromDirectory("Layouts")`) or deployed over HTTP (`POST /api/ui/layouts/seed`), which validates all files and overwrites stored layouts
   only when their `version` is higher, so runtime edits survive restarts. Reads are open to authenticated users
   (filtered by the layout's `roles`); `PUT/DELETE/validate/revisions` need `MiddtUiOptions.AdminRole` (`ui-admin`).
   `PUT` carries the version it is based on (0 = new) – a stale save gets 409; every change keeps a revision.
@@ -433,7 +435,7 @@ HTML (`UiHtmlRenderer`), and Angular renders it with `@middt/angular` (on `@midd
 - **Custom widgets**: register the spec in the API – `o.AddWidget(spec, html)` (optional static HTML) – and an
   implementation in each frontend: `AddMiddtUi(w => w.Add<MyWidget>(spec))` in Blazor, `provideMiddtUiWidgets({ name, component })` in Angular.
 
-All screens in `demo/Middt.Demo.Api/Layouts` (`customer-directory`, `credit-pipeline`, `order-monitor`, `kyc-review`, `credit-review`, `limit-revision-detail`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`, `customer-summary-card`, `risk-eval-card`, and `workflow-footer`) are 100% backend-driven JSON layouts.
+All screens in `demo/Middt.Demo.Workflows/Layouts` (`customer-directory`, `credit-pipeline`, `order-monitor`, `kyc-review`, `credit-review`, `limit-revision-detail`, `order-review`, `order-result`, `order-escalated`, `risk-detail`, `invoice-detail`, `invoice-result`, `ai-dispute-detail`, `ai-dispute-result`, `customer-summary-card`, `risk-eval-card`, and `workflow-footer`) are 100% backend-driven JSON layouts.
 
 ## Messaging (Rebus)
 
@@ -547,7 +549,7 @@ token reuse; personal data is kept out of logs; vulnerable transitive packages a
 
 ## Running the sample
 
-The demo (`demo/`) runs on PostgreSQL (`middt_workflow` + `middt_identity`), Redis, RabbitMQ (Rebus), the OAuth 2.0 / OpenID Connect identity provider, the API, the Blazor UI and the Angular UI. Both UIs sign in at the identity provider (authorization code + PKCE through their BFF) and the API accepts its access tokens.
+The demo (`demo/`) runs on PostgreSQL (`middt_workflow` + `middt_identity`), Redis, RabbitMQ (Rebus), the OAuth 2.0 / OpenID Connect identity provider (`identity/Middt.Identity`), the standalone workflow & JSON UI runtime (`runtime/Middt.Workflow.Runtime`), the one-shot flow/layout/agent deployer (`demo/Middt.Demo.Workflows`), the Blazor UI (`demo/Middt.Demo.Blazor`) and the Angular UI (`demo/Middt.Demo.Angular`). Both UIs sign in at the identity provider (authorization code + PKCE through their BFF) and the runtime accepts its access tokens.
 
 **With Docker Compose:**
 

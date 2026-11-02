@@ -5,11 +5,11 @@ using Microsoft.AspNetCore.Mvc;
 using Middt.Framework.Common.Model.Data;
 using Middt.Framework.Workflow.Runtime;
 
-namespace Middt.Demo.Api.Controllers;
+namespace Middt.Workflow.Runtime.Controllers;
 
 /// <summary>
 /// Exposes workflow instances' JSON <c>Data</c> over the standard <c>api/v1/{entity}/getall|getitems|getbyid</c> contract so
-/// Server-Driven UI layouts (<c>data-grid</c>, <c>kpi-row</c>, <c>crud-page</c>) and <c>x-lookup</c> selects operate directly on
+/// Server-Driven UI layouts (<c>grid</c>, <c>record</c>, <c>layout</c>) and <c>x-lookup</c> selects operate directly on
 /// <c>WorkflowDbContext</c> JSON documents without separate relational domain tables.
 /// </summary>
 [ApiController]

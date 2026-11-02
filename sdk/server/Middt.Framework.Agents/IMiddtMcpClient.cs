@@ -14,6 +14,9 @@ public interface IMiddtMcpClient
     /// <summary>Looks up a registered <see cref="McpServerDefinition"/> by name (case-insensitive).</summary>
     McpServerDefinition? GetServer(string serverName);
 
+    /// <summary>Registers or replaces an <see cref="McpServerDefinition"/> at runtime.</summary>
+    void RegisterServer(McpServerDefinition server);
+
     /// <summary>Lists the tools exposed by the specified MCP server (<c>tools/list</c>).</summary>
     Task<JsonArray> ListToolsAsync(string serverName, CancellationToken cancellationToken = default);
 

@@ -1,12 +1,12 @@
 # İş Akışı Tabloları Bölümleme (Partitioning) ve İndeksleme Kılavuzu
 
-Bu belge, Middt Framework Workflow Engine içerisindeki tüm veritabanı tablolarının (`WorkflowInstances`, `WorkflowInstanceData`, `WorkflowHistory`, `WorkflowJobs`, `WorkflowIncidents`) PostgreSQL üzerinde **Declarative Partitioning (Flow Bazlı Liste Bölümleme)** ve **akışa özel indeksleme** stratejileriyle nasıl ölçeklendirileceğini, yapılandırılacağını ve optimize edileceğini açıklar.
+Bu belge, Middt Framework Workflow Engine içerisindeki tüm çalışma zamanı veritabanı tablolarının (`WorkflowInstances`, `WorkflowInstanceData`, `WorkflowHistory`, `WorkflowJobs`, `WorkflowIncidents`, `WorkflowAgentSessions`, `WorkflowAgentRuns`, `WorkflowAgentToolCalls`) PostgreSQL üzerinde **Declarative Partitioning (Flow Bazlı Liste Bölümleme)** ve **akışa özel indeksleme** stratejileriyle nasıl ölçeklendirileceğini, yapılandırılacağını ve optimize edileceğini açıklar.
 
 ---
 
 ## 1. Mimari Genel Bakış
 
-Middt Framework'te iş akışı motoru 5 ana tablodan oluşur ve tüm tablolar **`WorkflowKey`** etrafında birincil sınıf vatandaş olarak tasarlanmıştır:
+Middt Framework'te iş akışı motoru 8 bölümlenmiş (partitioned) çalışma zamanı tablosundan (ve akış/ajan tanımlarını tutan `WorkflowDefinitions` tablosundan) oluşur; çalışma zamanı tablolarının tamamı **`WorkflowKey`** etrafında birincil sınıf vatandaş olarak tasarlanmıştır:
 
 | Tablo | Sorumluluk | Anahtar (PK) | Partition Tipi | Büyüme Hızı |
 | :--- | :--- | :---: | :---: | :---: |
@@ -15,6 +15,9 @@ Middt Framework'te iş akışı motoru 5 ana tablodan oluşur ve tüm tablolar *
 | **`WorkflowHistory`** | Her geçişin audit kaydı. `history: full` modunda geçiş anındaki JSON snapshot (`Data`), `delta` modunda çoğunlukla yalnızca değişiklik (`Patch`, JSON Patch) ve arada snapshot'lar; `none` modunda satır yazılmaz | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Çok Hızlı (En büyük tablo) |
 | **`WorkflowJobs`** | Zamanlanmış geçişler, asenkron geçişler, zaman aşımları, bekletilen mesajlar (`Message`) ve arka plan görevleri (`Task`); PostgreSQL'de `FOR UPDATE SKIP LOCKED` ile alınır | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` / Queue | Dinamik (Geçici kuyruk) |
 | **`WorkflowIncidents`** | Akış sırasında oluşan hatalar, retry denemeleri ve incident kayıtları | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Düşük/Orta |
+| **`WorkflowAgentSessions`** | `agent` / `aiAgent` görevlerinin çok turlu konuşma oturumu durumları (`State` column `jsonb`) | `(InstanceId, SessionKey, WorkflowKey)` | `LIST (WorkflowKey)` | Orta |
+| **`WorkflowAgentRuns`** | Her AI ajan çalıştırmasının denetim kaydı (token kullanımı, süre, model, seçilen geçiş) | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Orta/Hızlı |
+| **`WorkflowAgentToolCalls`** | AI ajanların çağırdığı araçların (`expression`, `task`, `http`, `mcp`) girdi, sonuç ve süre kayıtları | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Hızlı |
 
 ### Neden Tüm Tablolarda Bileşik Anahtar: `(..., WorkflowKey)`?
 PostgreSQL kuralları gereği, bir tablo bölümlendiğinde (partitioned table):

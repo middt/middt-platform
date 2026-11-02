@@ -20,7 +20,7 @@ using Middt.Framework.Workflow.Tasks;
 namespace Middt.Framework.Tests.Workflow;
 
 /// <summary>
-/// Comprehensive integration tests for all 8 JSON-backed demo workflows (<c>demo/Middt.Demo.Api/Workflows</c>) and
+/// Comprehensive integration tests for all 8 JSON-backed demo workflows (<c>demo/Middt.Demo.Workflows/Workflows</c>) and
 /// <see cref="WorkflowInstanceDataQuery"/> operating purely on <c>WorkflowDbContext</c> JSON documents without relational domain tables.
 /// </summary>
 public sealed class SampleJsonWorkflowTests
@@ -51,7 +51,7 @@ public sealed class SampleJsonWorkflowTests
 
     private static string[] SampleWorkflowFiles()
     {
-        var path = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Workflows");
+        var path = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Workflows");
         return Directory.GetFiles(path, "*.json").Select(File.ReadAllText).ToArray();
     }
 
@@ -64,7 +64,7 @@ public sealed class SampleJsonWorkflowTests
             services: s =>
             {
                 s.AddMiddtAgents(
-                    configure: a => a.AddAgentsFromDirectory(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Agents")));
+                    configure: a => a.AddAgentsFromDirectory(Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Agents")));
 
                 if (publisher is not null)
                 {
@@ -635,7 +635,7 @@ public sealed class SampleJsonWorkflowTests
         escalated.State.Should().Be("escalated");
 
         // Verify order-escalated layout renders cleanly for sla-escalation without any '⚠' expression error
-        var layoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Layouts", "order-escalated.json");
+        var layoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Layouts", "order-escalated.json");
         var layout = UiJson.Parse(File.ReadAllText(layoutPath));
         var uiOptions = new MiddtUiOptions();
         var renderedHtml = new UiHtmlRenderer(uiOptions.Widgets, Options.Create(uiOptions)).Render(
@@ -1075,7 +1075,7 @@ public sealed class SampleJsonWorkflowTests
         updatedCustomer.Data["lastLimitRevisionKey"]!.GetValue<string>().Should().Be("REV-CUST-55555555555");
 
         // Verify limit-revision-detail layout renders cleanly without any '⚠' expression error
-        var layoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", "Layouts", "limit-revision-detail.json");
+        var layoutPath = Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", "Layouts", "limit-revision-detail.json");
         var layout = UiJson.Parse(await File.ReadAllTextAsync(layoutPath, ct));
         var uiOptions = new MiddtUiOptions();
         var renderedHtml = new UiHtmlRenderer(uiOptions.Widgets, Options.Create(uiOptions)).Render(

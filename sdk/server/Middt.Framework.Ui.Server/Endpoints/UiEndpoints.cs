@@ -92,6 +92,52 @@ public static class UiEndpoints
             BaseResponseDataModel<UiValidationResult>.Success(store.Validate(layout), 1))
             .WithName("ValidateUiLayout");
 
+        admin.MapPost("layouts/seed", async (JsonNode? body, UiLayoutStore store, CancellationToken ct) =>
+        {
+            var items = new List<UiLayoutDocument>();
+            try
+            {
+                if (body is JsonArray arr)
+                {
+                    foreach (var node in arr)
+                    {
+                        if (node is not null)
+                        {
+                            items.Add(UiJson.Parse(node.ToJsonString()));
+                        }
+                    }
+                }
+                else if (body is JsonObject obj)
+                {
+                    items.Add(UiJson.Parse(obj.ToJsonString()));
+                }
+                else
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "Body must be a layout JSON object or an array of layout objects.");
+                }
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "Invalid layout JSON.", detail: ex.Message);
+            }
+
+            var seeded = new List<string>();
+            try
+            {
+                foreach (var layout in items)
+                {
+                    await store.SeedAsync(layout, ct);
+                    seeded.Add(layout.Key);
+                }
+
+                return Results.Ok(BaseResponseDataModel<List<string>>.Success(seeded, seeded.Count));
+            }
+            catch (UiLayoutValidationException ex)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["layout"] = [.. ex.Errors] }, title: "The layout is invalid.");
+            }
+        }).WithName("SeedUiLayouts");
+
         admin.MapPut("layouts/{key}", async (string key, UiLayoutDocument layout, UiLayoutStore store, ClaimsPrincipal principal, CancellationToken ct) =>
         {
             if (!string.Equals(key, layout.Key, StringComparison.Ordinal))

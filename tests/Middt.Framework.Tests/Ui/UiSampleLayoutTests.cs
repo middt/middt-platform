@@ -34,7 +34,7 @@ public sealed class UiSampleLayoutTests
         return dir?.FullName ?? throw new InvalidOperationException("Repository root not found.");
     }
 
-    internal static string SampleDirectory(string name) => Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Api", name);
+    internal static string SampleDirectory(string name) => Path.Combine(RepositoryRoot(), "demo", "Middt.Demo.Workflows", name);
 
     private static string[] LayoutFiles() => Directory.GetFiles(SampleDirectory("Layouts"), "*.json");
 

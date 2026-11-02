@@ -2,13 +2,13 @@
 
 Every line-of-business workflow system faces a predictable database scaling bottleneck: workflow state tables grow unbounded, and instance payload data (`jsonb`) degrades index maintenance and cache hit rates when mixed into a single monolithic table.
 
-Middt Framework solves this by implementing **declarative list partitioning by `WorkflowKey`** across all 5 engine tables, combined with **automated schema-driven B-Tree and GIN indexing**.
+Middt Framework solves this by implementing **declarative list partitioning by `WorkflowKey`** across all 8 runtime tables (plus the unpartitioned `WorkflowDefinitions` catalog table), combined with **automated schema-driven B-Tree and GIN indexing**.
 
 ---
 
 ## 1. Partitioning architecture
 
-All 5 core workflow tables in PostgreSQL are partitioned by `LIST ("WorkflowKey")`:
+All 8 runtime workflow & AI agent tables in PostgreSQL are partitioned by `LIST ("WorkflowKey")`:
 
 | Root Table | Partition Key | PostgreSQL PK | SQLite PK |
 |---|---|---|---|
@@ -17,6 +17,9 @@ All 5 core workflow tables in PostgreSQL are partitioned by `LIST ("WorkflowKey"
 | `WorkflowJobs` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `("Id", "WorkflowKey")` |
 | `WorkflowHistory` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
 | `WorkflowIncidents` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
+| `WorkflowAgentSessions` | `"WorkflowKey"` | `("InstanceId", "SessionKey", "WorkflowKey")` | `("InstanceId", "SessionKey", "WorkflowKey")` |
+| `WorkflowAgentRuns` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
+| `WorkflowAgentToolCalls` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
 
 ### Partition-wise joins
 Because `WorkflowInstances` and `WorkflowInstanceData` share the exact same partition key (`WorkflowKey`) and composite key `(Id, WorkflowKey)`, PostgreSQL automatically enables **Partition-Wise Joins**:
@@ -38,13 +41,13 @@ The query planner completely bypasses cross-table shuffling and joins only `Work
 
 Developers and AI assistants do **not** need to manually write raw partition DDL migrations for each workflow. 
 
-When the API starts up:
-1. `WorkflowStartup` invokes `WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(...)`.
-2. The manager inspects all definitions loaded in `WorkflowRegistry` (from `demo/Middt.Demo.Api/Workflows/*.json`).
+When the runtime starts up or when definitions are deployed via `POST /api/workflows/definitions`:
+1. `WorkflowStartup` / `WorkflowEndpoints` invokes `WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(...)`.
+2. The manager inspects all definitions loaded in `WorkflowRegistry` (seeded or deployed from `demo/Middt.Demo.Workflows/Workflows/*.json`).
 3. For each workflow:
    - Computes PascalCase suffix via `WorkflowPartitionManager.PartitionSuffix(workflowKey)`.
      *(e.g., `order-approval` $\to$ `OrderApproval`, `bike-repair_v2` $\to$ `BikeRepairV2`)*
-   - Automatically executes `CREATE TABLE IF NOT EXISTS {schema}."{Table}_{Suffix}" PARTITION OF {schema}."{Table}" FOR VALUES IN ('{workflowKey}');` for all 5 tables.
+   - Automatically executes `CREATE TABLE IF NOT EXISTS {schema}."{Table}_{Suffix}" PARTITION OF {schema}."{Table}" FOR VALUES IN ('{workflowKey}');` for all 8 partitioned tables.
    - Creates a catch-all fallback `{Table}_Default` for untracked or dynamic definitions.
 4. **Inspects `dataSchema.properties` and `start.input.schema.properties`** from the JSON definition:
    - For every declared property, creates a dedicated, typed B-Tree functional index on that workflow's partition:
@@ -85,19 +88,22 @@ Always define the properties you anticipate querying, filtering, sorting, or joi
 ```
 
 ### What happens automatically:
-At next boot, the framework will create:
+At next boot or deployment, the framework will create:
 - `wf."WorkflowInstances_InvoiceProcessing"`
 - `wf."WorkflowInstanceData_InvoiceProcessing"`
 - `wf."WorkflowJobs_InvoiceProcessing"`
 - `wf."WorkflowHistory_InvoiceProcessing"`
 - `wf."WorkflowIncidents_InvoiceProcessing"`
+- `wf."WorkflowAgentSessions_InvoiceProcessing"`
+- `wf."WorkflowAgentRuns_InvoiceProcessing"`
+- `wf."WorkflowAgentToolCalls_InvoiceProcessing"`
 - Index `IX_Part_InvoiceProcessing_invoiceNumber` on `((data->>'invoiceNumber')::text)`
 - Index `IX_Part_InvoiceProcessing_vendorId` on `(((data->>'vendorId')::numeric))`
 - Index `IX_Part_InvoiceProcessing_totalAmount` on `(((data->>'totalAmount')::numeric))`
 - Index `IX_Part_InvoiceProcessing_isPriority` on `(((data->>'isPriority')::boolean))`
 
 ### Step 2: Querying indexed workflow fields
-When querying workflow instance data in custom endpoints, repositories, or `WorkflowView`:
+When querying workflow instance data in custom endpoints, repositories, or `WorkflowInstanceDataQuery`:
 - **Always include `WorkflowKey` in the query** to trigger partition pruning:
   ```csharp
   var results = await db.InstanceData
@@ -123,7 +129,7 @@ If a workflow requires compound indexes (e.g. `(vendorId, dueDate)` together):
        (((data->>'dueDate')::text))
    );
    ```
-2. Or declare an SQL view using `Middt.Framework.Workflow.View`:
+2. Or declare a custom PostgreSQL SQL view over the partition tables:
    ```sql
    CREATE OR REPLACE VIEW wf."v_InvoiceProcessing" AS
    SELECT 

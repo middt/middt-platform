@@ -37,7 +37,7 @@
     <ProjectReference Include="..\..\sdk\shared\Middt.Framework.Ui.Abstractions\Middt.Framework.Ui.Abstractions.csproj" />
     <ProjectReference Include="..\..\sdk\server\Middt.Framework.Ui.Server\Middt.Framework.Ui.Server.csproj" />
     <ProjectReference Include="..\..\identity\Middt.Identity\Middt.Identity.csproj" />
-    <ProjectReference Include="..\..\demo\Middt.Demo.Api\Middt.Demo.Api.csproj" />
+    <ProjectReference Include="..\..\runtime\Middt.Workflow.Runtime\Middt.Workflow.Runtime.csproj" />
   </ItemGroup>
 
   <ItemGroup>

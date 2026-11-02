@@ -6,7 +6,7 @@ using Middt.Framework.Ui.Server.Runtime;
 using Middt.Framework.Workflow.Expressions;
 using Middt.Framework.Workflow.Runtime;
 
-namespace Middt.Demo.Api;
+namespace Middt.Workflow.Runtime;
 
 /// <summary>Renders <c>view.layout</c> states with the UI module's static HTML renderer (<c>GET …/instances/{id}/view</c>, e-mails).</summary>
 public sealed class WorkflowLayoutRenderer(UiLayoutStore store, UiHtmlRenderer renderer) : IWorkflowViewRenderer

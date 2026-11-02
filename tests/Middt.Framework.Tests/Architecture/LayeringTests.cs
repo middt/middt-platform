@@ -40,8 +40,8 @@ public sealed class LayeringTests
         References(assembly).Should().NotContain(r => IsFrontend(r));
 
     [Fact]
-    public void Sample_api_backend_does_not_depend_on_client_or_blazor_web() =>
-        References("Middt.Demo.Api").Should().NotContain(r => IsClientOrBlazorWeb(r));
+    public void Workflow_runtime_does_not_depend_on_client_or_blazor_web() =>
+        References("Middt.Workflow.Runtime").Should().NotContain(r => IsClientOrBlazorWeb(r));
 
     private static bool IsClientOrBlazorWeb(string r) =>
         r is "Middt.Framework.Client" or "Middt.Framework.Bff" or "Middt.Framework.Blazor" or "Radzen.Blazor";

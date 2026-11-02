@@ -1,0 +1,195 @@
+[
+  {
+    "workflow": "customer-onboarding",
+    "data": {
+      "fullName": "Ahmet Yılmaz",
+      "identityNumber": "12345678901",
+      "email": "ahmet.yilmaz@ornek.com",
+      "phone": "05321234567",
+      "segment": "Bireysel",
+      "monthlyIncome": 85000
+    }
+  },
+  {
+    "workflow": "customer-onboarding",
+    "data": {
+      "fullName": "Anadolu Lojistik A.Ş.",
+      "identityNumber": "98765432109",
+      "email": "finans@anadolulojistik.com",
+      "phone": "02124440123",
+      "segment": "Kurumsal",
+      "taxOffice": "Büyük Mükellefler V.D.",
+      "monthlyIncome": 450000
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1001",
+      "customerName": "Ahmet Yılmaz",
+      "merchantName": "Bulut Market Dijital A.Ş.",
+      "transactionRef": "TRX-2026-4410",
+      "amount": 2450,
+      "category": "Mükerrer Çekim",
+      "reason": "Aynı alışveriş tutarı kartımdan iki kez çekildi."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1002",
+      "customerName": "Anadolu Lojistik A.Ş.",
+      "merchantName": "Global Elektronik A.Ş.",
+      "transactionRef": "TRX-2026-4411",
+      "amount": 14500,
+      "category": "Hizmet Alınamadı",
+      "reason": "Sipariş edilen sunucu ekipmanı teslim edilmedi."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1003",
+      "customerName": "Zeynep Kaya",
+      "merchantName": "Yurt Dışı Döviz Oyun Ltd.",
+      "transactionRef": "TRX-2026-4412",
+      "amount": 38000,
+      "category": "Yetkisiz İşlem",
+      "reason": "Gece yarısı bilgim dışında yüksek tutarlı yurt dışı harcaması yapılmış."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1004",
+      "customerName": "Ege Tekstil San. Tic. Ltd.",
+      "merchantName": "Anadolu Kargo Lojistik A.Ş.",
+      "transactionRef": "TRX-2026-4413",
+      "amount": 9800,
+      "category": "Hatalı Tutar",
+      "reason": "Sözleşmedeki indirimli tarife yerine liste fiyatından tahsilat yapılmış."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1005",
+      "customerName": "Marmara Gıda Dağıtım A.Ş.",
+      "merchantName": "Soğuk Zincir Ekipman A.Ş.",
+      "transactionRef": "TRX-2026-4414",
+      "amount": 18750,
+      "category": "Hizmet Alınamadı",
+      "reason": "Bakım anlaşması kapsamında taahhüt edilen servis hizmeti verilmedi."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1006",
+      "customerName": "Burak Demir",
+      "merchantName": "Kripto Döviz Borsa A.Ş.",
+      "transactionRef": "TRX-2026-4415",
+      "amount": 42500,
+      "category": "Yetkisiz İşlem",
+      "reason": "Farklı bir IP adresinden 3D onaysız ardışık çekim gerçekleştirilmiş."
+    }
+  },
+  {
+    "workflow": "ai-dispute-resolution",
+    "data": {
+      "disputeNo": "ITR-2026-1007",
+      "customerName": "Kuzey Yıldızı Denizcilik A.Ş.",
+      "merchantName": "Offshore Deniz Yakıt Ltd.",
+      "transactionRef": "TRX-2026-4416",
+      "amount": 64000,
+      "category": "Yetkisiz İşlem",
+      "reason": "Kurumsal kartımızdan yurt dışı limanda bilgimiz dışında işlem yapılmış."
+    }
+  },
+  {
+    "workflow": "risk-limit-eval",
+    "key": "RISK-2026-2001",
+    "data": {
+      "customerKey": "CUST-12345678901",
+      "amount": 250000,
+      "checkType": "Kredi Limit Analizi",
+      "requireUnderwriting": false
+    }
+  },
+  {
+    "workflow": "risk-limit-eval",
+    "key": "RISK-2026-2002",
+    "data": {
+      "customerKey": "CUST-98765432109",
+      "amount": 850000,
+      "checkType": "Kredi Limit Analizi",
+      "requireUnderwriting": true
+    }
+  },
+  {
+    "workflow": "risk-limit-eval",
+    "key": "RISK-2026-2003",
+    "data": {
+      "customerKey": "CUST-44556677889",
+      "amount": 1250000,
+      "checkType": "Kredi Tahsis Limit Kontrolü",
+      "requireUnderwriting": true
+    }
+  },
+  {
+    "workflow": "risk-limit-eval",
+    "key": "RISK-2026-2004",
+    "data": {
+      "customerKey": "CUST-55667788990",
+      "amount": 950000,
+      "checkType": "Limit & Uyum Kontrolü",
+      "requireUnderwriting": true
+    }
+  },
+  {
+    "workflow": "risk-limit-eval",
+    "key": "RISK-2026-2005",
+    "data": {
+      "customerKey": "CUST-77889900112",
+      "amount": 2100000,
+      "checkType": "Genel Risk Kontrolü",
+      "requireUnderwriting": true
+    }
+  },
+  {
+    "workflow": "invoice-collection",
+    "data": {
+      "invoiceNo": "FTR-2026-3001",
+      "customerName": "Anadolu Lojistik A.Ş.",
+      "total": 185000,
+      "description": "Kasım 2026 uluslararası navlun ve depolama hizmet bedeli"
+    }
+  },
+  {
+    "workflow": "invoice-collection",
+    "data": {
+      "invoiceNo": "FTR-2026-3002",
+      "customerName": "Global Elektronik A.Ş.",
+      "total": 92400,
+      "description": "Veri merkezi sunucu donanım bakım ve lisans faturası"
+    }
+  },
+  {
+    "workflow": "invoice-collection",
+    "data": {
+      "invoiceNo": "FTR-2026-3003",
+      "customerName": "Marmara Gıda Dağıtım A.Ş.",
+      "total": 340000,
+      "description": "Soğuk zincir frigofirik taşımacılık dönem sonu hakedişi"
+    }
+  },
+  {
+    "workflow": "commercial-limit-revision",
+    "data": {
+      "customerKey": "CUST-12345678901",
+      "requestedLimit": 1500000,
+      "revisionType": "Ek Limit Artırımı",
+      "justification": "Artan ihracat ve lojistik hacmi doğrultusunda ticari kredi limit artışı talebi."
+    }
+  }
+]

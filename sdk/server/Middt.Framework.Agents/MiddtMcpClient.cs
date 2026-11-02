@@ -27,7 +27,8 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
     private static readonly WorkflowExpressionEngine DefaultExpressions = new();
 
     private readonly IServiceProvider _services;
-    private readonly Dictionary<string, McpServerDefinition> _servers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, McpServerDefinition> _servers = new(StringComparer.OrdinalIgnoreCase);
+    private volatile bool _persistedChecked;
 
     public MiddtMcpClient(
         IServiceProvider services,
@@ -61,10 +62,41 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
         }
     }
 
-    public IReadOnlyCollection<McpServerDefinition> GetServers() => _servers.Values;
+    public IReadOnlyCollection<McpServerDefinition> GetServers()
+    {
+        EnsurePersistedLoaded();
+        return [.. _servers.Values];
+    }
 
-    public McpServerDefinition? GetServer(string serverName) =>
-        !string.IsNullOrWhiteSpace(serverName) && _servers.TryGetValue(serverName, out var s) ? s : null;
+    internal IReadOnlyCollection<McpServerDefinition> GetRegisteredServersSnapshot() => [.. _servers.Values];
+
+    public McpServerDefinition? GetServer(string serverName)
+    {
+        EnsurePersistedLoaded();
+        return !string.IsNullOrWhiteSpace(serverName) && _servers.TryGetValue(serverName, out var s) ? s : null;
+    }
+
+    private void EnsurePersistedLoaded()
+    {
+        if (_persistedChecked)
+        {
+            return;
+        }
+
+        _persistedChecked = true;
+        _ = _services.GetService<IMiddtAgentRegistry>()?.GetAllDefinitions();
+    }
+
+    public void RegisterServer(McpServerDefinition server)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+        if (string.IsNullOrWhiteSpace(server.Name))
+        {
+            throw new ArgumentException("McpServerDefinition.Name is required.", nameof(server));
+        }
+
+        _servers[server.Name] = server;
+    }
 
     public async Task<JsonArray> ListToolsAsync(string serverName, CancellationToken cancellationToken = default)
     {
