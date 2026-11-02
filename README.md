@@ -414,10 +414,10 @@ HTML (`UiHtmlRenderer`), and Angular renders it with `@middt/angular` (on `@midd
 | Widget | Purpose |
 |---|---|
 | `heading`, `text`, `alert`, `badge`, `divider`, `link` | Display widgets; text properties are `{{ }}` templates |
-| `stat` | KPI / metric card with `label`, `value` (`{{ }}` template), `format`, `delta` (`{{ }}` template), `trend` (`up` / `down` / `neutral`), `variant` (`neutral` / `info` / `success` / `warning` / `danger`), `icon`, and `subtitle` |
+| `stat` | KPI / metric card with `label`, `value` (`{{ }}` template), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `subtitle` (`{{ }}` template), `icon`, and `color` (`primary` / `secondary` / `success` / `warning` / `danger` / `info`) |
 | `fields` | Label/value list with formats (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`) |
-| `timeline` | Chronological process / activity timeline supporting static `items` (`[{ title, subtitle, timestamp, status, badge }]`) or a dynamic `source` array expression (`row` and `rowNumber` in scope, `status`: `completed` / `active` / `pending` / `error` / `warning` / `info`) |
-| `section`, `columns`, `tabs`, `list` | Containers (`tabs` renders its `children` as interactive switchable tabs using each child's `title` / `subtitle`; `list` repeats its children per array item as `row`) |
+| `timeline` | Chronological process / activity timeline supporting static `items` (`[{ title, subtitle, time, color, visibleWhen }]`) or a dynamic `source` array expression (`row` and `rowNumber` in scope with `title`, `subtitle`, `time`, `color`, `empty`) |
+| `section`, `columns`, `tabs`, `list` | Containers (`tabs` renders its `children` as interactive switchable tabs using `titles` or each child's `title`; `list` repeats its children per array item as `row`) |
 | `layout` *(reusable / interactive)* | Embeds another `kind: "view"` layout by `key` with optional `data` scope expression and `title` (max nesting depth 5) |
 | `grid` *(interactive)* | Server paged/sorted grid over a workflow (`entity`): search fields, fixed `filter`, row actions, create/edit/delete dialog |
 | `record` *(interactive)* | Loads one entity by `recordId` and renders its `children` with `record` in scope |

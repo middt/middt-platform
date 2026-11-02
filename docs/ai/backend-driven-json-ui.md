@@ -200,18 +200,18 @@ You can build reusable partial layouts (`kind: "view"`) and embed them inside an
 |---|---|---|---|
 | `section` | Container | `title`, `subtitle`, `children` | Titled card/panel grouping child widgets |
 | `columns` | Container | `widths: ["2", "1"]`, `children` | Responsive multi-column layout |
-| `tabs` | Container | `children` | Interactive tabbed container rendering each child (`section` etc.) as a switchable tab using its `title` and `subtitle` |
+| `tabs` | Container | `titles` (optional string array), `children` | Interactive tabbed container rendering each child (`section` etc.) as a switchable tab using `titles` or each child's `title` |
 | `list` | Container | `source` (array expression), `emptyText`, `rowTransition` / `rowTransitions` (`[{ key, text, icon, style, input }]`), `children` | Repeats `children` for each item in `source` as `row` with `rowNumber` (`1..N`) in scope across Blazor, Angular, and static HTML `UiHtmlRenderer` (and optionally renders one or more row-level workflow transition buttons when each `key` is in `AvailableTransitions`, including `{ "patch": [...] }` payloads for `input.format: "jsonPatch"`) |
 | `layout` | Container / Reusable | `key`, `data` (optional expression), `title` | Embeds another JSON layout by `key` with optional `data` scope |
 | `heading` | Display | `text`, `level` (`1`..`4`) | Section or page heading (`{{ }}` template) |
 | `text` | Display | `text`, `style` (`body`/`lead`/`muted`/`small`/`code`) | Paragraph or inline text (`{{ }}` template) |
-| `stat` | Display / KPI | `label`, `value` (`{{ }}` template), `format`, `delta` (`{{ }}` template), `trend` (`up`/`down`/`neutral`), `variant` (`neutral`/`info`/`success`/`warning`/`danger`), `icon`, `subtitle` | KPI / metric summary card |
+| `stat` | Display / KPI | `label`, `value` (`{{ }}` template), `format`, `subtitle` (`{{ }}` template), `icon`, `color` (`primary`/`secondary`/`success`/`warning`/`danger`/`info`) | KPI / metric summary card |
 | `alert` | Display | `severity` (`info`/`success`/`warning`/`danger`), `text` | Callout banner (`{{ }}` template) |
 | `badge` | Display | `text`, `color` (`neutral`/`info`/`success`/`warning`/`danger`) | Colored status pill |
 | `divider` | Display | – | Horizontal separator line |
 | `link` | Display | `text`, `href` (`{{ }}` template, validated by `UiUrl.IsSafe`), `style` (`link`/`button`) | Safe navigation link or action button |
 | `fields` | Display | `items: [{ label, value, format, visibleWhen }]` | Label/value definition list (`format`: `N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`) |
-| `timeline` | Display / Process | `title`, `source` (array expression) or `items` (`[{ title, subtitle, timestamp, status, badge }]`), `titleTemplate`, `subtitleTemplate`, `timestampTemplate`, `statusTemplate` (`completed`/`active`/`pending`/`error`/`warning`/`info`), `badgeTemplate`, `emptyText` | Vertical process / activity timeline |
+| `timeline` | Display / Process | `source` (array expression, with `title`, `subtitle`, `time`, `color`, `empty`) or `items` (`[{ title, subtitle, time, color, visibleWhen }]`) | Vertical process / activity timeline |
 | `record` | Interactive | `entity`, `recordId` (`{{ }}` template), `emptyText`, `children` | Loads one entity by ID and renders `children` with `record` in scope |
 | `grid` | Interactive | `entity`, `pageSize`, `filter`, `columns`, `search`, `create`, `edit`, `delete`, `form`, `rowActions` | Full server-paged CRUD / directory data grid |
 

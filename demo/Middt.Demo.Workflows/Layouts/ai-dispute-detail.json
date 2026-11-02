@@ -3,8 +3,40 @@
   "key": "ai-dispute-detail",
   "title": "AI İtiraz ve Fraud İnceleme Detayı",
   "kind": "view",
-  "version": 3,
+  "version": 4,
   "body": [
+    {
+      "widget": "columns",
+      "widths": ["1", "1", "1"],
+      "children": [
+        {
+          "widget": "stat",
+          "label": "İtiraz Tutarı (₺)",
+          "value": "{{ data.amount }}",
+          "format": "N2",
+          "icon": "payments",
+          "color": "info",
+          "subtitle": "İtiraz No: {{ data.disputeNo }}"
+        },
+        {
+          "widget": "stat",
+          "label": "AI Risk Seviyesi",
+          "value": "{{ instance.agents.disputeOrchestrator.riskLevel ?? \"Değerlendiriliyor\" }}",
+          "icon": "shield",
+          "color": "warning",
+          "subtitle": "Skor: {{ instance.agents.disputeOrchestrator.riskScore ?? 0 }} / 100"
+        },
+        {
+          "widget": "stat",
+          "label": "Önerilen İade (₺)",
+          "value": "{{ instance.agents.disputeOrchestrator.recommendedRefund ?? 0 }}",
+          "format": "N2",
+          "icon": "price_check",
+          "color": "success",
+          "subtitle": "Politika: {{ instance.agents.disputeOrchestrator.policyCode ?? \"-\" }}"
+        }
+      ]
+    },
     {
       "widget": "alert",
       "severity": "info",
@@ -100,6 +132,14 @@
               ]
             }
           ]
+        },
+        {
+          "widget": "timeline",
+          "source": "instance.toolCalls",
+          "title": "{{ row.name }} ({{ row.agent }})",
+          "subtitle": "Çağrı ID: {{ row.callId }}",
+          "time": "Adım #{{ row.rowNumber }}",
+          "color": "info"
         }
       ]
     },

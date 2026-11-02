@@ -3,8 +3,41 @@
   "key": "invoice-detail",
   "title": "Fatura Tahsilat Durumu",
   "kind": "view",
-  "version": 9,
+  "version": 10,
   "body": [
+    {
+      "widget": "columns",
+      "widths": ["1", "1", "1"],
+      "children": [
+        {
+          "widget": "stat",
+          "label": "Fatura Tutarı (₺)",
+          "value": "{{ data.total }}",
+          "format": "N2",
+          "icon": "receipt_long",
+          "color": "info",
+          "subtitle": "Fatura No: {{ data.invoiceNo }}"
+        },
+        {
+          "widget": "stat",
+          "label": "Ödenen Tutar (₺)",
+          "value": "{{ data.paidAmount ?? 0 }}",
+          "format": "N2",
+          "icon": "payments",
+          "color": "success",
+          "subtitle": "Müşteri: {{ data.customerName }}"
+        },
+        {
+          "widget": "stat",
+          "label": "Kalan Tutar (₺)",
+          "value": "{{ data.remainingAmount ?? data.total }}",
+          "format": "N2",
+          "icon": "account_balance_wallet",
+          "color": "warning",
+          "subtitle": "Durum: {{ instance.stateTitle }}"
+        }
+      ]
+    },
     {
       "widget": "alert",
       "severity": "info",
@@ -92,6 +125,14 @@
               ]
             }
           ]
+        },
+        {
+          "widget": "timeline",
+          "source": "data.partialPayment",
+          "title": "#{{ row.rowNumber }} — {{ row.reference }} ({{ row.amount }} ₺)",
+          "subtitle": "Kaydeden: {{ row.recordedBy ?? \"Sistem\" }}",
+          "time": "{{ row.paidAt }}",
+          "color": "success"
         }
       ]
     },

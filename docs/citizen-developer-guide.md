@@ -1338,16 +1338,16 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 |---|---|---|---|
 | `heading` | Görsel & Metin | Başlık (H1–H4) | `text`, `level` (`1`–`4`), `visibleWhen` |
 | `text` | Görsel & Metin | Paragraf / satır içi metin | `text`, `style` (`body` \| `lead` \| `muted` \| `small` \| `code`), `visibleWhen` |
-| `stat` | Görsel & KPI | **KPI / Metrik Kartı** (büyük biçimlendirilmiş değer, trend oku, renk varyantı ve ikon) | `label`, `value` (`{{ }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `delta` (`{{ }}`), `trend` (`up` \| `down` \| `neutral`), `variant` (`neutral` \| `info` \| `success` \| `warning` \| `danger`), `icon`, `subtitle`, `visibleWhen` |
+| `stat` | Görsel & KPI | **KPI / Metrik Kartı** (büyük biçimlendirilmiş değer, alt açıklama, renk vurgu ve ikon) | `label`, `value` (`{{ }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `subtitle` (`{{ }}`), `icon`, `color` (`primary` \| `secondary` \| `success` \| `warning` \| `danger` \| `info`), `visibleWhen` |
 | `alert` | Görsel & Metin | Bilgi / Uyarı / Hata kutusu | `severity` (`info` \| `success` \| `warning` \| `danger`), `text`, `visibleWhen` |
-| `badge` | Görsel & Metin | Renkli durum rozeti | `color` (`neutral` \| `info` \| `success` \| `warning` \| `danger`), `text`, `visibleWhen` |
+| `badge` | Görsel & Metin | Renkli durum rozeti | `color` (`primary` \| `secondary` \| `success` \| `warning` \| `danger` \| `info`), `text`, `visibleWhen` |
 | `divider` | Görsel & Metin | Yatay ayırıcı çizgi | `visibleWhen` |
 | `link` | Görsel & Metin | Güvenli yönlendirme bağlantısı / butonu | `text`, `href` (`/` ile başlayan yerel veya güvenli URL), `style` (`link` \| `button`), `visibleWhen` |
 | `fields` | Veri Gösterimi | Etiket–Değer (`dt`/`dd`) özet listesi | `items`: `[{ "label": "...", "value": "{{ ... }}", "format": "N2", "visibleWhen": "..." }]`, `visibleWhen` |
-| `timeline` | Veri & Süreç | **Süreç / Aktivite Zaman Çizelgesi** (statik `items` veya dinamik `source` dizisi) | `title`, `source` (dizi ifadesi) veya `items` (`[{ title, subtitle, timestamp, status, badge }]`), `titleTemplate`, `subtitleTemplate`, `timestampTemplate`, `statusTemplate` (`completed` \| `active` \| `pending` \| `error` \| `warning` \| `info`), `badgeTemplate`, `emptyText`, `visibleWhen` |
+| `timeline` | Veri & Süreç | **Süreç / Aktivite Zaman Çizelgesi** (statik `items` veya dinamik `source` dizisi) | `source` (dizi ifadesi) + `title`, `subtitle`, `time`, `color`, `empty` veya statik `items` (`[{ title, subtitle, time, color, visibleWhen }]`), `visibleWhen` |
 | `section` | Kapsayıcı | Başlıklı kart / bölüm kutusu | `title`, `subtitle`, `visibleWhen`, `children` |
 | `columns` | Kapsayıcı | Yan yana duyarlı sütun yerleşimi | `widths` (ör. `["2", "1"]` veya `["1", "1", "1"]`), `visibleWhen`, `children` |
-| `tabs` | Kapsayıcı | **Etkileşimli Sekmeli Panel** (her alt düğümü sekme olarak gösterir) | `children` (her çocuk bileşenin `title` alanı sekme başlığı, `subtitle` alanı ipucu olarak kullanılır), `visibleWhen` |
+| `tabs` | Kapsayıcı | **Etkileşimli Sekmeli Panel** (her alt düğümü sekme olarak gösterir) | `titles` (isteğe bağlı sekme başlıkları dizisi), `children` (her çocuk bileşenin `title` alanı sekme başlığı olarak kullanılır), `visibleWhen` |
 | `list` | Kapsayıcı | Dizi (`JsonArray`) öğelerini tekrarlayarak listeleme ve satır aksiyonu tetikleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `emptyText`, `rowTransition` / `rowTransitions`, `children` (her öğe `row` ve 1 tabanlı `rowNumber` değişkeniyle okunur) |
 | `layout` | Kapsayıcı / Ortak | Başka bir `kind: "view"` ekranı alt bileşen olarak gömme | `key` (ör. `"workflow-footer"`), `data` (isteğe bağlı alt nesne ifadesi), `title`, `visibleWhen` |
 | `grid` | Etkileşimli CRUD | Sunucu sayfalamalı, sıralamalı, aramalı veri tablosu | `entity`, `pageSize`, `filter`, `columns`, `search` (`visibleWhen`, `disabledWhen`), `create`, `edit`, `delete`, `form` (`visibleWhen`, `requiredWhen`, `disabledWhen`), `rowActions` |
@@ -1363,14 +1363,12 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 |---|---|---|---|
 | `widget` | `"stat"` | Evet | Bileşen tipi |
 | `label` | `string` (`{{ }}`) | Evet | Üst kısımda gösterilen metrik başlığı (ör. `"Fatura Tutarı"`, `"Kalan Alacak"`). |
-| `value` | `string` (`{{ }}`) | Evet | Ana metrik değeri (ör. `"{{ data.invoiceAmount }}"`, `"{{ instance.agents.riskAdvisor.riskScore }}"`). |
+| `value` | `string` (`{{ }}`) | Evet | Ana metrik değeri (ör. `"{{ data.total }}"`, `"{{ instance.agents.riskAdvisor.riskScore }}"`). |
 | `format` | `string` | Hayır | Sayı veya tarih biçimi: `N0`–`N6` (binlik ayraçlı), `F0`–`F6` (ondalık), `d`, `D`, `g`, `t`. |
-| `delta` | `string` (`{{ }}`) | Hayır | Değişim / oran rozeti metni (ör. `"Tahsilat: %{{ Math.Round((data.paidAmount / data.invoiceAmount) * 100, 0) }}"`, `"+%14.2"`). |
-| `trend` | `string` | Hayır | Trend yönü oku ve rengi: `"up"` (`↑` yeşil), `"down"` (`↓` kırmızı) veya `"neutral"` (`→` gri, varsayılan). |
-| `variant` | `string` | Hayır | Kartın vurgu rengi (`{{ }}` şablonu destekler): `"neutral"` (varsayılan), `"info"`, `"success"`, `"warning"`, `"danger"`. |
-| `icon` | `string` | Hayır | Sağ üst köşede gösterilen ikon/rozet metni (ör. `"receipt_long"`, `"payments"`, `" trending_up"`). |
-| `subtitle` | `string` (`{{ }}`) | Hayır | Alt açıklama metni (ör. `"Vade: {{ data.dueDate }}"`). |
-| `visibleWhen` | `string` | Hayır | Kartın görünürlük koşulu (ör. `"data.invoiceAmount > 0"`). |
+| `subtitle` | `string` (`{{ }}`) | Hayır | Alt açıklama veya trend/oran metni (ör. `"Tahsilat: %{{ Math.Round((data.paidAmount / data.total) * 100, 0) }}"`). |
+| `icon` | `string` | Hayır | Sağ üst köşede gösterilen Material ikon adı (ör. `"receipt_long"`, `"payments"`, `"trending_up"`). |
+| `color` | `string` | Hayır | Kartın vurgu rengi: `"primary"`, `"secondary"`, `"success"`, `"warning"`, `"danger"`, `"info"`. |
+| `visibleWhen` | `string` | Hayır | Kartın görünürlük koşulu (ör. `"data.total > 0"`). |
 
 **Örnek: 3 Sütunlu Dinamik KPI Gösterge Paneli (`columns` + `stat`)**:
 ```json
@@ -1381,31 +1379,29 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
     {
       "widget": "stat",
       "label": "Fatura Tutarı (₺)",
-      "value": "{{ data.invoiceAmount }}",
+      "value": "{{ data.total }}",
       "format": "N2",
       "icon": "receipt_long",
-      "variant": "info",
-      "subtitle": "Fatura No: {{ data.invoiceNumber }}"
+      "color": "info",
+      "subtitle": "Fatura No: {{ data.invoiceNo }}"
     },
     {
       "widget": "stat",
       "label": "Tahsil Edilen (₺)",
-      "value": "{{ data.paidAmount }}",
+      "value": "{{ data.paidAmount ?? 0 }}",
       "format": "N2",
       "icon": "payments",
-      "variant": "success",
-      "trend": "up",
-      "delta": "%{{ data.invoiceAmount > 0 ? Math.Round((data.paidAmount / data.invoiceAmount) * 100, 0) : 0 }} Tamamlandı"
+      "color": "success",
+      "subtitle": "Müşteri: {{ data.customerName }}"
     },
     {
       "widget": "stat",
       "label": "Kalan Tutar (₺)",
-      "value": "{{ data.remainingAmount }}",
+      "value": "{{ data.remainingAmount ?? data.total }}",
       "format": "N2",
       "icon": "account_balance_wallet",
-      "variant": "{{ data.remainingAmount > 0 ? \"warning\" : \"success\" }}",
-      "trend": "{{ data.remainingAmount > 0 ? \"down\" : \"neutral\" }}",
-      "subtitle": "Vade: {{ data.dueDate }}"
+      "color": "warning",
+      "subtitle": "Durum: {{ instance.stateTitle }}"
     }
   ]
 }
@@ -1417,7 +1413,7 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 
 `tabs` bileşeni, karmaşık iş akışı detay ekranlarını veya yönetim sayfalarını sayfa boyunu uzatmadan **etkileşimli sekmeler (`role="tablist"`)** halinde gruplar.
 - `tabs` düğümünün `children` dizisine eklediğiniz her alt bileşen (tipik olarak `section`) bir sekme (tab) olur.
-- Alt bileşenin `"title"` özelliği (`{{ }}` şablonu destekler) sekme başlığı olarak, `"subtitle"` özelliği ise sekme ipucu (`title` tooltip) olarak kullanılır.
+- Alt bileşenin `"title"` özelliği (`{{ }}` şablonu destekler) veya `tabs` üzerindeki isteğe bağlı `"titles": ["Sekme 1", "Sekme 2"]` dizisi sekme başlığı olarak kullanılır.
 - Alt bileşenlerdeki `"visibleWhen"` koşulları değerlendirilir; koşulu sağlamayan sekmeler otomatik olarak gizlenir.
 
 **Örnek: 3 Sekmeli İş Akışı Detay Ekranı (`tabs` + `section`)**:
@@ -1428,13 +1424,12 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
     {
       "widget": "section",
       "title": "Genel Bilgiler & Finansal Özet",
-      "subtitle": "Fatura ve müşteri özet bilgileri",
       "children": [
         {
           "widget": "fields",
           "items": [
             { "label": "Müşteri Adı", "value": "{{ data.customerName }}" },
-            { "label": "Fatura Tutarı", "value": "{{ data.invoiceAmount }}", "format": "N2" },
+            { "label": "Fatura Tutarı", "value": "{{ data.total }}", "format": "N2" },
             { "label": "Kalan Tutar", "value": "{{ data.remainingAmount }}", "format": "N2" }
           ]
         }
@@ -1443,14 +1438,14 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
     {
       "widget": "section",
       "title": "AI Tahsilat & Risk Analizi",
-      "visibleWhen": "instance.agents != null && instance.agents.collectionRiskAdvisor != null",
+      "visibleWhen": "instance.agents != null && instance.agents.invoiceRiskAuditor != null",
       "children": [
         {
           "widget": "fields",
           "items": [
-            { "label": "Risk Seviyesi", "value": "{{ instance.agents.collectionRiskAdvisor.riskLevel }}" },
-            { "label": "Tahsilat Stratejisi", "value": "{{ instance.agents.collectionRiskAdvisor.recommendedAction }}" },
-            { "label": "AI Özeti", "value": "{{ instance.agents.collectionRiskAdvisor.summary }}" }
+            { "label": "Risk Seviyesi", "value": "{{ instance.agents.invoiceRiskAuditor.riskLevel }}" },
+            { "label": "Risk Skoru", "value": "{{ instance.agents.invoiceRiskAuditor.score }}" },
+            { "label": "AI Özeti", "value": "{{ instance.agents.invoiceRiskAuditor.summary }}" }
           ]
         }
       ]
@@ -1462,12 +1457,11 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
         {
           "widget": "timeline",
           "source": "data.partialPayment",
-          "emptyText": "Henüz ödeme hareketi kaydedilmedi.",
-          "titleTemplate": "{{ row.reference }} — {{ row.amount }} ₺",
-          "subtitleTemplate": "Ödeme Kanalı: {{ row.channel ?? 'Banka EFT' }}",
-          "timestampTemplate": "{{ row.paidAt }}",
-          "statusTemplate": "completed",
-          "badgeTemplate": "#{{ row.rowNumber }}"
+          "empty": "Henüz ödeme hareketi kaydedilmedi.",
+          "title": "#{{ row.rowNumber }} — {{ row.reference }} ({{ row.amount }} ₺)",
+          "subtitle": "Kaydeden: {{ row.recordedBy ?? 'Sistem' }}",
+          "time": "{{ row.paidAt }}",
+          "color": "success"
         }
       ]
     }
@@ -1482,62 +1476,57 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 `timeline` bileşeni; süreç aşamalarını, ödeme hareketlerini, onay adımlarını veya AI ajanlarının yaptığı araç çağrılarını (`instance.toolCalls`) dikey bir zaman çizelgesi olarak görselleştirir. İki farklı çalışma modunu destekler:
 
 1. **Mod 1: Dinamik Dizi Kaynağı (`source`)**:
-   - `source` özelliğine bir dizi ifadesi (`"data.partialPayment"`, `"instance.toolCalls"`, `"data.auditLog"`) verilir.
-   - Dizideki her eleman için `row` (elemanın kendisi) ve `rowNumber` (`1..N` sıra numarası) kapsam içine alınır ve `titleTemplate`, `subtitleTemplate`, `timestampTemplate`, `statusTemplate`, `badgeTemplate` şablonları hesaplanır.
+   - `source` özelliğine bir dizi ifadesi (`"data.partialPayment"`, `"instance.toolCalls"`, `"instance.agentRuns"`) verilir.
+   - Dizideki her eleman için `row` (elemanın kendisi) ve `rowNumber` (`1..N` sıra numarası) kapsam içine alınır ve `title` *(zorunlu)*, `subtitle`, `time`, `color` şablonları hesaplanır.
 2. **Mod 2: Statik Adım Listesi (`items`)**:
-   - `items` dizisi içinde sabit veya `{{ }}` şablonlu adımlar (`title`, `subtitle`, `timestamp`, `status`, `badge`) tanımlanır.
+   - `items` dizisi içinde sabit veya `{{ }}` şablonlu adımlar (`title`, `subtitle`, `time`, `color`, `visibleWhen`) tanımlanır.
 
 | Özellik | Tip | Açıklama ve Alabileceği Değerler |
 |---|---|---|
-| `title` | `string` (`{{ }}`) | Zaman çizelgesi üst başlığı (isteğe bağlı). |
 | `source` | `string` (İfade) | Dinamik dizi kaynağı (ör. `"data.partialPayment"` veya `"instance.toolCalls"`). |
-| `titleTemplate` | `string` (`{{ }}`) | `source` modunda her adımın başlık şablonu (varsayılan: `row.title ?? row.name ?? row.key`). |
-| `subtitleTemplate` | `string` (`{{ }}`) | `source` modunda her adımın alt açıklama şablonu (varsayılan: `row.subtitle ?? row.description ?? row.summary`). |
-| `timestampTemplate` | `string` (`{{ }}`) | `source` modunda her adımın zaman damgası şablonu (varsayılan: `row.timestamp ?? row.paidAt ?? row.createdAt`). |
-| `statusTemplate` | `string` (`{{ }}`) | `source` modunda her adımın durum rengi: `"completed"` (yeşil), `"active"` (mavi/vurgu), `"pending"` (gri), `"warning"` (turuncu), `"error"` (kırmızı), `"info"` (açık mavi). |
-| `badgeTemplate` | `string` (`{{ }}`) | `source` modunda sağ üstte gösterilecek rozet şablonu (ör. `"{{ row.agent }}"` veya `"#{{ row.rowNumber }}"`). |
-| `items` | `array` | Statik modda adım dizisi: `[{ "title": "...", "subtitle": "...", "timestamp": "...", "status": "completed", "badge": "..." }]`. |
-| `emptyText` | `string` (`{{ }}`) | Dizi boş olduğunda gösterilecek metin (ör. `"Henüz kayıt bulunmuyor."`). |
+| `title` | `string` (`{{ }}`) | `source` modunda her adımın başlık şablonu (`source` kullanıldığında zorunludur; ör. `"{{ row.name }}"`). |
+| `subtitle` | `string` (`{{ }}`) | `source` modunda her adımın alt açıklama şablonu (ör. `"Çağrı ID: {{ row.callId }}"`). |
+| `time` | `string` (`{{ }}`) | `source` modunda her adımın zaman damgası veya rozet şablonu (ör. `"{{ row.paidAt }}"` veya `"Adım #{{ row.rowNumber }}"`). |
+| `color` | `string` | Nokta vurgu rengi: `"primary"`, `"secondary"`, `"success"`, `"warning"`, `"danger"`, `"info"`. |
+| `empty` | `string` | `source` dizisi boş olduğunda gösterilecek metin (ör. `"Henüz kayıt bulunmuyor."`). |
+| `items` | `array` | Statik modda adım dizisi: `[{ "title": "...", "subtitle": "...", "time": "...", "color": "success", "visibleWhen": "..." }]`. |
 
 **Örnek A — Dinamik AI Araç Çağrıları Zaman Çizelgesi (`source: "instance.toolCalls"`)**:
 ```json
 {
   "widget": "timeline",
-  "title": "AI Ajanı Araç Çağrı Geçmişi",
   "source": "instance.toolCalls",
-  "emptyText": "Henüz AI araç çağrısı yapılmadı.",
-  "titleTemplate": "{{ row.name }}",
-  "subtitleTemplate": "Çağrı ID: {{ row.callId }}",
-  "timestampTemplate": "Adım #{{ row.rowNumber }}",
-  "statusTemplate": "completed",
-  "badgeTemplate": "{{ row.agent }}"
+  "empty": "Henüz AI araç çağrısı yapılmadı.",
+  "title": "{{ row.name }} ({{ row.agent }})",
+  "subtitle": "Çağrı ID: {{ row.callId }}",
+  "time": "Adım #{{ row.rowNumber }}",
+  "color": "info"
 }
 ```
 
-**Örnek B — Statik Aşama Zaman Çizelgesi (`items` ile Dinamik Durum Hesaplama)**:
+**Örnek B — Statik Aşama Zaman Çizelgesi (`items`)**:
 ```json
 {
   "widget": "timeline",
-  "title": "Tahsilat Süreç Adımları",
   "items": [
     {
       "title": "1. Fatura Oluşturuldu",
-      "subtitle": "Müşteri: {{ data.customerName }} ({{ data.invoiceNumber }})",
-      "timestamp": "Vade: {{ data.dueDate }}",
-      "status": "completed",
-      "badge": "{{ data.invoiceAmount }} ₺"
+      "subtitle": "Müşteri: {{ data.customerName }} ({{ data.invoiceNo }})",
+      "time": "{{ data.total }} ₺",
+      "color": "success"
     },
     {
       "title": "2. Tahsilat ve Ödeme Takibi",
-      "subtitle": "Ödenen: {{ data.paidAmount }} ₺ · Kalan: {{ data.remainingAmount }} ₺",
-      "status": "{{ data.remainingAmount == 0 ? \"completed\" : (data.paidAmount > 0 ? \"active\" : \"pending\") }}",
-      "badge": "{{ instance.stateTitle }}"
+      "subtitle": "Ödenen: {{ data.paidAmount ?? 0 }} ₺ · Kalan: {{ data.remainingAmount ?? data.total }} ₺",
+      "time": "{{ instance.stateTitle }}",
+      "color": "info"
     },
     {
       "title": "3. Muhasebe Mutabakatı & Kapanış",
-      "subtitle": "{{ data.ledgerReference != null ? data.ledgerReference : \"Mutabakat bekleniyor\" }}",
-      "status": "{{ instance.state == \"paid\" ? \"completed\" : (instance.state == \"reconciling\" ? \"active\" : \"pending\") }}",
-      "badge": "{{ instance.status }}"
+      "subtitle": "Arka plan mutabakat kaydı tamamlandı.",
+      "time": "{{ instance.status }}",
+      "color": "primary",
+      "visibleWhen": "instance.state == \"paid\" || instance.state == \"reconciling\""
     }
   ]
 }
@@ -1732,7 +1721,7 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
           "value": "{{ data.amount }}",
           "format": "N2",
           "icon": "payments",
-          "variant": "{{ data.amount > 25000 ? \"warning\" : \"success\" }}",
+          "color": "warning",
           "subtitle": "Departman: {{ data.department }}"
         },
         {
@@ -1740,7 +1729,7 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
           "label": "AI Risk Seviyesi",
           "value": "{{ instance.agents.procurementApprover.riskLevel ?? \"Değerlendiriliyor\" }}",
           "icon": "shield",
-          "variant": "info",
+          "color": "info",
           "subtitle": "Öneri: {{ instance.agents.procurementApprover.decision ?? \"-\" }}"
         },
         {
@@ -1748,7 +1737,7 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
           "label": "Bütçe Uygunluğu",
           "value": "{{ instance.agents.procurementApprover.budgetStatus ?? \"Kontrol Edildi\" }}",
           "icon": "account_balance",
-          "variant": "success",
+          "color": "success",
           "subtitle": "Tedarikçi: {{ data.supplierName }}"
         }
       ]
@@ -1785,14 +1774,12 @@ Yeni bir iş gereksinimi geldiğinde Citizen Developer'ın izleyeceği **5 adım
             },
             {
               "widget": "timeline",
-              "title": "Çağrılan AI Araçları (Tool Calls)",
               "source": "instance.toolCalls",
-              "emptyText": "Araç çağrısı kaydı bulunmuyor.",
-              "titleTemplate": "{{ row.name }}",
-              "subtitleTemplate": "Çağrı No: {{ row.callId }}",
-              "timestampTemplate": "Adım #{{ row.rowNumber }}",
-              "statusTemplate": "completed",
-              "badgeTemplate": "{{ row.agent }}"
+              "empty": "Araç çağrısı kaydı bulunmuyor.",
+              "title": "{{ row.name }} ({{ row.agent }})",
+              "subtitle": "Çağrı No: {{ row.callId }}",
+              "time": "Adım #{{ row.rowNumber }}",
+              "color": "success"
             }
           ]
         }
