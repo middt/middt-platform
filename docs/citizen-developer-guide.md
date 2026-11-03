@@ -395,6 +395,73 @@ Bir önceki adımı onaylayan kişinin ikinci adımı onaylayamaması için `"de
 **Aynı Durumda Veri Güncelleme (`target: "$self"`)**:
 Durumu değiştirmeden not eklemek, SLA uzatmak veya AI ajanını yeniden çalıştırmak için `"target": "$self"` kullanılır. `"reenter": true` verilirse durumun `onEntry` görevleri ve zamanlayıcıları yeniden çalıştırılır.
 
+### 3.5.1. Kurumsal BPM Yönetişimi: Görev Üstlenme (`claim`), Çoklu Kişi / Rol Atama (`assign`) ve Çalışan Sürüm Göçü (`migrate`)
+
+Middt Platform'da insan görevlerinin (`"subType": "Human"`) yetkilendirilmesi ve sahipliği **iki katmanlı** çalışır:
+1. **Aday Havuzu (`roles` / `denyRoles`)**: Akış JSON tanımında hangi rol(ler)in veya kişi(ler)in o adımdaki geçişleri görebileceğini belirler.
+2. **Çalışma Zamanı Sahipliği (`AssignedTo` — Claim / Unclaim / Assign)**: Aktif bir kaydın çalışma zamanında tek bir kişiye, birden fazla kişiye veya bir role/ekibe atanmasını/üstlenilmesini sağlar.
+
+#### A) Akış Tanımında (`roles` ve `denyRoles`) Kişi ve Rol Belirteçleri
+
+| Belirteç | Açıklama | JSON Örneği |
+|---|---|---|
+| `"<rol-adi>"` | Sabit rol adı; bu roldeki tüm kullanıcıların görev kutusuna (`Inbox`) düşer. | `"roles": ["underwriter", "credit-committee"]` |
+| `"$role:<ifade>"` | Akış verisinden (`data`) dinamik olarak çözümlenen rol adı. | `"roles": ["$role:data.targetDepartmentRole"]` |
+| `"$user:<ifade>"` | Doğrudan tek veya birden fazla kişiye (sabit veya `data` içinden dinamik) atama yapar. | `"roles": ["$user:data.primaryApprover", "$user:data.backupApprover", "$user:'ali@sirket.com'"]` |
+| `"$starter"` / `"$owner"` | İş akışı kaydını başlatan kullanıcı (`instance.startedBy`). | `"roles": ["$starter"]` |
+| `"$previousUser"` | Bir önceki adımı çalıştıran kullanıcı (`instance.lastExecutedBy`). **4-Göz (Four-Eyes)** ilkesi için `denyRoles` içinde kullanılır. | `"denyRoles": ["$previousUser"]` |
+| `"$assignee"` | Kaydı çalışma zamanında üstlenen veya kendisine devredilen kullanıcı(lar)/rol (`instance.assignedTo`). | `"roles": ["$assignee", "manager"]` |
+
+#### B) Çalışma Zamanında Görev Üstlenme (`claim`), Bırakma (`unclaim`) ve Vekalet / Atama (`assign`)
+
+Aktif bir insan görevi adımında kayıt detay ekranındaki araç çubuğundan veya REST API üzerinden şu işlemler yapılabilir:
+
+1. **Görevi Üstlenme (`🙋 Üzerime Al` — `POST /api/workflows/{workflow}/instances/{id}/claim`)**:
+   - Aday havuzundaki yetkili bir kullanıcı görevi kendi üzerine alır (`instance.assignedTo = user.AuditName`).
+   - Görev üstlenildiği anda aynı havuzdaki diğer kullanıcılar geçiş butonlarını çalıştıramaz (`403 Forbidden`) ve görevi tekrar üstlenemez (`409 Conflict`).
+2. **Görevi Bırakma (`🔓 Görevi Bırak` — `POST /api/workflows/{workflow}/instances/{id}/unclaim`)**:
+   - Görevi üstlenen kullanıcı veya bir yönetici (`manager`, `ui-admin`, `idp-admin`) görevi tekrar ortak aday havuzuna bırakır (`instance.assignedTo = null`).
+3. **Kişiye, Çoklu Kişiye veya Role Devretme / Atama (`↪️ Devret / Ata` — `POST /api/workflows/{workflow}/instances/{id}/assign`)**:
+   - Hem arayüzdeki **`↪️ Devret / Ata`** kutusundan hem de API üzerinden **tek kişiye**, **birden fazla kişiye** veya **doğrudan bir role** atama yapılabilir:
+   ```json
+   // 1. Tek bir kullanıcıya atama
+   { "assignedTo": "ali@sirket.com" }
+
+   // 2. Birden fazla kullanıcıya atama (dizi veya virgülle ayrılmış metin)
+   { "users": ["ali@sirket.com", "veli@sirket.com"] }
+   // veya UI kutusundan: "ali@sirket.com, veli@sirket.com"
+
+   // 3. Doğrudan bir role/ekibe atama (dizi veya role:<ad> / @<ad> öneki)
+   { "roles": ["kredi-komitesi", "onayci"] }
+   // veya UI kutusundan: "role:kredi-komitesi" ya da "@kredi-komitesi"
+
+   // 4. Kişi + Rol karma atama
+   { "users": ["ali@sirket.com"], "roles": ["kredi-komitesi"] }
+   ```
+   - **Havuzdan Tekil Kilitleme**: Görev birden fazla kişiye (`"ali, veli"`) veya bir role (`"role:kredi-komitesi"`) atanmışsa, bu havuzdaki kullanıcıların ekranında hem **`🙋 Üzerime Al`** hem de **`🔓 Görevi Bırak`** butonu görünür. Havuzdaki kullanıcılardan biri **`🙋 Üzerime Al`** dediğinde görev yalnızca o kişinin adına kilitlenir.
+   - **4-Göz Koruması ve Otomatik Sıfırlama**: Geçişte `denyRoles` (ör. `["$previousUser"]`) tanımlıysa, görev o kişiye devredilse dahi 4-göz yasağı korunur. Kayıt farklı bir duruma (`target != from`) geçtiğinde `assignedTo` ve `assignedAt` otomatik olarak temizlenir.
+   - **Görev Kutusu (`Inbox`) ve Liste Filtreleri**:
+     - `GET /api/workflows/inbox?assignment=mine` (bana veya rolüme atananlar), `assignment=unassigned` (henüz kimseye atanmamış olanlar), `assignment=claimed` (atanmış/üstlenilmiş olanlar), `assignment=all` (tümü).
+     - `GET /api/workflows/{workflow}/instances?assignedTo=$mine` veya `assignedTo=$unassigned` veya `assignedTo=role:kredi-komitesi`.
+
+#### C) Çalışan Kayıtların Yeni Sürüme Göçü (`POST /api/workflows/{workflow}/migrate`)
+
+- Varsayılan olarak, yayınlanan yeni bir akış sürümü (`v2`, `v3`) yalnızca yeni başlatılan kayıtları etkiler; açık kayıtlar başladıkları sürümde (`instance.workflowVersion`) devam eder.
+- Uzun süreli açık (`Active` / `Faulted`) kayıtları yeni sürüme taşımak için **`/workflow-admin` → `🔄 Sürüm & Göç`** sekmesini veya `POST /api/workflows/{workflow}/migrate` uç noktasını kullanabilirsiniz:
+  ```json
+  {
+    "fromVersion": 1,
+    "toVersion": 2,
+    "stateMap": {
+      "eski-inceleme-adimi": "yeni-uzman-inceleme-adimi"
+    },
+    "includeFaulted": true,
+    "dryRun": true
+  }
+  ```
+- **`dryRun: true` (`🔍 Önizle`)**: Veritabanını değiştirmeden kaç kaydın taşınacağını (`migratedCount`), hangi kayıtların hangi durumdan hangi duruma geçeceğini (`items`) ve yeni sürümde karşılığı bulunmayan durumları (`errors`) raporlar.
+- **`dryRun: false` (`🚀 Göçü Uygula`)**: Kayıtları atomik olarak hedef sürüme ve yeni durum anahtarlarına taşır, tarihçeye (`WorkflowHistory`) `$migrate` (`Trigger = "Migration"`) kaydı düşer ve açık ekranları SSE (`instance.migrated`) ile anında günceller.
+
 ---
 
 ### 3.6. Yerleşik Görevler (Built-in Tasks) ve Ayarları Referansı
@@ -1313,8 +1380,8 @@ Middt Platform'da iki yerde ifade kullanılır:
 
 | Kapsam | Kullanıldığı Yerler | Erişilebilen Değişkenler | Örnek |
 |---|---|---|---|
-| **Taşınabilir UI İfadeleri** (.NET & TypeScript ortak) | `Layouts/*.json` (`{{ }}` şablonları, `visibleWhen`, `requiredWhen`, `disabledWhen`), `Workflows/*.json` form şeması alanları (`visibleWhen`, `requiredWhen`, `disabledWhen`), `Agents/Tools/*.json` (`output` şablonları) | `ui` (açık formdaki veya satır içi sihirbaz adımındaki **anlık bileşen değerleri**: `ui.segment`, `ui.amount`), `data` (kayıtlı akış verisi), `instance` (`id`, `key`, `state`, `stateTitle`, `workflow`, `status`, `agents`, `agentRuns`, `toolCalls`), `row` (liste/tablo satırı), `record`, `user` (`Name`, `Id`, `Roles`, `IsInRole("manager")`), `query`, `now`, `Math` | `"visibleWhen": "ui.segment != \"Bireysel\""`<br>`"requiredWhen": "ui.segment == \"Kurumsal\""`<br>`"disabledWhen": "ui.collateralType == \"Teminatsız\""` |
-| **Sunucu İş Akışı İfadeleri** | `Workflows/*.json` (`transition.rule`, `input.rule`, `set.values`, `http` URL/body şablonları) | `data`, `input`, `instance` (`Id`, `Key`, `State`, `Workflow`, `Creator`, `PreviousUser`, `Agents`), `user` (`Id`, `Name`, `Roles`, `IsInRole("manager")`), `now`, `Math` | `"rule": "data.amount > 50000 && user.IsInRole(\"manager\")"` |
+| **Taşınabilir UI İfadeleri** (.NET & TypeScript ortak) | `Layouts/*.json` (`{{ }}` şablonları, `visibleWhen`, `requiredWhen`, `disabledWhen`), `Workflows/*.json` form şeması alanları (`visibleWhen`, `requiredWhen`, `disabledWhen`), `Agents/Tools/*.json` (`output` şablonları) | `ui` (açık formdaki veya satır içi sihirbaz adımındaki **anlık bileşen değerleri**: `ui.segment`, `ui.amount`), `data` (kayıtlı akış verisi), `instance` (`id`, `key`, `state`, `stateTitle`, `workflow`, `status`, `assignedTo`, `assignedAt`, `agents`, `agentRuns`, `toolCalls`), `row` (liste/tablo satırı), `record`, `user` (`Name`, `Id`, `Roles`, `IsInRole("manager")`), `query`, `now`, `Math` | `"visibleWhen": "ui.segment != \"Bireysel\""`<br>`"requiredWhen": "ui.segment == \"Kurumsal\""`<br>`"disabledWhen": "ui.collateralType == \"Teminatsız\""` |
+| **Sunucu İş Akışı İfadeleri** | `Workflows/*.json` (`transition.rule`, `input.rule`, `set.values`, `http` URL/body şablonları) | `data`, `input`, `instance` (`id`, `key`, `state`, `workflow`, `version`, `assignedTo`, `assignedAt`, `agents`, `agentRuns`, `toolCalls`), `user` (`Id`, `Name`, `Roles`, `IsInRole("manager")`), `now`, `Math` | `"rule": "data.amount > 50000 && user.IsInRole(\"manager\")"` |
 
 **Sık Kullanılan İfade Örnekleri**:
 - Sayı formatlama (UI): `{"label": "Tutar", "value": "{{ data.amount }}", "format": "N2"}`

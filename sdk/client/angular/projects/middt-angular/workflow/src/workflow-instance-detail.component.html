@@ -29,11 +29,45 @@
                 <span class="middt-wf-subtype">{{ subType }}</span>
               }
               <span title="Akış sürümü">v{{ instance.workflowVersion }}</span>
+              @if (instance.assignedTo) {
+                <span class="middt-ui-badge middt-ui-badge-info" data-testid="wf-assignee-badge" title="Görevi üstlenen kullanıcı">👤 {{ instance.assignedTo }}</span>
+              }
               <span class="middt-ui-badge middt-ui-badge-success" data-testid="wf-sse-status" title="Gerçek zamanlı SSE bağlantısı aktif">🟢 Canlı (SSE)</span>
             </div>
           </div>
-          <button mat-icon-button type="button" title="Yenile" aria-label="Detayı yenile" (click)="refresh()"><mat-icon>refresh</mat-icon></button>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            @if (instance.status === 'Active' && !instance.waitingForInstanceId) {
+              @if (!instance.assignedTo || isPoolAssigned(instance.assignedTo)) {
+                <button mat-stroked-button type="button" title="Görevi üzerinize alın" (click)="claimInstance()" [disabled]="claiming()" data-testid="wf-claim-btn">
+                  🙋 Üzerime Al
+                </button>
+              }
+              @if (instance.assignedTo) {
+                <button mat-stroked-button type="button" title="Üstlenilen görevi havuza geri bırakın" (click)="unclaimInstance()" [disabled]="claiming()" data-testid="wf-unclaim-btn">
+                  🔓 Görevi Bırak
+                </button>
+              }
+              <button mat-stroked-button type="button" title="Görevi kullanıcı(lar)a veya bir role atayın" (click)="toggleAssignEditor()" [disabled]="claiming()" data-testid="wf-assign-toggle-btn">
+                ↪️ Devret / Ata
+              </button>
+            }
+            <button mat-icon-button type="button" title="Yenile" aria-label="Detayı yenile" (click)="refresh()"><mat-icon>refresh</mat-icon></button>
+          </div>
         </div>
+        @if (assigningOpen() && instance.status === 'Active') {
+          <div class="middt-wf-assign-bar" data-testid="wf-assign-bar" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;flex-wrap:wrap;">
+            <label [attr.for]="idPrefix() + '-assign-input'" style="font-size:12px;font-weight:600;color:#334155;">Görevi Devret / Ata:</label>
+            <input [attr.id]="idPrefix() + '-assign-input'" type="text" style="flex:1;min-width:220px;padding:6px 10px;font-size:13px;border:1px solid #cbd5e1;border-radius:6px;"
+                   placeholder="Kullanıcı(lar) veya rol (ör. ali@test.com, veli@test.com veya role:onayci)" [value]="assignTargetUser()" (input)="onAssignInput($event)"
+                   [disabled]="claiming()" data-testid="wf-assign-input" />
+            <button mat-flat-button type="button" (click)="submitAssign()" [disabled]="claiming() || !assignTargetUser().trim()" data-testid="wf-assign-submit-btn">
+              Ata
+            </button>
+            <button mat-stroked-button type="button" (click)="closeAssignEditor()" [disabled]="claiming()">
+              Vazgeç
+            </button>
+          </div>
+        }
 
         @let wfGraph = graph();
         @if (!wfGraph.isEmpty) {
@@ -166,6 +200,7 @@
           <dt>Anahtar</dt><dd>{{ instance.key ?? '-' }}</dd>
           <dt>Kayıt no</dt><dd class="middt-wf-mono">{{ instance.id }}</dd>
           <dt>Başlatan</dt><dd>{{ instance.startedBy ?? '-' }}</dd>
+          <dt>Üstlenen</dt><dd data-testid="wf-assigned-to">{{ instance.assignedTo ?? 'Atanmamış' }}</dd>
           <dt>Oluşturma</dt><dd>{{ date(instance.createdAt) }}</dd>
           <dt>Güncelleme</dt><dd>{{ date(instance.updatedAt) }}</dd>
           @if (instance.completedAt) {

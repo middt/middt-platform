@@ -44,11 +44,45 @@
                             <span class="middt-wf-subtype">@subType</span>
                         }
                         <span title="Akış sürümü">v@(instance.WorkflowVersion)</span>
+                        @if (!string.IsNullOrEmpty(instance.AssignedTo))
+                        {
+                            <span class="middt-ui-badge middt-ui-badge-info" data-testid="wf-assignee-badge" title="Görevi üstlenen kullanıcı">👤 @instance.AssignedTo</span>
+                        }
                         <span class="middt-ui-badge middt-ui-badge-success" data-testid="wf-sse-status" title="Gerçek zamanlı SSE bağlantısı aktif">🟢 Canlı (SSE)</span>
                     </div>
                 </div>
-                <RadzenButton Icon="refresh" ButtonStyle="ButtonStyle.Light" title="Yenile" aria-label="Detayı yenile" Click="RefreshAsync" />
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    @if (instance.Status == WorkflowInstanceStatus.Active && instance.WaitingForInstanceId is null)
+                    {
+                        @if (string.IsNullOrEmpty(instance.AssignedTo) || IsPoolAssigned(instance.AssignedTo))
+                        {
+                            <RadzenButton Text="🙋 Üzerime Al" ButtonStyle="ButtonStyle.Secondary" Size="ButtonSize.Small" Variant="Variant.Outlined"
+                                          title="Görevi üzerinize alın" Click="ClaimInstanceAsync" Disabled="@claiming" data-testid="wf-claim-btn" />
+                        }
+                        @if (!string.IsNullOrEmpty(instance.AssignedTo))
+                        {
+                            <RadzenButton Text="🔓 Görevi Bırak" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small"
+                                          title="Üstlenilen görevi havuza geri bırakın" Click="UnclaimInstanceAsync" Disabled="@claiming" data-testid="wf-unclaim-btn" />
+                        }
+                        <RadzenButton Text="↪️ Devret / Ata" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small"
+                                      title="Görevi kullanıcı(lar)a veya bir role atayın" Click="ToggleAssignEditor" Disabled="@claiming" data-testid="wf-assign-toggle-btn" />
+                    }
+                    <RadzenButton Icon="refresh" ButtonStyle="ButtonStyle.Light" title="Yenile" aria-label="Detayı yenile" Click="RefreshAsync" />
+                </div>
             </div>
+            @if (assigningOpen && instance.Status == WorkflowInstanceStatus.Active)
+            {
+                <div class="middt-wf-assign-bar" data-testid="wf-assign-bar" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;flex-wrap:wrap;">
+                    <label for="@($"{IdPrefix}-assign-input")" style="font-size:12px;font-weight:600;color:#334155;">Görevi Devret / Ata:</label>
+                    <input id="@($"{IdPrefix}-assign-input")" type="text" class="rz-textbox" style="flex:1;min-width:220px;padding:4px 8px;font-size:13px;"
+                           placeholder="Kullanıcı(lar) veya rol (ör. ali@test.com, veli@test.com veya role:onayci)" @bind="assignTargetUser" @bind:event="oninput"
+                           disabled="@claiming" data-testid="wf-assign-input" />
+                    <RadzenButton Text="Ata" Icon="person_add" ButtonStyle="ButtonStyle.Primary" Size="ButtonSize.Small"
+                                  Click="SubmitAssignAsync" IsBusy="@claiming" Disabled="@(claiming || string.IsNullOrWhiteSpace(assignTargetUser))" data-testid="wf-assign-submit-btn" />
+                    <RadzenButton Text="Vazgeç" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small"
+                                  Click="CloseAssignEditor" Disabled="@claiming" />
+                </div>
+            }
 
             <WorkflowDiagram Definition="@definition" Instance="@instance" History="@history" IdPrefix="@($"{IdPrefix}-diagram")" />
 
@@ -87,6 +121,7 @@
                 <dt>Anahtar</dt><dd>@(instance.Key ?? "-")</dd>
                 <dt>Kayıt no</dt><dd class="middt-wf-mono">@instance.Id</dd>
                 <dt>Başlatan</dt><dd>@(instance.StartedBy ?? "-")</dd>
+                <dt>Üstlenen</dt><dd data-testid="wf-assigned-to">@(instance.AssignedTo ?? "Atanmamış")</dd>
                 <dt>Oluşturma</dt><dd>@WorkflowUi.FormatDate(instance.CreatedAt, timeZone)</dd>
                 <dt>Güncelleme</dt><dd>@WorkflowUi.FormatDate(instance.UpdatedAt, timeZone)</dd>
                 @if (instance.CompletedAt is not null)

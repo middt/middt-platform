@@ -102,6 +102,8 @@ export function workflowTriggerText(trigger: string): string {
       return 'Mesaj';
     case 'Background':
       return 'Arka plan görevi';
+    case 'Migration':
+      return 'Sürüm göçü';
     default:
       return trigger;
   }
@@ -148,7 +150,7 @@ export function workflowStateTitle(definition: WorkflowDefinitionModel | null | 
 
 export function workflowTransitionTitle(definition: WorkflowDefinitionModel | null | undefined, key: string): string {
   return definition?.transitions.find(t => t.key === key && t.title !== null && t.title !== undefined && t.title !== '')?.title
-    ?? (key === '$background' ? 'Arka plan görevi' : key);
+    ?? (key === '$background' ? 'Arka plan görevi' : key === '$migrate' ? 'Sürüm göçü' : key);
 }
 
 /** `true` when the JSON Schema declares at least one property (a form is needed). */
@@ -467,6 +469,8 @@ export function workflowLayoutVariables(instance: WorkflowInstanceModel, ui?: Wo
       workflow: instance.activeSubFlow?.workflow ?? instance.workflow,
       status: instance.status,
       startedBy: instance.startedBy ?? null,
+      assignedTo: instance.assignedTo ?? null,
+      assignedAt: instance.assignedAt ?? null,
       agents: cloneJson(instance.activeSubFlow?.agents ?? instance.agents ?? {}),
       agentRuns: cloneJson(instance.activeSubFlow?.agentRuns ?? instance.agentRuns ?? []),
       toolCalls: cloneJson(instance.activeSubFlow?.toolCalls ?? instance.toolCalls ?? []),

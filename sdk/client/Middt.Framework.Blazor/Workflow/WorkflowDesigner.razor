@@ -43,6 +43,11 @@
                         @onclick="@(() => SwitchTab("json"))">
                     { } JSON Kodu
                 </button>
+                <button type="button" class="@(activeTab == "versions" ? "middt-wf-tab middt-wf-tab-active" : "middt-wf-tab")"
+                        data-testid="wf-tab-versions"
+                        @onclick="@(() => SwitchTabAsync("versions"))">
+                    🔄 Sürüm & Göç
+                </button>
                 <button type="button" class="middt-wf-tab"
                         title="Bu iş akışının ekranlarını doğrudan tasarla veya yeni ekran oluştur"
                         @onclick="OpenToolbarScreenDesigner">
@@ -653,6 +658,133 @@
             </div>
         </RadzenCard>
     }
+    else if (activeTab == "versions")
+    {
+        <div class="middt-wf-grid-2" style="align-items: start; gap: 1rem">
+            <RadzenCard data-testid="wf-versions-card">
+                <div class="middt-ui-form">
+                    <div class="middt-ui-toolbar" style="justify-content: space-between">
+                        <div>
+                            <h3 class="middt-ui-section-title">📚 Sürüm Geçmişi (@(selectedWorkflowKey ?? GetString(doc, "key")))</h3>
+                            <small class="middt-ui-text-muted">Yayınlanan her iş akışı tanımı değişmez (immutable) bir sürüm olarak saklanır.</small>
+                        </div>
+                        <RadzenButton Icon="refresh" Text="Yenile" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.ExtraSmall" Click="LoadVersionsAsync" />
+                    </div>
+                    @if (versions.Count == 0)
+                    {
+                        <p class="middt-ui-text-muted">Kayıtlı sürüm bulunamadı.</p>
+                    }
+                    else
+                    {
+                        <div style="display:flex;flex-direction:column;gap:8px;">
+                            @foreach (var ver in versions)
+                            {
+                                <div class="middt-wf-task-card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                                    <div>
+                                        <strong>v@(ver.Version) — @(ver.Title ?? selectedWorkflowKey)</strong>
+                                        @if (ver.IsLatest)
+                                        {
+                                            <span class="middt-ui-badge middt-ui-badge-success" style="margin-left:6px;">Aktif Sürüm</span>
+                                        }
+                                        <div class="middt-ui-text-muted" style="font-size:12px;">
+                                            @ver.StatesCount durum · @ver.TransitionsCount geçiş
+                                            @if (ver.UpdatedAt is { } uAt)
+                                            {
+                                                <span> · @uAt.ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)</span>
+                                            }
+                                        </div>
+                                    </div>
+                                    @if (!ver.IsLatest)
+                                    {
+                                        <RadzenButton Text="Bu Sürüme Dön" Icon="restore" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.ExtraSmall"
+                                                      Click="@(() => RollbackToVersionAsync(ver.Version))" Disabled="@busy" />
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </RadzenCard>
+
+            <RadzenCard data-testid="wf-migration-card">
+                <div class="middt-ui-form">
+                    <div>
+                        <h3 class="middt-ui-section-title">🔄 Çalışan Kayıt Sürüm Göçü (Instance Migration)</h3>
+                        <small class="middt-ui-text-muted">Eski sürümlerde çalışan (Active / Faulted) iş akışı kayıtlarını durum eşleme (stateMap) ile hedef sürüme güvenle taşıyın.</small>
+                    </div>
+                    <div class="middt-wf-grid-2">
+                        <div class="middt-ui-input">
+                            <label for="wf-mig-from">Kaynak Sürüm (fromVersion)</label>
+                            <select id="wf-mig-from" class="middt-wf-input" @bind="migrateFromVersionText" data-testid="wf-migrate-from">
+                                <option value="">Tüm Eski Sürümler</option>
+                                @foreach (var ver in versions)
+                                {
+                                    <option value="@ver.Version.ToString(CultureInfo.InvariantCulture)">v@(ver.Version)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="middt-ui-input">
+                            <label for="wf-mig-to">Hedef Sürüm (toVersion)</label>
+                            <select id="wf-mig-to" class="middt-wf-input" @bind="migrateToVersionText" data-testid="wf-migrate-to">
+                                <option value="">En Güncel Sürüm (Varsayılan)</option>
+                                @foreach (var ver in versions)
+                                {
+                                    <option value="@ver.Version.ToString(CultureInfo.InvariantCulture)">v@(ver.Version) @(ver.IsLatest ? "(Güncel)" : "")</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                    <div class="middt-ui-input">
+                        <label for="wf-mig-map">Durum Eşleme Tablosu (stateMap — satır başına <code>eskiDurum=yeniDurum</code>)</label>
+                        <textarea id="wf-mig-map" class="middt-wf-input middt-wf-code-box" rows="3"
+                                  placeholder="review=specialist-review&#10;old-step=new-step"
+                                  @bind="migrateStateMapText" data-testid="wf-migrate-statemap"></textarea>
+                        <small class="middt-ui-text-muted">Hedef sürümde adı korunan durumlar otomatik eşleşir; yalnızca adı değişen veya kaldırılan durumları yazın.</small>
+                    </div>
+                    <div class="middt-ui-toolbar">
+                        <RadzenButton Text="🔍 Önizle (Dry-Run)" ButtonStyle="ButtonStyle.Secondary" Size="ButtonSize.Small"
+                                      Click="@(() => RunMigrationAsync(dryRun: true))" IsBusy="@migrating" data-testid="wf-migrate-dryrun-btn" />
+                        <RadzenButton Text="🚀 Açık Kayıtları Taşı" ButtonStyle="ButtonStyle.Primary" Size="ButtonSize.Small"
+                                      Click="@(() => RunMigrationAsync(dryRun: false))" IsBusy="@migrating" data-testid="wf-migrate-execute-btn" />
+                    </div>
+
+                    @if (migrationResult is { } migRes)
+                    {
+                        <div class="middt-ui-alert @(migRes.FailedCount > 0 ? "middt-ui-alert-danger" : "middt-ui-alert-success")" data-testid="wf-migrate-result">
+                            <strong>@(migRes.DryRun ? "Önizleme (Dry-Run) Sonucu:" : "Sürüm Göçü Tamamlandı:")</strong>
+                            <span>Hedef v@(migRes.ToVersion) · Başarılı: <strong>@migRes.MigratedCount</strong> · Hatalı: <strong>@migRes.FailedCount</strong></span>
+                        </div>
+                        @if (migRes.Items.Count > 0)
+                        {
+                            <div style="max-height:240px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;">
+                                <table class="middt-wf-incidents" style="width:100%;font-size:12px;">
+                                    <thead>
+                                        <tr>
+                                            <th>Anahtar / ID</th>
+                                            <th>Sürüm</th>
+                                            <th>Durum Eşleşmesi</th>
+                                            <th>Sonuç</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var item in migRes.Items)
+                                        {
+                                            <tr>
+                                                <td><code>@(item.Key ?? item.InstanceId.ToString("D")[..8])</code></td>
+                                                <td>v@(item.FromVersion) → v@(item.ToVersion)</td>
+                                                <td><code>@item.FromState</code> → <code>@item.ToState</code></td>
+                                                <td>@(item.Migrated ? (migRes.DryRun ? "✔ Hazır" : "✔ Taşındı") : $"❌ {item.Error}")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    }
+                </div>
+            </RadzenCard>
+        </div>
+    }
 
     @if (screenModalOpen)
     {
@@ -718,6 +850,12 @@
     private List<WorkflowSummaryModel> workflows = [];
     private List<WorkflowTaskSpecModel> taskSpecs = [];
     private List<UiLayoutSummary> uiLayouts = [];
+    private List<WorkflowVersionSummaryModel> versions = [];
+    private string migrateFromVersionText = string.Empty;
+    private string migrateToVersionText = string.Empty;
+    private string migrateStateMapText = string.Empty;
+    private bool migrating;
+    private WorkflowInstanceMigrationResultModel? migrationResult;
     private List<string> errors = [];
     private Dictionary<string, NodePoint> nodePositions = new(StringComparer.Ordinal);
     private HashSet<string> selectedNodeKeys = new(StringComparer.Ordinal);
@@ -2920,6 +3058,115 @@
         }
 
         activeTab = tab;
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        SwitchTab(tab);
+        if (tab == "versions")
+        {
+            await LoadVersionsAsync();
+        }
+    }
+
+    private async Task LoadVersionsAsync()
+    {
+        var key = selectedWorkflowKey ?? GetString(doc, "key");
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            versions = [];
+            return;
+        }
+
+        var resp = await Client.ListVersionsAsync(key);
+        if (resp.IsSuccess && resp.Data is not null)
+        {
+            versions = resp.Data;
+        }
+    }
+
+    private async Task RollbackToVersionAsync(int version)
+    {
+        var key = selectedWorkflowKey ?? GetString(doc, "key");
+        if (string.IsNullOrWhiteSpace(key) || busy)
+        {
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var resp = await Client.RollbackVersionAsync(key, version);
+            if (!resp.IsSuccess || resp.Data is null)
+            {
+                errors = resp.MessageList.Count > 0 ? resp.MessageList : ["Sürüme geri dönülemedi."];
+                return;
+            }
+
+            doc = resp.Data;
+            SyncJsonFromDoc();
+            validMessage = $"✔ v{version} tanımı yeni güncel sürüm olarak yayınlandı.";
+            await LoadVersionsAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task RunMigrationAsync(bool dryRun)
+    {
+        var key = selectedWorkflowKey ?? GetString(doc, "key");
+        if (string.IsNullOrWhiteSpace(key) || migrating)
+        {
+            return;
+        }
+
+        migrating = true;
+        errors.Clear();
+        try
+        {
+            var stateMap = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var rawLine in (migrateStateMapText ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var sep = rawLine.IndexOf('=', StringComparison.Ordinal);
+                if (sep <= 0)
+                {
+                    sep = rawLine.IndexOf(':', StringComparison.Ordinal);
+                }
+
+                if (sep > 0)
+                {
+                    var fromSt = rawLine[..sep].Trim();
+                    var toSt = rawLine[(sep + 1)..].Trim();
+                    if (fromSt.Length > 0 && toSt.Length > 0)
+                    {
+                        stateMap[fromSt] = toSt;
+                    }
+                }
+            }
+
+            var req = new WorkflowInstanceMigrationRequest
+            {
+                FromVersion = int.TryParse(migrateFromVersionText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var fv) ? fv : null,
+                ToVersion = int.TryParse(migrateToVersionText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var tv) ? tv : null,
+                StateMap = stateMap,
+                DryRun = dryRun,
+            };
+
+            var resp = await Client.MigrateInstancesAsync(key, req);
+            if (!resp.IsSuccess || resp.Data is null)
+            {
+                errors = resp.MessageList.Count > 0 ? resp.MessageList : ["Sürüm göçü çalıştırılamadı."];
+                return;
+            }
+
+            migrationResult = resp.Data;
+        }
+        finally
+        {
+            migrating = false;
+        }
     }
 
     private void SelectStart()

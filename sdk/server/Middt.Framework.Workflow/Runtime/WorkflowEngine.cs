@@ -558,7 +558,19 @@ public sealed partial class WorkflowEngine(
         int page,
         int pageSize,
         CancellationToken cancellationToken = default) =>
-        ListAsync(workflow, user, state, status, key, page, pageSize, null, cancellationToken);
+        ListAsync(workflow, user, state, status, key, page, pageSize, null, null, cancellationToken);
+
+    public Task<(List<WorkflowInstanceModel> Items, int Count)> ListAsync(
+        string workflow,
+        WorkflowUser user,
+        string? state,
+        WorkflowInstanceStatus? status,
+        string? key,
+        int page,
+        int pageSize,
+        IReadOnlyDictionary<string, string?>? filter,
+        CancellationToken cancellationToken = default) =>
+        ListAsync(workflow, user, state, status, key, page, pageSize, filter, null, cancellationToken);
 
     public async Task<(List<WorkflowInstanceModel> Items, int Count)> ListAsync(
         string workflow,
@@ -569,6 +581,7 @@ public sealed partial class WorkflowEngine(
         int page,
         int pageSize,
         IReadOnlyDictionary<string, string?>? filter,
+        string? assignedTo,
         CancellationToken cancellationToken = default)
     {
         using var activity = WorkflowDiagnostics.ActivitySource.StartActivity($"workflow.list {workflow}");
@@ -619,6 +632,34 @@ public sealed partial class WorkflowEngine(
         if (!string.IsNullOrEmpty(key))
         {
             query = query.Where(i => i.BusinessKey == key);
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignedTo))
+        {
+            var trimmedAssignee = assignedTo.Trim();
+            if (string.Equals(trimmedAssignee, "$unassigned", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(trimmedAssignee, "unassigned", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(i => i.AssignedTo == null);
+            }
+            else if (string.Equals(trimmedAssignee, "$mine", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(trimmedAssignee, "mine", StringComparison.OrdinalIgnoreCase))
+            {
+                var me = user.AuditName;
+                var myRoleTokens = user.Roles.Select(r => $"role:{r}").ToArray();
+                query = query.Where(i => i.AssignedTo != null
+                    && (i.AssignedTo == me
+                        || i.AssignedTo.Contains(me)
+                        || myRoleTokens.Any(rt => i.AssignedTo == rt || i.AssignedTo.Contains(rt))));
+            }
+            else
+            {
+                var normalizedTarget = IsRoleAssigneeToken(trimmedAssignee, out var rName)
+                    ? $"role:{rName}"
+                    : NormalizeUserAssigneeToken(trimmedAssignee);
+                query = query.Where(i => i.AssignedTo != null
+                    && (i.AssignedTo == normalizedTarget || i.AssignedTo.Contains(normalizedTarget)));
+            }
         }
 
         var rawSchema = readable[^1].DataSchema;
@@ -1082,6 +1123,8 @@ public sealed partial class WorkflowEngine(
         var activeSubFlowBefore = run.ActiveSubFlowModel;
         var keyBefore = instance.BusinessKey;
         var lastExecutedByBefore = instance.LastExecutedBy;
+        var assignedToBefore = instance.AssignedTo;
+        var assignedAtBefore = instance.AssignedAt;
 
         try
         {
@@ -1098,6 +1141,12 @@ public sealed partial class WorkflowEngine(
                     await RunTasksAsync(run, leaving.OnExit, transition.Key, "onExit", leaving.OnError, input, cancellationToken);
                     run.LeftStates.Add(from);
                     run.NewJobs.RemoveAll(j => j.Kind == WorkflowJobKind.Scheduled && j.State == from);
+                }
+
+                if (target != from)
+                {
+                    instance.AssignedTo = null;
+                    instance.AssignedAt = null;
                 }
 
                 instance.State = target;
@@ -1179,6 +1228,8 @@ public sealed partial class WorkflowEngine(
             run.ActiveSubFlowModel = activeSubFlowBefore;
             instance.BusinessKey = keyBefore;
             instance.LastExecutedBy = lastExecutedByBefore;
+            instance.AssignedTo = assignedToBefore;
+            instance.AssignedAt = assignedAtBefore;
             run.CurrentHopTasks.Clear();
             run.ClearAllJobs = false;
             run.NotifyParent = false;
@@ -2134,6 +2185,8 @@ public sealed partial class WorkflowEngine(
                 ["state"] = run.Instance.State,
                 ["workflow"] = run.Definition.Key,
                 ["version"] = run.Definition.Version,
+                ["assignedTo"] = run.Instance.AssignedTo,
+                ["assignedAt"] = run.Instance.AssignedAt,
                 ["transitions"] = new JsonArray([.. AvailableIn(run.Definition, activeState).Select(t => (JsonNode?)JsonValue.Create(t.Key))]),
                 ["agents"] = agentsObj,
                 ["agentRuns"] = agentRunsArr,

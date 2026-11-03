@@ -167,6 +167,8 @@ public sealed class WorkflowInstanceModel
     public JsonObject? PendingInputSchema { get; set; }
 
     public string? StartedBy { get; set; }
+    public string? AssignedTo { get; set; }
+    public DateTime? AssignedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
@@ -383,10 +385,76 @@ public sealed class WorkflowInboxItemModel
     public string State { get; set; } = string.Empty;
     public string? StateTitle { get; set; }
     public string? StartedBy { get; set; }
+    public string? AssignedTo { get; set; }
+    public DateTime? AssignedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? DueAt { get; set; }
     public List<AvailableTransitionModel> AvailableTransitions { get; set; } = [];
+}
+
+/// <summary>Request payload for assigning or delegating a workflow instance to one or more users or roles (<c>POST /api/workflows/{workflow}/instances/{id}/assign</c>).</summary>
+public sealed class WorkflowAssignRequest
+{
+    /// <summary>
+    /// Target user, comma-separated list of users/roles (e.g. <c>"alice, bob"</c>), or role token (<c>"role:underwriter"</c> / <c>"@underwriter"</c>).
+    /// Can be used alone or combined with <see cref="Users"/> and <see cref="Roles"/>.
+    /// </summary>
+    public string? AssignedTo { get; set; }
+
+    /// <summary>Optional list of user identifiers to assign the task to.</summary>
+    public List<string>? Users { get; set; }
+
+    /// <summary>Optional list of role names to assign the task to (stored as <c>role:&lt;name&gt;</c>).</summary>
+    public List<string>? Roles { get; set; }
+}
+
+/// <summary>Request payload to migrate running workflow instances to a target definition version (<c>POST /api/workflows/{workflow}/migrate</c>).</summary>
+public sealed class WorkflowInstanceMigrationRequest
+{
+    /// <summary>Optional source version filter. When <c>null</c>, all active/faulted instances not already on <see cref="ToVersion"/> are considered.</summary>
+    public int? FromVersion { get; set; }
+
+    /// <summary>Target workflow definition version. When <c>null</c>, defaults to the latest registered version of the workflow.</summary>
+    public int? ToVersion { get; set; }
+
+    /// <summary>Optional explicit list of instance IDs to migrate. When empty, all matching instances of the workflow are migrated.</summary>
+    public List<Guid> InstanceIds { get; set; } = [];
+
+    /// <summary>Optional mapping from old state keys to target version state keys (<c>{ "old-state": "new-state" }</c>).</summary>
+    public Dictionary<string, string> StateMap { get; set; } = [];
+
+    /// <summary>Whether to also migrate <see cref="WorkflowInstanceStatus.Faulted"/> instances in addition to <see cref="WorkflowInstanceStatus.Active"/> instances (<c>true</c> by default).</summary>
+    public bool IncludeFaulted { get; set; } = true;
+
+    /// <summary>When <c>true</c>, validates and previews the migration without modifying the database.</summary>
+    public bool DryRun { get; set; }
+}
+
+/// <summary>Per-instance migration outcome or preview item.</summary>
+public sealed class WorkflowInstanceMigrationItemModel
+{
+    public Guid InstanceId { get; set; }
+    public string? Key { get; set; }
+    public int FromVersion { get; set; }
+    public int ToVersion { get; set; }
+    public string FromState { get; set; } = string.Empty;
+    public string ToState { get; set; } = string.Empty;
+    public bool Migrated { get; set; }
+    public string? Error { get; set; }
+}
+
+/// <summary>Result of a running instance version migration (<c>POST /api/workflows/{workflow}/migrate</c>).</summary>
+public sealed class WorkflowInstanceMigrationResultModel
+{
+    public string Workflow { get; set; } = string.Empty;
+    public int ToVersion { get; set; }
+    public bool DryRun { get; set; }
+    public int CandidateCount { get; set; }
+    public int MigratedCount { get; set; }
+    public int FailedCount { get; set; }
+    public List<WorkflowInstanceMigrationItemModel> Items { get; set; } = [];
+    public List<string> Errors { get; set; } = [];
 }
 
 /// <summary>Single transition step in a dry-run workflow simulation.</summary>

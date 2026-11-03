@@ -83,6 +83,16 @@ public class WorkflowApiClient(
     public virtual Task<BaseResponseDataModel<JsonObject>> RollbackVersionAsync(string workflow, int version, CancellationToken cancellationToken = default) =>
         SendAsync<BaseResponseDataModel<JsonObject>>(HttpMethod.Post, $"{WorkflowRoute(workflow)}/versions/{version.ToString(CultureInfo.InvariantCulture)}/rollback", null, cancellationToken);
 
+    /// <summary>Migrates active/faulted instances of <paramref name="workflow"/> to a target version with optional state mapping (<c>DryRun = true</c> previews without persisting).</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowInstanceMigrationResultModel>> MigrateInstancesAsync(
+        string workflow,
+        WorkflowInstanceMigrationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<BaseResponseDataModel<WorkflowInstanceMigrationResultModel>>(HttpMethod.Post, $"{WorkflowRoute(workflow)}/migrate", request, cancellationToken);
+    }
+
     /// <summary>Gets an operational summary of faulted instances, busy instances, pending jobs, and unresolved incidents.</summary>
     public virtual Task<BaseResponseDataModel<WorkflowOperationsSummaryModel>> GetOperationsSummaryAsync(string? workflow = null, CancellationToken cancellationToken = default)
     {
@@ -103,10 +113,20 @@ public class WorkflowApiClient(
         string? workflow = null,
         int page = 1,
         int pageSize = 20,
+        CancellationToken cancellationToken = default) =>
+        ListInboxAsync(workflow, null, page, pageSize, cancellationToken);
+
+    /// <summary>Lists actionable human tasks across all accessible workflows with optional assignment filter (<c>all</c>, <c>mine</c>, <c>unassigned</c>, <c>claimed</c>).</summary>
+    public virtual Task<BaseResponseDataModel<List<WorkflowInboxItemModel>>> ListInboxAsync(
+        string? workflow,
+        string? assignment,
+        int page = 1,
+        int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
         var query = new StringBuilder();
         AppendQuery(query, "workflow", workflow);
+        AppendQuery(query, "assignment", assignment);
         AppendQuery(query, "page", page.ToString(CultureInfo.InvariantCulture));
         AppendQuery(query, "pageSize", pageSize.ToString(CultureInfo.InvariantCulture));
         return SendAsync<BaseResponseDataModel<List<WorkflowInboxItemModel>>>(HttpMethod.Get, $"{RoutePrefix.TrimEnd('/')}/inbox{query}", null, cancellationToken);
@@ -180,12 +200,26 @@ public class WorkflowApiClient(
         int page,
         int pageSize,
         IReadOnlyDictionary<string, string?>? filter,
+        CancellationToken cancellationToken = default) =>
+        ListInstancesAsync(workflow, state, status, key, page, pageSize, filter, null, cancellationToken);
+
+    /// <summary>Lists instances (one page) with optional workflow data property and assignee filters; <see cref="BaseResponseDataModel{T}.Count"/> is the total count.</summary>
+    public virtual Task<BaseResponseDataModel<List<WorkflowInstanceModel>>> ListInstancesAsync(
+        string workflow,
+        string? state,
+        WorkflowInstanceStatus? status,
+        string? key,
+        int page,
+        int pageSize,
+        IReadOnlyDictionary<string, string?>? filter,
+        string? assignedTo,
         CancellationToken cancellationToken = default)
     {
         var query = new StringBuilder();
         AppendQuery(query, "state", state);
         AppendQuery(query, "status", status?.ToString());
         AppendQuery(query, "key", key);
+        AppendQuery(query, "assignedTo", assignedTo);
         if (filter is not null)
         {
             foreach (var (field, value) in filter)
@@ -237,6 +271,28 @@ public class WorkflowApiClient(
     /// <summary>Retries the failed step of a <see cref="WorkflowInstanceStatus.Faulted"/> instance with optional updated input/data.</summary>
     public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> RetryAsync(string workflow, Guid id, JsonObject? input, CancellationToken cancellationToken = default) =>
         SendAsync<BaseResponseDataModel<WorkflowInstanceModel>>(HttpMethod.Post, $"{InstanceRoute(workflow, id)}/retry", input, cancellationToken);
+
+    /// <summary>Claims an active workflow instance for the current user so other non-supervisor users cannot execute its manual transitions.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> ClaimAsync(string workflow, Guid id, CancellationToken cancellationToken = default) =>
+        SendAsync<BaseResponseDataModel<WorkflowInstanceModel>>(HttpMethod.Post, $"{InstanceRoute(workflow, id)}/claim", null, cancellationToken);
+
+    /// <summary>Releases a claimed workflow instance back to the shared pool.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> UnclaimAsync(string workflow, Guid id, CancellationToken cancellationToken = default) =>
+        SendAsync<BaseResponseDataModel<WorkflowInstanceModel>>(HttpMethod.Post, $"{InstanceRoute(workflow, id)}/unclaim", null, cancellationToken);
+
+    /// <summary>Delegates or assigns an active workflow instance to <paramref name="assignedTo"/> (single user, comma-separated users, or <c>role:&lt;name&gt;</c>).</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> AssignAsync(string workflow, Guid id, string assignedTo, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(assignedTo);
+        return AssignAsync(workflow, id, new WorkflowAssignRequest { AssignedTo = assignedTo.Trim() }, cancellationToken);
+    }
+
+    /// <summary>Delegates or assigns an active workflow instance to one or more users or roles specified by <paramref name="request"/>.</summary>
+    public virtual Task<BaseResponseDataModel<WorkflowInstanceModel>> AssignAsync(string workflow, Guid id, WorkflowAssignRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<BaseResponseDataModel<WorkflowInstanceModel>>(HttpMethod.Post, $"{InstanceRoute(workflow, id)}/assign", request, cancellationToken);
+    }
 
     /// <summary>Subscribes to the real-time Server-Sent Events (SSE) stream (<c>GET /api/workflows/events</c>) for matching workflow events.</summary>
     public virtual async IAsyncEnumerable<WorkflowEventStreamModel> WatchEventsAsync(

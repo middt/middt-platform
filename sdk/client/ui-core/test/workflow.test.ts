@@ -252,6 +252,7 @@ test('status, sub type and trigger texts', () => {
   assert.equal(workflowTriggerText('Custom'), 'Custom');
   assert.equal(workflowTriggerText('Event'), 'Mesaj');
   assert.equal(workflowTriggerText('Background'), 'Arka plan görevi');
+  assert.equal(workflowTriggerText('Migration'), 'Sürüm göçü');
 });
 
 test('dates without a zone are UTC', () => {
@@ -269,6 +270,7 @@ test('state and transition titles, styles and icons', () => {
   assert.equal(workflowTransitionTitle(definition, 'cancel'), 'İptal et');
   assert.equal(workflowTransitionTitle(definition, 'to-company'), 'to-company');
   assert.equal(workflowTransitionTitle(definition, '$background'), 'Arka plan görevi');
+  assert.equal(workflowTransitionTitle(definition, '$migrate'), 'Sürüm göçü');
   assert.equal(workflowTransitionStyle(definition, { key: 'a', target: 'approved' }), 'success');
   assert.equal(workflowTransitionStyle(definition, { key: 'r', target: 'rejected' }), 'danger');
   assert.equal(workflowTransitionIcon(definition, { key: 'c', target: 'cancelled' }), 'cancel');
@@ -341,6 +343,8 @@ test('layout variables and data helpers', () => {
     workflow: 'order-approval',
     status: 'Active',
     startedBy: 'alice',
+    assignedTo: null,
+    assignedAt: null,
     agents: {},
     agentRuns: [],
     toolCalls: [],
@@ -980,6 +984,79 @@ test('WorkflowApiClient.subscribeEvents parses SSE event frames', async () => {
     occurredAt: '2026-01-01T00:00:00Z',
   });
 });
+
+test('WorkflowApiClient claim, unclaim, assign, inbox assignment filter and migrateInstances', async () => {
+  const { fetch, calls } = fakeFetch(
+    ok(instance({ assignedTo: 'alice', assignedAt: '2026-01-02T03:05:00Z' })),
+    ok(instance({ assignedTo: null, assignedAt: null })),
+    ok(instance({ assignedTo: 'bob', assignedAt: '2026-01-02T03:06:00Z' })),
+    ok([], 0),
+    ok([], 0),
+    ok({
+      workflow: 'order-approval',
+      toVersion: 2,
+      dryRun: true,
+      migratedCount: 1,
+      failedCount: 0,
+      items: [
+        {
+          instanceId: ID,
+          key: 'K-1',
+          fromVersion: 1,
+          toVersion: 2,
+          fromState: 'old-review',
+          toState: 'customer',
+          migrated: true,
+        },
+      ],
+    }),
+  );
+  const client = new WorkflowApiClient({ baseUrl: 'https://api.example.com', fetch });
+
+  const claimed = await client.claim('order-approval', ID);
+  assert.equal(claimed.data?.assignedTo, 'alice');
+
+  const unclaimed = await client.unclaim('order-approval', ID);
+  assert.equal(unclaimed.data?.assignedTo, null);
+
+  const assigned = await client.assign('order-approval', ID, 'bob');
+  assert.equal(assigned.data?.assignedTo, 'bob');
+
+  await client.listInbox('order-approval', 1, 20, undefined, 'mine');
+  await client.listInstances('order-approval', { assignedTo: '$unassigned' });
+
+  const migrated = await client.migrateInstances('order-approval', {
+    fromVersion: 1,
+    toVersion: 2,
+    stateMap: { 'old-review': 'customer' },
+    dryRun: true,
+  });
+  assert.equal(migrated.data?.migratedCount, 1);
+  assert.equal(migrated.data?.items[0]?.toState, 'customer');
+
+  assert.deepEqual(calls.map(c => `${c.init.method} ${c.url}`), [
+    `POST https://api.example.com/api/workflows/order-approval/instances/${ID}/claim`,
+    `POST https://api.example.com/api/workflows/order-approval/instances/${ID}/unclaim`,
+    `POST https://api.example.com/api/workflows/order-approval/instances/${ID}/assign`,
+    'GET https://api.example.com/api/workflows/inbox?workflow=order-approval&assignment=mine&page=1&pageSize=20',
+    'GET https://api.example.com/api/workflows/order-approval/instances?assignedTo=%24unassigned&page=1&pageSize=20',
+    'POST https://api.example.com/api/workflows/order-approval/migrate',
+  ]);
+  assert.deepEqual(JSON.parse(calls[2]!.init.body as string), { assignedTo: 'bob' });
+  assert.deepEqual(JSON.parse(calls[5]!.init.body as string), {
+    fromVersion: 1,
+    toVersion: 2,
+    stateMap: { 'old-review': 'customer' },
+    dryRun: true,
+  });
+
+  const { fetch: fetchMulti, calls: callsMulti } = fakeFetch(ok(instance({ assignedTo: 'bob, dave, role:approver' })));
+  const clientMulti = new WorkflowApiClient({ baseUrl: 'https://api.example.com', fetch: fetchMulti });
+  const assignedMulti = await clientMulti.assign('order-approval', ID, { users: ['bob', 'dave'], roles: ['approver'] });
+  assert.equal(assignedMulti.data?.assignedTo, 'bob, dave, role:approver');
+  assert.deepEqual(JSON.parse(callsMulti[0]!.init.body as string), { users: ['bob', 'dave'], roles: ['approver'] });
+});
+
 
 
 

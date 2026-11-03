@@ -922,4 +922,196 @@ public sealed class WorkflowEndpointTests
         received.Should().Contain(e => e.Type == "Started" && e.Workflow == "pipeline" && e.Key == "ORD-SSE-1");
         received.Should().Contain(e => e.State == "review" && e.Transition == "submit");
     }
+
+    [Fact]
+    public async Task Claim_unclaim_and_assign_enforce_task_ownership_and_clear_on_state_change()
+    {
+        await using var host = await Host();
+
+        var created = await StartAsync(host, "pipeline", new { key = "ORD-CLAIM-1", data = new { name = "Ada", amount = 150 } });
+        created.State.Should().Be("draft");
+        created.AssignedTo.Should().BeNull();
+
+        // Alice claims the task
+        using var claimResp = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/instances/{created.Id}/claim", user: "alice", roles: "clerk");
+        claimResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var claimed = (await EnvelopeAsync<WorkflowInstanceModel>(claimResp)).Data!;
+        claimed.AssignedTo.Should().Be("alice");
+        claimed.AssignedAt.Should().NotBeNull();
+
+        // Another clerk (bob) cannot claim an already-claimed task (409 Conflict)
+        using var conflictClaim = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/instances/{created.Id}/claim", user: "bob", roles: "clerk");
+        conflictClaim.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        // Bob cannot execute the manual transition while Alice holds the claim
+        using var bobTransition = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/instances/{created.Id}/transitions/submit", new { comment = "Bob attempt" }, user: "bob", roles: "clerk");
+        bobTransition.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        // Inbox assignment filter: 'mine' returns the task for alice, but not for bob
+        using var aliceInboxResp = await SendAsync(host, HttpMethod.Get, $"{Base}/inbox?assignment=mine", user: "alice", roles: "clerk");
+        var aliceInbox = (await EnvelopeAsync<List<WorkflowInboxItemModel>>(aliceInboxResp)).Data!;
+        aliceInbox.Should().ContainSingle(i => i.InstanceId == created.Id && i.AssignedTo == "alice");
+
+        using var bobInboxResp = await SendAsync(host, HttpMethod.Get, $"{Base}/inbox?assignment=mine", user: "bob", roles: "clerk");
+        var bobInbox = (await EnvelopeAsync<List<WorkflowInboxItemModel>>(bobInboxResp)).Data!;
+        bobInbox.Should().NotContain(i => i.InstanceId == created.Id);
+
+        // Alice delegates/assigns the task to multiple users (bob and dave)
+        using var multiAssignResp = await SendAsync(
+            host,
+            HttpMethod.Post,
+            $"{Base}/pipeline/instances/{created.Id}/assign",
+            new { users = new[] { "bob", "dave" } },
+            user: "alice",
+            roles: "clerk");
+        multiAssignResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var assignedToMulti = (await EnvelopeAsync<WorkflowInstanceModel>(multiAssignResp)).Data!;
+        assignedToMulti.AssignedTo.Should().Be("bob, dave");
+
+        // Both bob and dave see the task in their 'mine' inbox; alice does not
+        using var daveInboxResp = await SendAsync(host, HttpMethod.Get, $"{Base}/inbox?assignment=mine", user: "dave", roles: "clerk");
+        var daveInbox = (await EnvelopeAsync<List<WorkflowInboxItemModel>>(daveInboxResp)).Data!;
+        daveInbox.Should().ContainSingle(i => i.InstanceId == created.Id);
+
+        // Bob claims the multi-user assigned task to lock it exclusively to 'bob'
+        using var lockClaimResp = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/instances/{created.Id}/claim", user: "bob", roles: "clerk");
+        lockClaimResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var lockedToBob = (await EnvelopeAsync<WorkflowInstanceModel>(lockClaimResp)).Data!;
+        lockedToBob.AssignedTo.Should().Be("bob");
+
+        // Bob delegates the task to a role ('role:special-committee' via roles array)
+        using var roleAssignResp = await SendAsync(
+            host,
+            HttpMethod.Post,
+            $"{Base}/pipeline/instances/{created.Id}/assign",
+            new { roles = new[] { "special-committee" } },
+            user: "bob",
+            roles: "clerk");
+        roleAssignResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var assignedToRole = (await EnvelopeAsync<WorkflowInstanceModel>(roleAssignResp)).Data!;
+        assignedToRole.AssignedTo.Should().Be("role:special-committee");
+
+        // A member of 'special-committee' (erin) sees the task in 'mine' inbox and can unclaim or claim it
+        using var erinInboxResp = await SendAsync(host, HttpMethod.Get, $"{Base}/inbox?assignment=mine", user: "erin", roles: "special-committee");
+        var erinInbox = (await EnvelopeAsync<List<WorkflowInboxItemModel>>(erinInboxResp)).Data!;
+        erinInbox.Should().ContainSingle(i => i.InstanceId == created.Id);
+
+        // Erin unclaims the task back to the default state pool
+        using var unclaimResp = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/instances/{created.Id}/unclaim", user: "erin", roles: "special-committee");
+        unclaimResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var unclaimed = (await EnvelopeAsync<WorkflowInstanceModel>(unclaimResp)).Data!;
+        unclaimed.AssignedTo.Should().BeNull();
+        unclaimed.AssignedAt.Should().BeNull();
+
+        // Bob claims it again and executes the transition -> moving to 'review' clears AssignedTo automatically
+        using var reClaimResp = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/instances/{created.Id}/claim", user: "bob", roles: "clerk");
+        reClaimResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var moveResp = await SendAsync(host, HttpMethod.Post, $"{Base}/pipeline/instances/{created.Id}/transitions/submit", new { comment = "Done by bob" }, user: "bob", roles: "clerk");
+        moveResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var moved = (await EnvelopeAsync<WorkflowInstanceModel>(moveResp)).Data!;
+        moved.State.Should().Be("review");
+        moved.AssignedTo.Should().BeNull();
+        moved.AssignedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Migrate_instances_supports_dry_run_state_mapping_and_records_migration_history()
+    {
+        await using var host = await Host();
+
+        // Start a v1 instance in state 'draft'
+        var instance = await StartAsync(host, "pipeline", new { key = "ORD-MIG-1", data = new { name = "Ada", amount = 250 } });
+        instance.WorkflowVersion.Should().Be(1);
+        instance.State.Should().Be("draft");
+
+        // Publish v2 where 'draft' is renamed to 'intake'
+        var v2Payload = new
+        {
+            key = "pipeline",
+            version = 1,
+            title = "Pipeline v2",
+            start = new { key = "start", target = "intake" },
+            states = new object[]
+            {
+                new
+                {
+                    key = "intake",
+                    title = "Intake v2",
+                    type = "Intermediate",
+                    subType = "Human",
+                    transitions = new object[]
+                    {
+                        new { key = "fast-approve", title = "Fast Approve", target = "done", trigger = "Manual" }
+                    }
+                },
+                new { key = "done", title = "Done", type = "Finish", subType = "Success" }
+            }
+        };
+
+        using var saveV2 = await SendAsync(host, HttpMethod.Put, $"{Base}/pipeline/definition", v2Payload, roles: "ui-admin");
+        saveV2.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 1. Dry-run without stateMap fails because 'draft' does not exist in v2
+        using var dryFailResp = await SendAsync(
+            host,
+            HttpMethod.Post,
+            $"{Base}/pipeline/migrate",
+            new WorkflowInstanceMigrationRequest { FromVersion = 1, ToVersion = 2, DryRun = true },
+            roles: "ui-admin");
+        dryFailResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dryFail = (await EnvelopeAsync<WorkflowInstanceMigrationResultModel>(dryFailResp)).Data!;
+        dryFail.MigratedCount.Should().Be(0);
+        dryFail.FailedCount.Should().Be(1);
+        dryFail.Items[0].Migrated.Should().BeFalse();
+
+        // 2. Dry-run with stateMap ('draft' -> 'intake') succeeds without mutating the DB
+        var stateMap = new Dictionary<string, string> { ["draft"] = "intake" };
+        using var dryOkResp = await SendAsync(
+            host,
+            HttpMethod.Post,
+            $"{Base}/pipeline/migrate",
+            new WorkflowInstanceMigrationRequest { FromVersion = 1, ToVersion = 2, StateMap = stateMap, DryRun = true },
+            roles: "ui-admin");
+        dryOkResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dryOk = (await EnvelopeAsync<WorkflowInstanceMigrationResultModel>(dryOkResp)).Data!;
+        dryOk.DryRun.Should().BeTrue();
+        dryOk.MigratedCount.Should().Be(1);
+        dryOk.FailedCount.Should().Be(0);
+        dryOk.Items[0].FromState.Should().Be("draft");
+        dryOk.Items[0].ToState.Should().Be("intake");
+
+        // Instance is still v1 / draft after dry-run
+        using var beforeLiveResp = await SendAsync(host, HttpMethod.Get, $"{Base}/pipeline/instances/{instance.Id}");
+        var beforeLive = (await EnvelopeAsync<WorkflowInstanceModel>(beforeLiveResp)).Data!;
+        beforeLive.WorkflowVersion.Should().Be(1);
+        beforeLive.State.Should().Be("draft");
+
+        // 3. Live migration updates version to 2, state to 'intake', records '$migrate' history, and enables v2 transitions
+        using var liveResp = await SendAsync(
+            host,
+            HttpMethod.Post,
+            $"{Base}/pipeline/migrate",
+            new WorkflowInstanceMigrationRequest { FromVersion = 1, ToVersion = 2, StateMap = stateMap, DryRun = false },
+            user: "admin-user",
+            roles: "ui-admin");
+        liveResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var liveResult = (await EnvelopeAsync<WorkflowInstanceMigrationResultModel>(liveResp)).Data!;
+        liveResult.DryRun.Should().BeFalse();
+        liveResult.MigratedCount.Should().Be(1);
+
+        using var afterLiveResp = await SendAsync(host, HttpMethod.Get, $"{Base}/pipeline/instances/{instance.Id}");
+        var afterLive = (await EnvelopeAsync<WorkflowInstanceModel>(afterLiveResp)).Data!;
+        afterLive.WorkflowVersion.Should().Be(2);
+        afterLive.State.Should().Be("intake");
+        afterLive.AvailableTransitions.Select(t => t.Key).Should().Contain("fast-approve");
+
+        using var historyResp = await SendAsync(host, HttpMethod.Get, $"{Base}/pipeline/instances/{instance.Id}/history");
+        var history = (await EnvelopeAsync<List<WorkflowHistoryModel>>(historyResp)).Data!;
+        history.Should().Contain(h => h.TransitionKey == "$migrate" && h.Trigger == "Migration" && h.FromState == "draft" && h.ToState == "intake" && h.ExecutedBy == "admin-user");
+
+        // Execute the v2 transition to completion
+        var completed = await TransitionAsync(host, "pipeline", instance.Id, "fast-approve");
+        completed.Status.Should().Be(WorkflowInstanceStatus.Completed);
+    }
 }

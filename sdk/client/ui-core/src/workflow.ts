@@ -196,6 +196,10 @@ export interface WorkflowInstanceModel {
   /** JSON Schema for editing `pendingInput` before retrying a `Faulted` instance. */
   pendingInputSchema?: WorkflowData | null;
   startedBy?: string | null;
+  /** Username or user ID of the user who currently claimed/was assigned the human task in the current state. */
+  assignedTo?: string | null;
+  /** Timestamp when the current state was claimed or assigned. */
+  assignedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt?: string | null;
@@ -343,10 +347,48 @@ export interface WorkflowInboxItemModel {
   state: string;
   stateTitle?: string | null;
   startedBy?: string | null;
+  /** Username or user ID of the user who currently claimed/was assigned the human task in the current state. */
+  assignedTo?: string | null;
+  /** Timestamp when the current state was claimed or assigned. */
+  assignedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   dueAt?: string | null;
   availableTransitions: AvailableTransitionModel[];
+}
+
+export interface WorkflowAssignRequest {
+  assignedTo?: string | null;
+  users?: string[] | null;
+  roles?: string[] | null;
+}
+
+export interface WorkflowInstanceMigrationRequest {
+  fromVersion?: number | null;
+  toVersion?: number | null;
+  instanceIds?: string[] | null;
+  stateMap?: Record<string, string> | null;
+  dryRun?: boolean;
+}
+
+export interface WorkflowInstanceMigrationItemModel {
+  instanceId: string;
+  key?: string | null;
+  fromVersion: number;
+  toVersion: number;
+  fromState: string;
+  toState: string;
+  migrated: boolean;
+  error?: string | null;
+}
+
+export interface WorkflowInstanceMigrationResultModel {
+  workflow: string;
+  toVersion: number;
+  dryRun: boolean;
+  migratedCount: number;
+  failedCount: number;
+  items: WorkflowInstanceMigrationItemModel[];
 }
 
 export interface WorkflowSimulationStepRequest {
@@ -443,6 +485,7 @@ export interface WorkflowInstanceQuery {
   state?: string | null;
   status?: WorkflowInstanceStatusName | null;
   key?: string | null;
+  assignedTo?: string | null;
   /** Data property filters (`{ fullName: 'Ayşe', segment: 'Kurumsal' }` → `?data.fullName=…&data.segment=…`). */
   data?: Readonly<Record<string, string | null | undefined>> | null;
   page?: number;
@@ -521,6 +564,11 @@ export class WorkflowApiClient extends ApiClientBase {
     return this.send('POST', `${this.workflowRoute(workflow)}/versions/${Math.trunc(version)}/rollback`, undefined, signal);
   }
 
+  /** Migrates active/faulted instances of `workflow` to a target version with optional state mapping (`dryRun: true` previews without persisting). */
+  migrateInstances(workflow: string, request: WorkflowInstanceMigrationRequest = {}, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowInstanceMigrationResultModel>> {
+    return this.send('POST', `${this.workflowRoute(workflow)}/migrate`, request, signal);
+  }
+
   /** Operational summary of faulted instances, busy instances, pending jobs, and unresolved incidents. */
   getOperationsSummary(workflow?: string | null, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowOperationsSummaryModel>> {
     const suffix = query({ workflow });
@@ -533,8 +581,8 @@ export class WorkflowApiClient extends ApiClientBase {
   }
 
   /** Unified human task inbox across all accessible workflows. */
-  listInbox(workflow?: string | null, page = 1, pageSize = 20, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowInboxItemModel[]>> {
-    const suffix = query({ workflow, page: Math.trunc(page), pageSize: Math.trunc(pageSize) });
+  listInbox(workflow?: string | null, page = 1, pageSize = 20, signal?: AbortSignal, assignment?: string | null): Promise<BaseResponseDataModel<WorkflowInboxItemModel[]>> {
+    const suffix = query({ workflow, assignment, page: Math.trunc(page), pageSize: Math.trunc(pageSize) });
     return this.send('GET', `${this.routePrefix}/inbox${suffix}`, undefined, signal);
   }
 
@@ -578,6 +626,7 @@ export class WorkflowApiClient extends ApiClientBase {
       state: filter.state,
       status: filter.status,
       key: filter.key,
+      assignedTo: filter.assignedTo,
     };
     if (filter.data) {
       for (const [field, value] of Object.entries(filter.data)) {
@@ -635,6 +684,22 @@ export class WorkflowApiClient extends ApiClientBase {
     const body = isSig ? undefined : (inputOrSignal ?? undefined);
     const sig = isSig ? inputOrSignal : signal;
     return this.send('POST', `${this.instanceRoute(workflow, id)}/retry`, body, sig);
+  }
+
+  /** Claims an active workflow instance for the current user. */
+  claim(workflow: string, id: string, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowInstanceModel>> {
+    return this.send('POST', `${this.instanceRoute(workflow, id)}/claim`, undefined, signal);
+  }
+
+  /** Releases a claimed workflow instance back to the shared pool. */
+  unclaim(workflow: string, id: string, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowInstanceModel>> {
+    return this.send('POST', `${this.instanceRoute(workflow, id)}/unclaim`, undefined, signal);
+  }
+
+  /** Delegates or assigns an active workflow instance to one or more users or roles (`target` string or `WorkflowAssignRequest`). */
+  assign(workflow: string, id: string, target: string | WorkflowAssignRequest, signal?: AbortSignal): Promise<BaseResponseDataModel<WorkflowInstanceModel>> {
+    const payload: WorkflowAssignRequest = typeof target === 'string' ? { assignedTo: target } : target;
+    return this.send('POST', `${this.instanceRoute(workflow, id)}/assign`, payload, signal);
   }
 
   /**

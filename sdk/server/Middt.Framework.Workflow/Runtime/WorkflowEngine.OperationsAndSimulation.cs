@@ -153,8 +153,18 @@ public sealed partial class WorkflowEngine
     }
 
     /// <summary>Lists actionable human task instances across all accessible workflows for <paramref name="user"/>.</summary>
+    public Task<(List<WorkflowInboxItemModel> Items, int TotalCount)> ListInboxAsync(
+        string? workflow,
+        WorkflowUser user,
+        int page = 1,
+        int pageSize = 20,
+        CancellationToken cancellationToken = default) =>
+        ListInboxAsync(workflow, null, user, page, pageSize, cancellationToken);
+
+    /// <summary>Lists actionable human task instances across all accessible workflows for <paramref name="user"/> with optional assignment filter.</summary>
     public async Task<(List<WorkflowInboxItemModel> Items, int TotalCount)> ListInboxAsync(
         string? workflow,
+        string? assignment,
         WorkflowUser user,
         int page = 1,
         int pageSize = 20,
@@ -188,13 +198,45 @@ public sealed partial class WorkflowEngine
             .Take(500)
             .ToListAsync(cancellationToken);
 
+        var normalizedAssignment = assignment?.Trim();
         var inboxItems = new List<WorkflowInboxItemModel>();
         foreach (var row in activeRows)
         {
             var def = registry.Get(row.WorkflowKey, row.WorkflowVersion);
-            if (!CanSeeAllInstances(def, user) && !string.Equals(row.StartedBy, user.AuditName, StringComparison.Ordinal))
+            if (!CanSeeAllInstances(def, user)
+                && !string.Equals(row.StartedBy, user.AuditName, StringComparison.Ordinal)
+                && !IsAssignedToUser(row, user))
             {
                 continue;
+            }
+
+            if (!string.IsNullOrEmpty(normalizedAssignment) && !string.Equals(normalizedAssignment, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(normalizedAssignment, "mine", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalizedAssignment, "$mine", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalizedAssignment, "assignedToMe", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!IsAssignedToUser(row, user))
+                    {
+                        continue;
+                    }
+                }
+                else if (string.Equals(normalizedAssignment, "unassigned", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(normalizedAssignment, "$unassigned", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrEmpty(row.AssignedTo))
+                    {
+                        continue;
+                    }
+                }
+                else if (string.Equals(normalizedAssignment, "claimed", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(normalizedAssignment, "assigned", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrEmpty(row.AssignedTo))
+                    {
+                        continue;
+                    }
+                }
             }
 
             var model = await ToModelAsync(row, user, cancellationToken);
@@ -218,6 +260,8 @@ public sealed partial class WorkflowEngine
                 State = model.State,
                 StateTitle = model.StateTitle,
                 StartedBy = model.StartedBy,
+                AssignedTo = model.AssignedTo,
+                AssignedAt = model.AssignedAt,
                 CreatedAt = model.CreatedAt,
                 UpdatedAt = model.UpdatedAt,
                 DueAt = dueAt,
@@ -238,6 +282,376 @@ public sealed partial class WorkflowEngine
             .ToList();
 
         return (paged, totalCount);
+    }
+
+    /// <summary>Claims an active workflow instance in its current state for <paramref name="user"/> so other non-supervisor users cannot execute manual transitions until it is unclaimed or leaves the state.</summary>
+    public async Task<WorkflowInstanceModel> ClaimAsync(
+        string? workflow,
+        Guid instanceId,
+        WorkflowUser user,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await FindAccessibleAsync(instanceId, workflow, user, cancellationToken);
+        EnsureActive(snapshot);
+
+        var isCurrentlyAssignee = false;
+        if (!string.IsNullOrEmpty(snapshot.AssignedTo))
+        {
+            isCurrentlyAssignee = IsAssignedToUser(snapshot, user);
+            if (!isCurrentlyAssignee)
+            {
+                throw new WorkflowConflictException($"Bu görev zaten '{snapshot.AssignedTo}' tarafından üstlenilmiş.");
+            }
+
+            if (!IsPoolAssignment(snapshot.AssignedTo))
+            {
+                return await ToModelAsync(snapshot, user, cancellationToken);
+            }
+        }
+
+        var definition = registry.Get(snapshot.WorkflowKey, snapshot.WorkflowVersion);
+        var data = JsonPath.ParseObject(snapshot.Data);
+        var canAct = isCurrentlyAssignee
+            || IsSupervisor(definition, user)
+            || AvailableIn(definition, snapshot.State).Any(t => t.Trigger == TriggerType.Manual && CanExecuteIgnoringAssignee(t, definition, snapshot, data, user));
+        if (!canAct)
+        {
+            throw new WorkflowForbiddenException("Bu adımdaki görevi üstlenme yetkiniz bulunmuyor.");
+        }
+
+        var now = Now;
+        var assignee = user.AuditName;
+        var updated = await db.Instances
+            .Where(i => i.Id == instanceId && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(i => i.AssignedTo, assignee)
+                .SetProperty(i => i.AssignedAt, now)
+                .SetProperty(i => i.UpdatedAt, now)
+                .SetProperty(i => i.Revision, i => i.Revision + 1), cancellationToken);
+
+        if (updated == 0)
+        {
+            throw new WorkflowConflictException("Kayıt başka bir kullanıcı tarafından güncellendi veya üstlenildi; lütfen sayfayı yenileyin.");
+        }
+
+        snapshot.AssignedTo = assignee;
+        snapshot.AssignedAt = now;
+        snapshot.UpdatedAt = now;
+        snapshot.Revision++;
+
+        await PublishDirectEventAsync(snapshot, snapshot.State, "$claim", cancellationToken);
+        return await ToModelAsync(snapshot, user, cancellationToken);
+    }
+
+    /// <summary>Releases (<c>unclaims</c>) an active workflow instance so any authorized user in the current state can claim or execute it.</summary>
+    public async Task<WorkflowInstanceModel> UnclaimAsync(
+        string? workflow,
+        Guid instanceId,
+        WorkflowUser user,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await FindAccessibleAsync(instanceId, workflow, user, cancellationToken);
+        EnsureActive(snapshot);
+
+        if (string.IsNullOrEmpty(snapshot.AssignedTo))
+        {
+            return await ToModelAsync(snapshot, user, cancellationToken);
+        }
+
+        var definition = registry.Get(snapshot.WorkflowKey, snapshot.WorkflowVersion);
+        if (!IsAssignedToUser(snapshot, user) && !IsSupervisor(definition, user))
+        {
+            throw new WorkflowForbiddenException("Yalnızca görevi üstlenen kullanıcı veya bir yönetici görevi bırakabilir.");
+        }
+
+        var now = Now;
+        var updated = await db.Instances
+            .Where(i => i.Id == instanceId && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(i => i.AssignedTo, (string?)null)
+                .SetProperty(i => i.AssignedAt, (DateTime?)null)
+                .SetProperty(i => i.UpdatedAt, now)
+                .SetProperty(i => i.Revision, i => i.Revision + 1), cancellationToken);
+
+        if (updated == 0)
+        {
+            throw new WorkflowConflictException("Kayıt eşzamanlı olarak güncellendi; lütfen sayfayı yenileyin.");
+        }
+
+        snapshot.AssignedTo = null;
+        snapshot.AssignedAt = null;
+        snapshot.UpdatedAt = now;
+        snapshot.Revision++;
+
+        await PublishDirectEventAsync(snapshot, snapshot.State, "$unclaim", cancellationToken);
+        return await ToModelAsync(snapshot, user, cancellationToken);
+    }
+
+    /// <summary>Assigns or delegates (<c>vekalet / devretme</c>) an active workflow instance to one or more target users or roles.</summary>
+    public async Task<WorkflowInstanceModel> AssignAsync(
+        string? workflow,
+        Guid instanceId,
+        WorkflowAssignRequest request,
+        WorkflowUser user,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var targetAssignee = NormalizeAssigneeSpec(request);
+        if (string.IsNullOrWhiteSpace(targetAssignee))
+        {
+            throw new WorkflowValidationException(["Atanacak kullanıcı veya rol ('assignedTo', 'users', 'roles') boş olamaz."]);
+        }
+
+        var snapshot = await FindAccessibleAsync(instanceId, workflow, user, cancellationToken);
+        EnsureActive(snapshot);
+
+        var definition = registry.Get(snapshot.WorkflowKey, snapshot.WorkflowVersion);
+        var data = JsonPath.ParseObject(snapshot.Data);
+        var isSupervisor = IsSupervisor(definition, user);
+        if (string.IsNullOrEmpty(snapshot.AssignedTo))
+        {
+            var canAct = isSupervisor
+                || AvailableIn(definition, snapshot.State).Any(t => t.Trigger == TriggerType.Manual && CanExecuteIgnoringAssignee(t, definition, snapshot, data, user));
+            if (!canAct)
+            {
+                throw new WorkflowForbiddenException("Bu adımdaki görevi atama yetkiniz bulunmuyor.");
+            }
+        }
+        else if (!IsAssignedToUser(snapshot, user) && !isSupervisor)
+        {
+            throw new WorkflowForbiddenException("Yalnızca görevi üstlenen kullanıcı veya bir yönetici görevi başkasına devredebilir.");
+        }
+
+        var now = Now;
+        var updated = await db.Instances
+            .Where(i => i.Id == instanceId && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(i => i.AssignedTo, targetAssignee)
+                .SetProperty(i => i.AssignedAt, now)
+                .SetProperty(i => i.UpdatedAt, now)
+                .SetProperty(i => i.Revision, i => i.Revision + 1), cancellationToken);
+
+        if (updated == 0)
+        {
+            throw new WorkflowConflictException("Kayıt eşzamanlı olarak güncellendi; lütfen sayfayı yenileyin.");
+        }
+
+        snapshot.AssignedTo = targetAssignee;
+        snapshot.AssignedAt = now;
+        snapshot.UpdatedAt = now;
+        snapshot.Revision++;
+
+        await PublishDirectEventAsync(snapshot, snapshot.State, "$assign", cancellationToken);
+        return await ToModelAsync(snapshot, user, cancellationToken);
+    }
+
+    /// <summary>Migrates active (and optionally faulted) workflow instances to a target workflow definition version with optional state mapping and dry-run validation.</summary>
+    public async Task<WorkflowInstanceMigrationResultModel> MigrateInstancesAsync(
+        string workflow,
+        WorkflowInstanceMigrationRequest request,
+        WorkflowUser user,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!user.IsSystem && !user.IsInRole("ui-admin") && !user.IsInRole("idp-admin"))
+        {
+            throw new WorkflowForbiddenException("Migrating workflow instances requires the 'ui-admin' or 'idp-admin' role.");
+        }
+
+        var targetDef = request.ToVersion is { } tv ? registry.Get(workflow, tv) : registry.GetLatest(workflow);
+        var query = db.Instances.Where(i => i.WorkflowKey == targetDef.Key);
+
+        if (request.IncludeFaulted)
+        {
+            query = query.Where(i => i.Status == WorkflowInstanceStatus.Active || i.Status == WorkflowInstanceStatus.Faulted);
+        }
+        else
+        {
+            query = query.Where(i => i.Status == WorkflowInstanceStatus.Active);
+        }
+
+        if (request.FromVersion is { } fv)
+        {
+            query = query.Where(i => i.WorkflowVersion == fv);
+        }
+        else
+        {
+            query = query.Where(i => i.WorkflowVersion != targetDef.Version);
+        }
+
+        if (request.InstanceIds is { Count: > 0 })
+        {
+            var idSet = request.InstanceIds.ToHashSet();
+            query = query.Where(i => idSet.Contains(i.Id));
+        }
+
+        var candidates = await query
+            .OrderByDescending(i => i.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
+        var result = new WorkflowInstanceMigrationResultModel
+        {
+            Workflow = targetDef.Key,
+            ToVersion = targetDef.Version,
+            DryRun = request.DryRun,
+            CandidateCount = candidates.Count,
+        };
+
+        if (candidates.Count == 0)
+        {
+            return result;
+        }
+
+        var plans = new List<(WorkflowInstance Instance, int FromVersion, string FromState, string ToState)>(candidates.Count);
+        foreach (var instance in candidates)
+        {
+            var fromState = instance.State;
+            var toState = fromState;
+            if (request.StateMap is not null
+                && request.StateMap.TryGetValue(fromState, out var mapped)
+                && !string.IsNullOrWhiteSpace(mapped))
+            {
+                toState = mapped.Trim();
+            }
+
+            if (targetDef.FindState(toState) is null)
+            {
+                var err = $"Hedef sürüm v{targetDef.Version} içinde '{toState}' durumu bulunamadı (kaynak durum: '{fromState}'). Lütfen stateMap eşlemesi tanımlayın.";
+                result.FailedCount++;
+                result.Errors.Add($"[{instance.BusinessKey ?? instance.Id.ToString()}] {err}");
+                result.Items.Add(new WorkflowInstanceMigrationItemModel
+                {
+                    InstanceId = instance.Id,
+                    Key = instance.BusinessKey,
+                    FromVersion = instance.WorkflowVersion,
+                    ToVersion = targetDef.Version,
+                    FromState = fromState,
+                    ToState = toState,
+                    Migrated = false,
+                    Error = err,
+                });
+            }
+            else
+            {
+                plans.Add((instance, instance.WorkflowVersion, fromState, toState));
+                result.Items.Add(new WorkflowInstanceMigrationItemModel
+                {
+                    InstanceId = instance.Id,
+                    Key = instance.BusinessKey,
+                    FromVersion = instance.WorkflowVersion,
+                    ToVersion = targetDef.Version,
+                    FromState = fromState,
+                    ToState = toState,
+                    Migrated = true,
+                });
+            }
+        }
+
+        if (result.FailedCount > 0)
+        {
+            foreach (var item in result.Items)
+            {
+                if (item.Error is null)
+                {
+                    item.Migrated = false;
+                }
+            }
+
+            return result;
+        }
+
+        result.MigratedCount = plans.Count;
+        if (request.DryRun)
+        {
+            return result;
+        }
+
+        var now = Now;
+        foreach (var (instance, fromVersion, fromState, toState) in plans)
+        {
+            instance.WorkflowVersion = targetDef.Version;
+            instance.State = toState;
+            instance.UpdatedAt = now;
+            instance.Revision++;
+
+            if (fromState != toState)
+            {
+                var pendingScheduled = await db.Jobs
+                    .Where(j => j.InstanceId == instance.Id && j.Kind == WorkflowJobKind.Scheduled && j.State == fromState)
+                    .ToListAsync(cancellationToken);
+                foreach (var job in pendingScheduled)
+                {
+                    job.State = toState;
+                }
+            }
+
+            if (targetDef.History != HistoryMode.None)
+            {
+                db.History.Add(new WorkflowHistory
+                {
+                    InstanceId = instance.Id,
+                    WorkflowKey = instance.WorkflowKey,
+                    TransitionKey = "$migrate",
+                    FromState = fromState,
+                    ToState = toState,
+                    Trigger = "Migration",
+                    ExecutedBy = user.AuditName,
+                    Input = new JsonObject
+                    {
+                        ["fromVersion"] = fromVersion,
+                        ["toVersion"] = targetDef.Version,
+                        ["fromState"] = fromState,
+                        ["toState"] = toState,
+                    }.ToJsonString(),
+                    DataVersion = instance.DataVersion,
+                    Data = targetDef.History == HistoryMode.Full ? instance.Data : null,
+                    Patch = targetDef.History == HistoryMode.Delta ? "[]" : null,
+                    StartedAt = now,
+                    FinishedAt = now,
+                });
+            }
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        foreach (var (instance, _, fromState, _) in plans)
+        {
+            await PublishDirectEventAsync(instance, fromState, "$migrate", cancellationToken);
+        }
+
+        return result;
+    }
+
+    private async Task PublishDirectEventAsync(WorkflowInstance instance, string? fromState, string transition, CancellationToken cancellationToken)
+    {
+        if (EventHandlers.Length == 0)
+        {
+            return;
+        }
+
+        var ev = new WorkflowEvent(
+            WorkflowEventType.StateChanged,
+            instance.Id,
+            instance.WorkflowKey,
+            instance.WorkflowVersion,
+            instance.BusinessKey,
+            fromState,
+            instance.State,
+            transition,
+            [],
+            Now);
+
+        foreach (var handler in EventHandlers)
+        {
+            try
+            {
+                await handler.HandleAsync(ev, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogHandlerFailed(logger, ex, handler.GetType().Name, ev.Type, instance.Id);
+            }
+        }
     }
 
     /// <summary>Executes a dry-run simulation of a workflow definition in memory without writing to the database.</summary>

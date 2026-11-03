@@ -247,11 +247,17 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<WorkflowBatchOperationResultModel>.Success(result, result.SucceededIds.Count);
         }).WithName("RetryWorkflowBatch");
 
-        group.MapGet("inbox", async (string? workflow, int? page, int? pageSize, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        group.MapGet("inbox", async (string? workflow, string? assignment, int? page, int? pageSize, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
         {
-            var (items, totalCount) = await engine.ListInboxAsync(workflow, WorkflowUser.From(principal), page ?? 1, pageSize ?? 20, ct);
+            var (items, totalCount) = await engine.ListInboxAsync(workflow, assignment, WorkflowUser.From(principal), page ?? 1, pageSize ?? 20, ct);
             return BaseResponseDataModel<List<WorkflowInboxItemModel>>.Success(items, totalCount);
         }).WithName("ListWorkflowInbox");
+
+        group.MapPost("{workflow}/migrate", async (string workflow, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] WorkflowInstanceMigrationRequest? request, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            var result = await engine.MigrateInstancesAsync(workflow, request ?? new WorkflowInstanceMigrationRequest(), WorkflowUser.From(principal), ct);
+            return BaseResponseDataModel<WorkflowInstanceMigrationResultModel>.Success(result, result.MigratedCount);
+        }).WithName("MigrateWorkflowInstances");
 
         group.MapPost("{workflow}/simulate", async (string workflow, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] WorkflowSimulationRequest? request, WorkflowEngine engine, ClaimsPrincipal principal, CancellationToken ct) =>
         {
@@ -400,10 +406,10 @@ public static class WorkflowEndpoints
             return Results.Ok(body);
         }).WithName("StartWorkflowInstance");
 
-        group.MapGet("{workflow}/instances", async (string workflow, string? state, WorkflowInstanceStatus? status, string? key, int? page, int? pageSize, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+        group.MapGet("{workflow}/instances", async (string workflow, string? state, WorkflowInstanceStatus? status, string? key, string? assignedTo, int? page, int? pageSize, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
         {
             var filter = ExtractDataFilter(http.Request.Query);
-            var (items, count) = await engine.ListAsync(workflow, WorkflowUser.From(principal), state, status, key, page ?? 1, pageSize ?? 20, filter, ct);
+            var (items, count) = await engine.ListAsync(workflow, WorkflowUser.From(principal), state, status, key, page ?? 1, pageSize ?? 20, filter, assignedTo, ct);
             return BaseResponseDataModel<List<WorkflowInstanceModel>>.Success(items, count);
         }).WithName("ListWorkflowInstances");
 
@@ -476,6 +482,27 @@ public static class WorkflowEndpoints
             var enrichedInput = input is { Count: > 0 } ? WorkflowHttpInput.FromHttpContext(http, input) : null;
             return BaseResponseDataModel<WorkflowInstanceModel>.Success(await engine.RetryAsync(workflow, id, enrichedInput, WorkflowUser.From(principal), ct), 1);
         }).WithName("RetryWorkflowInstance");
+
+        group.MapPost("{workflow}/instances/{id:guid}/claim", async (string workflow, Guid id, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+        {
+            var instance = await engine.ClaimAsync(workflow, id, WorkflowUser.From(principal), ct);
+            http.Response.Headers.ETag = ComputeInstanceETag(instance);
+            return BaseResponseDataModel<WorkflowInstanceModel>.Success(instance, 1);
+        }).WithName("ClaimWorkflowInstance");
+
+        group.MapPost("{workflow}/instances/{id:guid}/unclaim", async (string workflow, Guid id, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+        {
+            var instance = await engine.UnclaimAsync(workflow, id, WorkflowUser.From(principal), ct);
+            http.Response.Headers.ETag = ComputeInstanceETag(instance);
+            return BaseResponseDataModel<WorkflowInstanceModel>.Success(instance, 1);
+        }).WithName("UnclaimWorkflowInstance");
+
+        group.MapPost("{workflow}/instances/{id:guid}/assign", async (string workflow, Guid id, WorkflowAssignRequest request, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+        {
+            var instance = await engine.AssignAsync(workflow, id, request, WorkflowUser.From(principal), ct);
+            http.Response.Headers.ETag = ComputeInstanceETag(instance);
+            return BaseResponseDataModel<WorkflowInstanceModel>.Success(instance, 1);
+        }).WithName("AssignWorkflowInstance");
 
         group.MapPost("{workflow}/instances/{id:guid}/messages/{message}", (string workflow, Guid id, string message, string? bufferFor, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] JsonObject? data, WorkflowEngine engine, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
             DeliverMessageAsync(new WorkflowMessage { Name = message, Workflow = workflow, InstanceId = id, Data = data, BufferFor = ParseBuffer(bufferFor) }, engine, principal, http, ct))
@@ -612,7 +639,7 @@ public static class WorkflowEndpoints
 
     private static readonly HashSet<string> ReservedInstanceQueryKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "state", "status", "key", "page", "pageSize",
+        "state", "status", "key", "assignedTo", "page", "pageSize",
     };
 
     private static Dictionary<string, string?>? ExtractDataFilter(IQueryCollection query)
@@ -734,5 +761,5 @@ public static class WorkflowEndpoints
     }
 
     private static string ComputeInstanceETag(WorkflowInstanceModel instance) =>
-        $"\"{instance.Id:N}-v{instance.DataVersion}-{instance.State}-{instance.Status}-{instance.UpdatedAt.Ticks}-{instance.ActiveSubFlow?.DataVersion}-{instance.ActiveSubFlow?.State}\"";
+        $"\"{instance.Id:N}-v{instance.DataVersion}-wfv{instance.WorkflowVersion}-{instance.State}-{instance.Status}-{instance.AssignedTo}-{instance.UpdatedAt.Ticks}-{instance.ActiveSubFlow?.DataVersion}-{instance.ActiveSubFlow?.State}\"";
 }

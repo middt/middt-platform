@@ -51,6 +51,7 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             e.Property(x => x.PendingTransition).HasMaxLength(128);
             e.Property(x => x.StartedBy).HasMaxLength(256);
             e.Property(x => x.LastExecutedBy).HasMaxLength(256);
+            e.Property(x => x.AssignedTo).HasMaxLength(256);
             e.Property(x => x.Revision).IsConcurrencyToken();
             e.Ignore(x => x.IsTerminal);
             e.Ignore(x => x.Data);
