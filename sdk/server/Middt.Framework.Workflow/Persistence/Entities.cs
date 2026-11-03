@@ -107,6 +107,12 @@ public sealed class WorkflowInstance
     /// <summary>Actor who executed the last manual transition (used by <c>$previousUser</c> role rules).</summary>
     public string? LastExecutedBy { get; set; }
 
+    /// <summary>Actor who currently claimed or was assigned this instance in its current state (<c>null</c> when unassigned).</summary>
+    public string? AssignedTo { get; set; }
+
+    /// <summary>UTC timestamp when <see cref="AssignedTo"/> was set (<c>null</c> when unassigned).</summary>
+    public DateTime? AssignedAt { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }

@@ -104,6 +104,8 @@ public sealed partial class WorkflowEngine
             ["state"] = instance.State,
             ["workflow"] = definition.Key,
             ["version"] = definition.Version,
+            ["assignedTo"] = instance.AssignedTo,
+            ["assignedAt"] = instance.AssignedAt,
             ["agents"] = agents?.DeepClone() ?? new JsonObject(),
             ["agentRuns"] = agentRuns?.DeepClone() ?? new JsonArray(),
             ["toolCalls"] = toolCalls?.DeepClone() ?? new JsonArray(),
@@ -116,7 +118,235 @@ public sealed partial class WorkflowEngine
     private static bool IsCancellation(WorkflowDefinition definition, TransitionDefinition transition) =>
         definition.FindState(transition.Target) is { IsFinal: true };
 
+    private static readonly char[] AssigneeSeparators = [',', ';'];
+
+    internal static IReadOnlyList<string> ParseAssigneeTokens(string? assignedTo)
+    {
+        if (string.IsNullOrWhiteSpace(assignedTo))
+        {
+            return [];
+        }
+
+        return assignedTo
+            .Split(AssigneeSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(t => t.Length > 0)
+            .ToArray();
+    }
+
+    internal static bool IsRoleAssigneeToken(string token, out string roleName)
+    {
+        if (token.StartsWith("role:", StringComparison.OrdinalIgnoreCase))
+        {
+            roleName = token["role:".Length..].Trim();
+            return roleName.Length > 0;
+        }
+
+        if (token.StartsWith("$role:", StringComparison.OrdinalIgnoreCase))
+        {
+            roleName = token["$role:".Length..].Trim();
+            return roleName.Length > 0;
+        }
+
+        if (token.StartsWith('@') && token.Length > 1)
+        {
+            roleName = token[1..].Trim();
+            return roleName.Length > 0;
+        }
+
+        roleName = string.Empty;
+        return false;
+    }
+
+    internal static string NormalizeUserAssigneeToken(string token)
+    {
+        if (token.StartsWith("user:", StringComparison.OrdinalIgnoreCase))
+        {
+            return token["user:".Length..].Trim();
+        }
+
+        if (token.StartsWith("$user:", StringComparison.OrdinalIgnoreCase))
+        {
+            return token["$user:".Length..].Trim();
+        }
+
+        return token.Trim();
+    }
+
+    internal static string NormalizeAssigneeSpec(WorkflowAssignRequest request)
+    {
+        var normalized = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddToken(string raw, bool forceRole = false)
+        {
+            var trimmed = raw.Trim();
+            if (trimmed.Length == 0)
+            {
+                return;
+            }
+
+            string canonical;
+            if (forceRole)
+            {
+                var r = IsRoleAssigneeToken(trimmed, out var extracted) ? extracted : trimmed;
+                if (r.Length == 0)
+                {
+                    return;
+                }
+
+                canonical = $"role:{r}";
+            }
+            else if (IsRoleAssigneeToken(trimmed, out var roleName))
+            {
+                canonical = $"role:{roleName}";
+            }
+            else
+            {
+                var u = NormalizeUserAssigneeToken(trimmed);
+                if (u.Length == 0)
+                {
+                    return;
+                }
+
+                canonical = u;
+            }
+
+            if (seen.Add(canonical))
+            {
+                normalized.Add(canonical);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.AssignedTo))
+        {
+            foreach (var part in ParseAssigneeTokens(request.AssignedTo))
+            {
+                AddToken(part);
+            }
+        }
+
+        if (request.Users is { Count: > 0 })
+        {
+            foreach (var u in request.Users)
+            {
+                if (!string.IsNullOrWhiteSpace(u))
+                {
+                    foreach (var part in ParseAssigneeTokens(u))
+                    {
+                        AddToken(part);
+                    }
+                }
+            }
+        }
+
+        if (request.Roles is { Count: > 0 })
+        {
+            foreach (var r in request.Roles)
+            {
+                if (!string.IsNullOrWhiteSpace(r))
+                {
+                    foreach (var part in ParseAssigneeTokens(r))
+                    {
+                        AddToken(part, forceRole: true);
+                    }
+                }
+            }
+        }
+
+        return string.Join(", ", normalized);
+    }
+
+    /// <summary>Returns <c>true</c> when <paramref name="assignedTo"/> targets multiple users or any role pool rather than a single exclusive user.</summary>
+    internal static bool IsPoolAssignment(string? assignedTo)
+    {
+        var tokens = ParseAssigneeTokens(assignedTo);
+        if (tokens.Count == 0)
+        {
+            return false;
+        }
+
+        return tokens.Count > 1 || IsRoleAssigneeToken(tokens[0], out _);
+    }
+
+    internal static bool IsAssignedToUser(WorkflowInstance instance, WorkflowUser user) =>
+        IsAssignedToUser(instance.AssignedTo, user);
+
+    internal static bool IsAssignedToUser(string? assignedTo, WorkflowUser user)
+    {
+        var tokens = ParseAssigneeTokens(assignedTo);
+        if (tokens.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var token in tokens)
+        {
+            if (IsRoleAssigneeToken(token, out var roleName))
+            {
+                if (user.IsInRole(roleName))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            var userToken = NormalizeUserAssigneeToken(token);
+            if (string.Equals(userToken, user.AuditName, StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrEmpty(user.Id) && string.Equals(userToken, user.Id, StringComparison.OrdinalIgnoreCase))
+                || (!string.IsNullOrEmpty(user.Name) && string.Equals(userToken, user.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static bool IsSupervisor(WorkflowDefinition definition, WorkflowUser user) =>
+        user.IsSystem
+        || user.IsInRole("ui-admin")
+        || user.IsInRole("idp-admin")
+        || user.IsInRole("manager")
+        || (definition.InstanceAccess?.SupervisorRoles.Any(user.IsInRole) == true);
+
     private bool CanExecute(TransitionDefinition transition, WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user)
+    {
+        if (user.IsSystem)
+        {
+            return true;
+        }
+
+        if (transition.Trigger == TriggerType.Manual && !string.IsNullOrEmpty(instance.AssignedTo))
+        {
+            var isAssignee = IsAssignedToUser(instance, user);
+            if (!isAssignee && !IsSupervisor(definition, user))
+            {
+                return false;
+            }
+
+            if (isAssignee)
+            {
+                if (transition.DenyRoles.Count > 0 && transition.DenyRoles.Any(r => MatchesRoleEntry(r, definition, instance, data, user)))
+                {
+                    return false;
+                }
+
+                if (CanExecuteIgnoringAssignee(transition, definition, instance, data, user))
+                {
+                    return true;
+                }
+
+                var isStrictlyActorBound = transition.Roles.Count > 0
+                    && transition.Roles.All(r => r is "$starter" or "$owner" or "$previousUser");
+                return !isStrictlyActorBound;
+            }
+        }
+
+        return CanExecuteIgnoringAssignee(transition, definition, instance, data, user);
+    }
+
+    private bool CanExecuteIgnoringAssignee(TransitionDefinition transition, WorkflowDefinition definition, WorkflowInstance instance, JsonObject data, WorkflowUser user)
     {
         if (user.IsSystem)
         {
@@ -195,6 +425,11 @@ public sealed partial class WorkflowEngine
                 string.Equals(instance.StartedBy, user.AuditName, StringComparison.Ordinal);
         }
 
+        if (roleEntry == "$assignee")
+        {
+            return IsAssignedToUser(instance, user);
+        }
+
         if (roleEntry == "$previousUser")
         {
             var prev = instance.LastExecutedBy ?? instance.StartedBy;
@@ -237,8 +472,15 @@ public sealed partial class WorkflowEngine
     /// <summary>Definition roles plus, in <c>owner</c> mode, ownership of the instance (others get 404: no existence disclosure).</summary>
     private static void EnsureCanAccess(WorkflowDefinition definition, WorkflowInstance instance, WorkflowUser user)
     {
-        EnsureCanRead(definition, user);
-        if (!CanSeeAllInstances(definition, user) && !string.Equals(instance.StartedBy, user.AuditName, StringComparison.Ordinal))
+        var isAssignee = IsAssignedToUser(instance, user);
+        if (!isAssignee)
+        {
+            EnsureCanRead(definition, user);
+        }
+
+        if (!CanSeeAllInstances(definition, user)
+            && !string.Equals(instance.StartedBy, user.AuditName, StringComparison.Ordinal)
+            && !isAssignee)
         {
             throw new WorkflowNotFoundException($"Instance '{instance.Id}' does not exist.");
         }
@@ -458,6 +700,8 @@ public sealed partial class WorkflowEngine
             PendingInput = pendingInputModel,
             PendingInputSchema = pendingInputSchema,
             StartedBy = instance.StartedBy,
+            AssignedTo = instance.AssignedTo,
+            AssignedAt = instance.AssignedAt,
             CreatedAt = instance.CreatedAt,
             UpdatedAt = instance.UpdatedAt,
             CompletedAt = instance.CompletedAt,

@@ -176,6 +176,11 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
                     var lower = text.ToLowerInvariant();
                     query = query.Where(i => i.LastExecutedBy != null && i.LastExecutedBy.ToLower().Contains(lower));
                 }
+                else if (string.Equals(k, "assignedTo", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lower = text.ToLowerInvariant();
+                    query = query.Where(i => i.AssignedTo != null && i.AssignedTo.ToLower().Contains(lower));
+                }
                 else
                 {
                     rawDataFilters[k] = text;
@@ -444,6 +449,10 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
         flat["status"] = instance.Status.ToString();
         flat["startedBy"] = instance.StartedBy;
         flat["lastExecutedBy"] = instance.LastExecutedBy;
+        flat["assignedTo"] = instance.AssignedTo;
+        flat["assignedAt"] = instance.AssignedAt.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(instance.AssignedAt.Value, DateTimeKind.Utc))
+            : null;
         flat["createdAt"] = new DateTimeOffset(DateTime.SpecifyKind(instance.CreatedAt, DateTimeKind.Utc));
         flat["updatedAt"] = new DateTimeOffset(DateTime.SpecifyKind(instance.UpdatedAt, DateTimeKind.Utc));
         return flat;
@@ -507,6 +516,11 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
                 ordered = ascending
                     ? query.OrderBy(i => i.LastExecutedBy).ThenBy(i => i.Id)
                     : query.OrderByDescending(i => i.LastExecutedBy).ThenByDescending(i => i.Id);
+                return true;
+            case "assignedto":
+                ordered = ascending
+                    ? query.OrderBy(i => i.AssignedTo).ThenBy(i => i.Id)
+                    : query.OrderByDescending(i => i.AssignedTo).ThenByDescending(i => i.Id);
                 return true;
             default:
                 ordered = query;

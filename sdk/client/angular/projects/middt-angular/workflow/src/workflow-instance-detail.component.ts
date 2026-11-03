@@ -104,6 +104,9 @@ export class MiddtWorkflowInstanceDetailComponent {
   protected readonly retrying = signal(false);
   protected readonly editingRetryInput = signal(false);
   protected readonly retryErrors = signal<string[]>([]);
+  protected readonly claiming = signal(false);
+  protected readonly assigningOpen = signal(false);
+  protected readonly assignTargetUser = signal('');
   protected readonly executing = signal(false);
   protected readonly pendingTransition = signal<AvailableTransitionModel | null>(null);
   protected readonly transitionErrors = signal<string[]>([]);
@@ -320,6 +323,8 @@ export class MiddtWorkflowInstanceDetailComponent {
       this.pendingTransition.set(null);
       this.editingRetryInput.set(false);
       this.retryErrors.set([]);
+      this.assigningOpen.set(false);
+      this.assignTargetUser.set('');
       details = true;
     }
 
@@ -528,6 +533,112 @@ export class MiddtWorkflowInstanceDetailComponent {
     }
 
     this.#startPollingIfPending();
+  }
+
+  protected isPoolAssigned(assignedTo?: string | null): boolean {
+    if (!assignedTo) {
+      return false;
+    }
+
+    const trimmed = assignedTo.trim().toLowerCase();
+    return trimmed.includes(',') || trimmed.includes(';') || trimmed.startsWith('role:') || trimmed.startsWith('$role:') || trimmed.startsWith('@');
+  }
+
+  protected toggleAssignEditor(): void {
+    if (!this.claiming()) {
+      const next = !this.assigningOpen();
+      this.assigningOpen.set(next);
+      if (next && !this.assignTargetUser().trim()) {
+        this.assignTargetUser.set(this.instance()?.assignedTo ?? '');
+      }
+    }
+  }
+
+  protected closeAssignEditor(): void {
+    if (!this.claiming()) {
+      this.assigningOpen.set(false);
+    }
+  }
+
+  protected onAssignInput(event: Event): void {
+    this.assignTargetUser.set((event.target as HTMLInputElement).value);
+  }
+
+  protected async claimInstance(): Promise<void> {
+    const instance = this.instance();
+    if (instance === null || this.claiming()) {
+      return;
+    }
+
+    this.claiming.set(true);
+    try {
+      const response = await this.#client.claim(this.workflow(), instance.id, this.#abort.signal);
+      if (!isSuccess(response) || !response.data) {
+        this.#notify.error('Görev üstlenilemedi', errorText(response));
+        return;
+      }
+
+      this.assigningOpen.set(false);
+      this.#notify.success('Görev üstlenildi', `Üstlenen: ${response.data.assignedTo ?? '-'}`);
+      await this.#load();
+      this.changed.emit(this.instance() ?? response.data);
+    } catch {
+      // aborted
+    } finally {
+      this.claiming.set(false);
+    }
+  }
+
+  protected async unclaimInstance(): Promise<void> {
+    const instance = this.instance();
+    if (instance === null || this.claiming()) {
+      return;
+    }
+
+    this.claiming.set(true);
+    try {
+      const response = await this.#client.unclaim(this.workflow(), instance.id, this.#abort.signal);
+      if (!isSuccess(response) || !response.data) {
+        this.#notify.error('Görev bırakılamadı', errorText(response));
+        return;
+      }
+
+      this.assigningOpen.set(false);
+      this.#notify.success('Görev bırakıldı', 'Görev havuza geri bırakıldı.');
+      await this.#load();
+      this.changed.emit(this.instance() ?? response.data);
+    } catch {
+      // aborted
+    } finally {
+      this.claiming.set(false);
+    }
+  }
+
+  protected async submitAssign(): Promise<void> {
+    const instance = this.instance();
+    const target = this.assignTargetUser().trim();
+    if (instance === null || this.claiming() || !target) {
+      return;
+    }
+
+    this.claiming.set(true);
+    try {
+      const response = await this.#client.assign(this.workflow(), instance.id, target, this.#abort.signal);
+      if (!isSuccess(response) || !response.data) {
+        this.#notify.error('Görev atanamadı', errorText(response));
+        return;
+      }
+
+      this.assigningOpen.set(false);
+      this.assignTargetUser.set('');
+      this.#notify.success('Görev atandı', `Yeni üstlenen: ${response.data.assignedTo ?? target}`);
+      await this.#load();
+      this.changed.emit(this.instance() ?? response.data);
+    } catch {
+      // aborted
+    } finally {
+      this.claiming.set(false);
+    }
   }
 
   protected toggleRetryEditor(): void {

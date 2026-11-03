@@ -28,6 +28,9 @@ public partial class WorkflowInstanceDetail
     private bool editingRetryInput;
     private JsonSchemaForm? retryForm;
     private List<string> retryErrors = [];
+    private bool claiming;
+    private bool assigningOpen;
+    private string assignTargetUser = string.Empty;
 
     private AvailableTransitionModel? pendingTransition;
     private bool pendingHasInput;
@@ -143,6 +146,8 @@ public partial class WorkflowInstanceDetail
             stepErrors = [];
             editingRetryInput = false;
             retryErrors = [];
+            assigningOpen = false;
+            assignTargetUser = string.Empty;
         }
 
         loadedId = InstanceId;
@@ -190,6 +195,8 @@ public partial class WorkflowInstanceDetail
         {
             editingRetryInput = false;
             retryErrors = [];
+            assigningOpen = false;
+            assignTargetUser = string.Empty;
         }
 
         if (IsFirstRenderCompleted)
@@ -345,7 +352,7 @@ public partial class WorkflowInstanceDetail
         get
         {
             var key = instance is null ? default(LayoutVariablesKey?)
-                : new LayoutVariablesKey(instance.Id, instance.DataVersion, instance.ActiveSubFlow?.DataVersion ?? 0, instance.AgentRuns.Count, instance.UpdatedAt, instance.Layout, instance.Key, instance.State, instance.StateTitle, instance.Workflow, instance.Status, instance.StartedBy);
+                : new LayoutVariablesKey(instance.Id, instance.DataVersion, instance.ActiveSubFlow?.DataVersion ?? 0, instance.AgentRuns.Count, instance.UpdatedAt, instance.Layout, instance.Key, instance.State, instance.StateTitle, instance.Workflow, instance.Status, instance.StartedBy, instance.AssignedTo);
             if (layoutVariables is null || layoutVariablesKey != key)
             {
                 layoutVariablesKey = key;
@@ -372,6 +379,8 @@ public partial class WorkflowInstanceDetail
                         ["workflow"] = instance.ActiveSubFlow?.Workflow ?? instance.Workflow,
                         ["status"] = instance.Status.ToString(),
                         ["startedBy"] = instance.StartedBy,
+                        ["assignedTo"] = instance.AssignedTo,
+                        ["assignedAt"] = instance.AssignedAt,
                         ["agents"] = (instance.ActiveSubFlow?.Agents ?? instance.Agents).DeepClone(),
                         ["agentRuns"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ActiveSubFlow?.AgentRuns ?? instance.AgentRuns, System.Text.Json.JsonSerializerOptions.Web),
                         ["toolCalls"] = System.Text.Json.JsonSerializer.SerializeToNode(instance.ActiveSubFlow?.ToolCalls ?? instance.ToolCalls, System.Text.Json.JsonSerializerOptions.Web),
@@ -413,7 +422,7 @@ public partial class WorkflowInstanceDetail
     private LayoutVariablesKey? layoutVariablesKey;
 
     private readonly record struct LayoutVariablesKey(
-        Guid Id, int DataVersion, int SubFlowDataVersion, int AgentRunCount, DateTime UpdatedAt, string? Layout, string? Key, string State, string? StateTitle, string Workflow, WorkflowInstanceStatus Status, string? StartedBy);
+        Guid Id, int DataVersion, int SubFlowDataVersion, int AgentRunCount, DateTime UpdatedAt, string? Layout, string? Key, string State, string? StateTitle, string Workflow, WorkflowInstanceStatus Status, string? StartedBy, string? AssignedTo);
 
     /// <summary>Whether a step form is rendered inside the screen (wizard).</summary>
     private bool ShowStepForm => stepTransition is not null && instance is not null;
@@ -606,6 +615,120 @@ public partial class WorkflowInstanceDetail
         }
     }
 
+    private void ToggleAssignEditor()
+    {
+        if (!claiming)
+        {
+            assigningOpen = !assigningOpen;
+            if (assigningOpen && string.IsNullOrWhiteSpace(assignTargetUser))
+            {
+                assignTargetUser = instance?.AssignedTo ?? string.Empty;
+            }
+        }
+    }
+
+    private void CloseAssignEditor()
+    {
+        if (!claiming)
+        {
+            assigningOpen = false;
+        }
+    }
+
+    private async Task ClaimInstanceAsync()
+    {
+        if (instance is null || claiming)
+        {
+            return;
+        }
+
+        claiming = true;
+        try
+        {
+            await ExecuteMethod(async () =>
+            {
+                var response = await WorkflowClient.ClaimAsync(Workflow, instance.Id, ComponentCancellation);
+                if (!response.IsSuccess || response.Data is null)
+                {
+                    Notification.ShowErrorMessage("Görev üstlenilemedi", response.ErrorText);
+                    return;
+                }
+
+                assigningOpen = false;
+                Notification.ShowSuccessMessage("Görev üstlenildi", $"Üstlenen: {response.Data.AssignedTo}");
+                await LoadAsync();
+                await OnChanged.InvokeAsync(instance ?? response.Data);
+            });
+        }
+        finally
+        {
+            claiming = false;
+        }
+    }
+
+    private async Task UnclaimInstanceAsync()
+    {
+        if (instance is null || claiming)
+        {
+            return;
+        }
+
+        claiming = true;
+        try
+        {
+            await ExecuteMethod(async () =>
+            {
+                var response = await WorkflowClient.UnclaimAsync(Workflow, instance.Id, ComponentCancellation);
+                if (!response.IsSuccess || response.Data is null)
+                {
+                    Notification.ShowErrorMessage("Görev bırakılamadı", response.ErrorText);
+                    return;
+                }
+
+                assigningOpen = false;
+                Notification.ShowSuccessMessage("Görev bırakıldı", "Görev havuza geri bırakıldı.");
+                await LoadAsync();
+                await OnChanged.InvokeAsync(instance ?? response.Data);
+            });
+        }
+        finally
+        {
+            claiming = false;
+        }
+    }
+
+    private async Task SubmitAssignAsync()
+    {
+        if (instance is null || claiming || string.IsNullOrWhiteSpace(assignTargetUser))
+        {
+            return;
+        }
+
+        claiming = true;
+        try
+        {
+            await ExecuteMethod(async () =>
+            {
+                var response = await WorkflowClient.AssignAsync(Workflow, instance.Id, assignTargetUser.Trim(), ComponentCancellation);
+                if (!response.IsSuccess || response.Data is null)
+                {
+                    Notification.ShowErrorMessage("Görev atanamadı", response.ErrorText);
+                    return;
+                }
+
+                assigningOpen = false;
+                assignTargetUser = string.Empty;
+                Notification.ShowSuccessMessage("Görev atandı", $"Yeni üstlenen: {response.Data.AssignedTo}");
+                await LoadAsync();
+                await OnChanged.InvokeAsync(instance ?? response.Data);
+            });
+        }
+        finally
+        {
+            claiming = false;
+        }
+    }
+
     private Task RetryAsync() => RetryCoreAsync(null);
 
     private async Task SubmitRetryWithInputAsync()
@@ -726,7 +849,7 @@ public partial class WorkflowInstanceDetail
 
     private string TransitionTitle(string key) =>
         definition?.Transitions.FirstOrDefault(t => t.Key == key && !string.IsNullOrEmpty(t.Title))?.Title
-            ?? (key == "$background" ? "Arka plan görevi" : key);
+            ?? (key == "$background" ? "Arka plan görevi" : key == "$migrate" ? "Sürüm göçü" : key);
 
     private static string TriggerText(string trigger) => trigger switch
     {
@@ -738,6 +861,7 @@ public partial class WorkflowInstanceDetail
         "Timeout" => "Zaman aşımı",
         "Event" => "Mesaj",
         "Background" => "Arka plan görevi",
+        "Migration" => "Sürüm göçü",
         _ => trigger,
     };
 
@@ -772,6 +896,21 @@ public partial class WorkflowInstanceDetail
                 "Cancelled" or "Timeout" => "cancel",
                 _ => "arrow_forward",
             };
+
+    private static bool IsPoolAssigned(string? assignedTo)
+    {
+        if (string.IsNullOrWhiteSpace(assignedTo))
+        {
+            return false;
+        }
+
+        var trimmed = assignedTo.Trim();
+        return trimmed.Contains(',', StringComparison.Ordinal)
+            || trimmed.Contains(';', StringComparison.Ordinal)
+            || trimmed.StartsWith("role:", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("$role:", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith('@');
+    }
 
     private PointStyle HistoryPointStyle(WorkflowHistoryModel entry) =>
         definition?.States.FirstOrDefault(s => s.Key == entry.ToState)?.SubType switch

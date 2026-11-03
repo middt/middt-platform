@@ -59,6 +59,8 @@ public static class WorkflowPartitionManager
                 "CompletedAt" timestamptz,
                 "BackgroundTaskId" uuid,
                 "HistoryPatchCount" int,
+                "AssignedTo" varchar(256),
+                "AssignedAt" timestamptz,
                 CONSTRAINT "PK_WorkflowInstances" PRIMARY KEY ("Id", "WorkflowKey")
             ) PARTITION BY LIST ("WorkflowKey");
             """,

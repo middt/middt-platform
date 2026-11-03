@@ -69,9 +69,9 @@ Middt Platform'un doğrudan ve dolaylı rakipleri 4 ana kategoride incelenmişti
 | **1** | **Görsel AI Agent, Tool & MCP Stüdyosu (`/agent-admin`)** | Dify Studio, Camunda Web Modeler Agent Connector | **✅ Tamamlandı (Faz 1)**: Hem Blazor hem Angular'da `/agent-admin` stüdyosu, `AgentApiClient`, çalışma zamanı CRUD (`PUT/DELETE /api/agents/*`), doğrulama (`POST /api/agents/validate`) ve **Canlı Test Playground (`POST /api/agents/test`)** devreye alındı. |
 | **2** | **Gerçek Zamanlı UI Bildirimi (SSE) ve Canlı Akış** | Temporal Web, Camunda Tasklist, Dify Streaming | **✅ Tamamlandı (Faz 4)**: `WorkflowEventStreamHub` ile `GET /api/workflows/events` ve `GET /api/workflows/{workflow}/instances/{id}/events` SSE uçları eklendi; her iki arayüzde **`🟢 Canlı (SSE)`** rozetiyle arka plan görevleri, zamanlayıcılar ve `Event` mesajları ekranı anında güncelliyor. |
 | **3** | **Süreç Analitiği, SLA Takibi ve Darboğaz Isı Haritası (Process Analytics) Yok** | Camunda Optimize, OptimaJet Analytics | **📋 Planlandı (Faz 2)**: OpenTelemetry trace/metric üretiliyor fakat uygulama içinde hangi iş akışının hangi durumunda (state) ortalama ne kadar beklendiğini, SLA/timeout aşım oranlarını ve AI ajanlarının toplam token/maliyet istatistiklerini gösteren bir **Analitik & Darboğaz API / Ekranı** eklenecek. |
-| **4** | **Çalışan Akışları Yeni Versiyona Taşıma (Instance Version Migration) Yok** | Elsa 3 Alterations, Camunda 8 Process Instance Migration | **📋 Planlandı (Faz 3)**: Tanım güncellendiğinde `v2` oluşuyor ve eski kayıtlar `v1`'de güvenle devam ediyor. Ancak 6 ay süren bir akışta `v1`'deki açık kayıtları `v2`'ye (state eşleştirmesiyle) topluca geçirecek bir **Instance Migration API'si** eklenecek. |
+| **4** | **Çalışan Akışları Yeni Versiyona Taşıma (Instance Version Migration)** | Elsa 3 Alterations, Camunda 8 Process Instance Migration | **✅ Tamamlandı (Faz 3)**: `POST /api/workflows/{workflow}/migrate` ve `/workflow-admin` içindeki **`🔄 Sürüm & Göç`** sekmesiyle açık (`Active` / `Faulted`) kayıtları `stateMap` (`eskiAdım -> yeniAdım`) ve `dryRun` önizleme desteğiyle yeni sürüme taşıma ve `$migrate` tarihçe kaydı devreye alındı. |
 | **5** | **Server-Driven UI Widget Çeşitliliği (16 Widget)** | Retool, Appsmith, Radzen Studio | **✅ Tamamlandı (Faz 4)**: Mevcut 13 widget'a ek olarak yönetim panelleri ve süreç izleme için **`stat` (KPI Kartı)**, **`tabs` (Etkileşimli Sekmeler)** ve **`timeline` (Süreç/Aktivite Zaman Çizelgesi)** her üç renderer'a (Blazor, Angular, Static HTML) ve `/ui-admin` tasarımcısına eklendi. |
-| **6** | **İnsan Görevlerinde Üstlenme (Claim/Assign), Vekalet (Delegation) ve İş Takvimi (Business Calendar) Yok** | Camunda Tasklist, OptimaJet Approval Matrix | **📋 Planlandı (Faz 3)**: `/api/workflows/inbox` kullanıcının rolüne uygun kayıtları listeliyor; bir görevi "Üzerime Al (Claim)", "Başkasına Devret (Delegate)" ve SLA takvimi özellikleri eklenecek. |
+| **6** | **İnsan Görevlerinde Üstlenme (Claim/Unclaim) ve Çoklu Kişi / Rol Vekalet (`Assign`)** | Camunda Tasklist, OptimaJet Approval Matrix | **✅ Tamamlandı (Faz 3)**: `POST .../claim` (`🙋 Üzerime Al`), `POST .../unclaim` (`🔓 Görevi Bırak`), `POST .../assign` (`↪️ Devret / Ata` — tekil kişi, çoklu `users` ve `roles` / `role:<ad>` / `@<ad>` desteği), `$assignee` rol belirteci ve `/api/workflows/inbox?assignment=all\|mine\|unassigned\|claimed` filtreleri her iki arayüzde devreye alındı. |
 | **7** | **Zamanlanmış Başlatıcılar (Cron Triggers) ve Gelen Webhook Doğrulaması Yok** | n8n, Elsa Cron Trigger, Temporal Schedules | Akış içindeki geçişlerde `Scheduled` (`after`/`at`) var; ancak bir iş akışını her gece 02:00'de otomatik başlatan **Cron Schedule Trigger** veya dış sistemlerden gelen mesajlarda HMAC imza doğrulaması yapan **Webhook Trigger** yapısı gelecek fazlarda değerlendirilecek. |
 
 ---
@@ -126,15 +126,15 @@ flowchart LR
 
 ---
 
-### Faz 3: Kurumsal BPM Yönetişimi (Görev Üstlenme / Vekalet & Çalışan Akış Versiyon Göçü)
+### ✅ Faz 3 (Tamamlandı): Kurumsal BPM Yönetişimi (Görev Üstlenme / Vekalet & Çalışan Akış Versiyon Göçü)
 
 #### [MODIFY] [`sdk/server/Middt.Framework.Workflow/Persistence/Entities.cs`](sdk/server/Middt.Framework.Workflow/Persistence/Entities.cs) & [`sdk/server/Middt.Framework.Workflow/Runtime/WorkflowEngine.cs`](sdk/server/Middt.Framework.Workflow/Runtime/WorkflowEngine.cs)
 - **Human Task Claim / Unclaim / Assign**:
-  - `WorkflowInstance` üzerine opsiyonel `AssignedTo` (`string?`) ve `AssignedAt` (`DateTime?`) alanları eklenir.
-  - `POST /api/workflows/{workflow}/instances/{id}/claim` (üzerine alma), `POST .../unclaim` (bırakma) ve `POST .../assign` (yönetici rolüyle başka bir kullanıcıya atama/vekalet).
-  - `/api/workflows/inbox` sorgusunda kullanıcıya doğrudan atanmış veya henüz kimseye atanmamış görevleri filtreleme desteği.
+  - `WorkflowInstance` üzerine opsiyonel `AssignedTo` (`string?`) ve `AssignedAt` (`DateTime?`) alanları eklendi.
+  - `POST /api/workflows/{workflow}/instances/{id}/claim` (üzerine alma), `POST .../unclaim` (bırakma) ve `POST .../assign` (tekil kullanıcı, çoklu `users` veya `roles` / `role:<ad>` / `@<ad>` atama/vekalet) uçları ve Blazor/Angular detay ekranı kontrolleri eklendi.
+  - `/api/workflows/inbox?assignment=all|mine|unassigned|claimed` ve `/api/workflows/{workflow}/instances?assignedTo=...` filtreleri eklendi.
 - **Running Instance Version Migration (`POST /api/workflows/{workflow}/migrate`)**:
-  - Uzun süreli açık akışları eski versiyondan (`fromVersion`) yeni versiyona (`toVersion`) opsiyonel durum eşleme tablosuyla (`stateMap: { "old-state": "new-state" }`) ve `dryRun` seçeneğiyle güvenli taşıma.
+  - Uzun süreli açık akışları eski versiyondan (`fromVersion`) yeni versiyona (`toVersion`) opsiyonel durum eşleme tablosuyla (`stateMap: { "old-state": "new-state" }`), `dryRun` seçeneğiyle ve `/workflow-admin` içindeki **`🔄 Sürüm & Göç`** sekmesiyle güvenli taşıma devreye alındı.
 
 ---
 

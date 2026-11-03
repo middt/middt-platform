@@ -21,8 +21,10 @@ import {
   type UiLayoutDocument,
   type UiLayoutSummary,
   type WorkflowData,
+  type WorkflowInstanceMigrationResultModel,
   type WorkflowSummaryModel,
   type WorkflowTaskSpecModel,
+  type WorkflowVersionSummaryModel,
 } from '@middt/ui-core';
 import { WORKFLOW_API_CLIENT } from './workflow-client';
 
@@ -123,6 +125,13 @@ interface CanvasEdge {
                 [class]="activeTab() === 'json' ? 'middt-wf-tab middt-wf-tab-active' : 'middt-wf-tab'"
                 (click)="switchTab('json')">
                 &#123; &#125; JSON Kodu
+              </button>
+              <button
+                type="button"
+                [class]="activeTab() === 'versions' ? 'middt-wf-tab middt-wf-tab-active' : 'middt-wf-tab'"
+                data-testid="wf-tab-versions"
+                (click)="switchTab('versions')">
+                🔄 Sürüm & Göç
               </button>
               <button
                 type="button"
@@ -1485,6 +1494,127 @@ interface CanvasEdge {
             </div>
           </mat-card-content>
         </mat-card>
+      } @else if (activeTab() === 'versions') {
+        <div class="middt-wf-grid-2" style="align-items: start; gap: 1rem">
+          <mat-card appearance="outlined" data-testid="wf-versions-card">
+            <mat-card-content>
+              <div class="middt-ui-form">
+                <div class="middt-ui-toolbar" style="justify-content: space-between">
+                  <div>
+                    <h3 class="middt-ui-section-title">📚 Sürüm Geçmişi ({{ selectedWorkflowKey() || getString(doc(), 'key') }})</h3>
+                    <small class="middt-ui-text-muted">Yayınlanan her iş akışı tanımı değişmez (immutable) bir sürüm olarak saklanır.</small>
+                  </div>
+                  <button mat-stroked-button type="button" (click)="loadVersions()">
+                    <mat-icon>refresh</mat-icon> Yenile
+                  </button>
+                </div>
+                @if (versions().length === 0) {
+                  <p class="middt-ui-text-muted">Kayıtlı sürüm bulunamadı.</p>
+                } @else {
+                  <div style="display:flex;flex-direction:column;gap:8px;">
+                    @for (ver of versions(); track ver.version) {
+                      <div class="middt-wf-task-card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                        <div>
+                          <strong>v{{ ver.version }} — {{ ver.title || selectedWorkflowKey() }}</strong>
+                          @if (ver.isLatest) {
+                            <span class="middt-ui-badge middt-ui-badge-success" style="margin-left:6px;">Aktif Sürüm</span>
+                          }
+                          <div class="middt-ui-text-muted" style="font-size:12px;">
+                            {{ ver.statesCount }} durum · {{ ver.transitionsCount }} geçiş
+                          </div>
+                        </div>
+                        @if (!ver.isLatest) {
+                          <button mat-stroked-button type="button" [disabled]="busy()" (click)="rollbackToVersion(ver.version)">
+                            Bu Sürüme Dön
+                          </button>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            </mat-card-content>
+          </mat-card>
+
+          <mat-card appearance="outlined" data-testid="wf-migration-card">
+            <mat-card-content>
+              <div class="middt-ui-form">
+                <div>
+                  <h3 class="middt-ui-section-title">🔄 Çalışan Kayıt Sürüm Göçü (Instance Migration)</h3>
+                  <small class="middt-ui-text-muted">Eski sürümlerde çalışan (Active / Faulted) iş akışı kayıtlarını durum eşleme (stateMap) ile hedef sürüme güvenle taşıyın.</small>
+                </div>
+                <div class="middt-wf-grid-2">
+                  <div class="middt-ui-input">
+                    <label for="wf-mig-from">Kaynak Sürüm (fromVersion)</label>
+                    <select id="wf-mig-from" class="middt-wf-input" [value]="migrateFromVersionText()" (change)="migrateFromVersionText.set($any($event.target).value)" data-testid="wf-migrate-from">
+                      <option value="">Tüm Eski Sürümler</option>
+                      @for (ver of versions(); track ver.version) {
+                        <option [value]="ver.version">v{{ ver.version }}</option>
+                      }
+                    </select>
+                  </div>
+                  <div class="middt-ui-input">
+                    <label for="wf-mig-to">Hedef Sürüm (toVersion)</label>
+                    <select id="wf-mig-to" class="middt-wf-input" [value]="migrateToVersionText()" (change)="migrateToVersionText.set($any($event.target).value)" data-testid="wf-migrate-to">
+                      <option value="">En Güncel Sürüm (Varsayılan)</option>
+                      @for (ver of versions(); track ver.version) {
+                        <option [value]="ver.version">v{{ ver.version }} {{ ver.isLatest ? '(Güncel)' : '' }}</option>
+                      }
+                    </select>
+                  </div>
+                </div>
+                <div class="middt-ui-input">
+                  <label for="wf-mig-map">Durum Eşleme Tablosu (stateMap — satır başına <code>eskiDurum=yeniDurum</code>)</label>
+                  <textarea id="wf-mig-map" class="middt-wf-input middt-wf-code-box" rows="3"
+                            placeholder="review=specialist-review&#10;old-step=new-step"
+                            [value]="migrateStateMapText()"
+                            (input)="migrateStateMapText.set($any($event.target).value)"
+                            data-testid="wf-migrate-statemap"></textarea>
+                  <small class="middt-ui-text-muted">Hedef sürümde adı korunan durumlar otomatik eşleşir; yalnızca adı değişen veya kaldırılan durumları yazın.</small>
+                </div>
+                <div class="middt-ui-toolbar">
+                  <button mat-stroked-button type="button" [disabled]="migrating()" (click)="runMigration(true)" data-testid="wf-migrate-dryrun-btn">
+                    🔍 Önizle (Dry-Run)
+                  </button>
+                  <button mat-flat-button color="primary" type="button" [disabled]="migrating()" (click)="runMigration(false)" data-testid="wf-migrate-execute-btn">
+                    🚀 Açık Kayıtları Taşı
+                  </button>
+                </div>
+
+                @if (migrationResult(); as migRes) {
+                  <div class="middt-ui-alert" [class]="migRes.failedCount > 0 ? 'middt-ui-alert middt-ui-alert-danger' : 'middt-ui-alert middt-ui-alert-success'" data-testid="wf-migrate-result">
+                    <strong>{{ migRes.dryRun ? 'Önizleme (Dry-Run) Sonucu:' : 'Sürüm Göçü Tamamlandı:' }}</strong>
+                    <span>Hedef v{{ migRes.toVersion }} · Başarılı: <strong>{{ migRes.migratedCount }}</strong> · Hatalı: <strong>{{ migRes.failedCount }}</strong></span>
+                  </div>
+                  @if (migRes.items.length > 0) {
+                    <div style="max-height:240px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;">
+                      <table class="middt-wf-incidents" style="width:100%;font-size:12px;">
+                        <thead>
+                          <tr>
+                            <th>Anahtar / ID</th>
+                            <th>Sürüm</th>
+                            <th>Durum Eşleşmesi</th>
+                            <th>Sonuç</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @for (item of migRes.items; track item.instanceId) {
+                            <tr>
+                              <td><code>{{ item.key || item.instanceId.slice(0, 8) }}</code></td>
+                              <td>v{{ item.fromVersion }} → v{{ item.toVersion }}</td>
+                              <td><code>{{ item.fromState }}</code> → <code>{{ item.toState }}</code></td>
+                              <td>{{ item.migrated ? (migRes.dryRun ? '✔ Hazır' : '✔ Taşındı') : ('❌ ' + item.error) }}</td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+                  }
+                }
+              </div>
+            </mat-card-content>
+          </mat-card>
+        </div>
       }
 
       @if (screenModalOpen()) {
@@ -1553,7 +1683,13 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
   protected readonly selectedTaskHook = signal<string>('onEntry');
   protected readonly selectedTaskIndex = signal<number>(-1);
   protected readonly selectedTransitionIndex = signal<number>(-1);
-  protected readonly activeTab = signal<'visual' | 'schema' | 'json'>('visual');
+  protected readonly activeTab = signal<'visual' | 'schema' | 'json' | 'versions'>('visual');
+  protected readonly versions = signal<WorkflowVersionSummaryModel[]>([]);
+  protected readonly migrateFromVersionText = signal<string>('');
+  protected readonly migrateToVersionText = signal<string>('');
+  protected readonly migrateStateMapText = signal<string>('');
+  protected readonly migrating = signal<boolean>(false);
+  protected readonly migrationResult = signal<WorkflowInstanceMigrationResultModel | null>(null);
   protected readonly paletteFilter = signal<string>('');
   protected readonly newSchemaFieldName = signal<string>('');
   protected readonly hoverDropKey = signal<string | null>(null);
@@ -1960,7 +2096,7 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     this.#syncJsonFromDoc();
   }
 
-  protected switchTab(tab: 'visual' | 'schema' | 'json'): void {
+  protected switchTab(tab: 'visual' | 'schema' | 'json' | 'versions'): void {
     if (this.activeTab() === 'json' && tab !== 'json') {
       this.#tryParseRawJson();
     } else {
@@ -1968,6 +2104,94 @@ export class MiddtWorkflowDesignerComponent implements OnInit {
     }
 
     this.activeTab.set(tab);
+    if (tab === 'versions') {
+      void this.loadVersions();
+    }
+  }
+
+  protected async loadVersions(): Promise<void> {
+    const key = this.selectedWorkflowKey() || this.getString(this.doc(), 'key');
+    if (!key) {
+      this.versions.set([]);
+      return;
+    }
+
+    const resp = await this.#client.listVersions(key);
+    if (isSuccess(resp) && resp.data) {
+      this.versions.set(resp.data);
+    }
+  }
+
+  protected async rollbackToVersion(version: number): Promise<void> {
+    const key = this.selectedWorkflowKey() || this.getString(this.doc(), 'key');
+    if (!key || this.busy()) {
+      return;
+    }
+
+    this.busy.set(true);
+    try {
+      const resp = await this.#client.rollbackVersion(key, version);
+      if (!isSuccess(resp) || !resp.data) {
+        this.errors.set(resp.messageList.length > 0 ? resp.messageList : ['Sürüme geri dönülemedi.']);
+        return;
+      }
+
+      this.doc.set(structuredClone(resp.data));
+      this.#syncJsonFromDoc();
+      this.validMessage.set(`✔ v${version} tanımı yeni güncel sürüm olarak yayınlandı.`);
+      await this.loadVersions();
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async runMigration(dryRun: boolean): Promise<void> {
+    const key = this.selectedWorkflowKey() || this.getString(this.doc(), 'key');
+    if (!key || this.migrating()) {
+      return;
+    }
+
+    this.migrating.set(true);
+    this.errors.set([]);
+    try {
+      const stateMap: Record<string, string> = {};
+      for (const rawLine of this.migrateStateMapText().split('\n')) {
+        const line = rawLine.trim();
+        if (!line) {
+          continue;
+        }
+
+        let sep = line.indexOf('=');
+        if (sep <= 0) {
+          sep = line.indexOf(':');
+        }
+
+        if (sep > 0) {
+          const fromSt = line.slice(0, sep).trim();
+          const toSt = line.slice(sep + 1).trim();
+          if (fromSt && toSt) {
+            stateMap[fromSt] = toSt;
+          }
+        }
+      }
+
+      const fv = Number.parseInt(this.migrateFromVersionText(), 10);
+      const tv = Number.parseInt(this.migrateToVersionText(), 10);
+      const resp = await this.#client.migrateInstances(key, {
+        fromVersion: Number.isFinite(fv) ? fv : null,
+        toVersion: Number.isFinite(tv) ? tv : null,
+        stateMap: Object.keys(stateMap).length > 0 ? stateMap : null,
+        dryRun,
+      });
+      if (!isSuccess(resp) || !resp.data) {
+        this.errors.set(resp.messageList.length > 0 ? resp.messageList : ['Sürüm göçü çalıştırılamadı.']);
+        return;
+      }
+
+      this.migrationResult.set(resp.data);
+    } finally {
+      this.migrating.set(false);
+    }
   }
 
   protected autoLayoutBoard(): void {
