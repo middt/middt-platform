@@ -79,6 +79,7 @@ builder.Services.AddMiddtUi(ui =>
     }
 });
 builder.Services.AddScoped<IWorkflowViewRenderer, WorkflowLayoutRenderer>();
+builder.Services.AddSingleton<IWorkflowCatalogInvalidationHandler, UiLayoutCatalogInvalidationHandler>();
 
 var app = builder.Build();
 

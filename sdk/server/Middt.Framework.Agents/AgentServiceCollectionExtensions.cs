@@ -42,11 +42,21 @@ public static class AgentServiceCollectionExtensions
         services.AddSingleton(options);
         services.TryAddSingleton<IMiddtMcpClient, MiddtMcpClient>();
         services.TryAddSingleton<IMiddtAgentRegistry, MiddtAgentRegistry>();
+        services.AddSingleton<Middt.Framework.Workflow.Runtime.IWorkflowCatalogInvalidationHandler>(sp =>
+            sp.GetRequiredService<IMiddtAgentRegistry>() as Middt.Framework.Workflow.Runtime.IWorkflowCatalogInvalidationHandler
+            ?? new NoopCatalogInvalidationHandler());
         services.TryAddTransient<AiAgentTask>();
         services.TryAddTransient<McpTask>();
         services.Configure<MiddtWorkflowOptions>(o => o.AddAgentTasks());
 
         return services;
+    }
+
+    private sealed class NoopCatalogInvalidationHandler : Middt.Framework.Workflow.Runtime.IWorkflowCatalogInvalidationHandler
+    {
+        public void OnCatalogInvalidated(string catalog)
+        {
+        }
     }
 
     /// <summary>

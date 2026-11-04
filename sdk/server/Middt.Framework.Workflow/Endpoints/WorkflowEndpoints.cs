@@ -102,7 +102,7 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<JsonObject>.Success(registry.GetJson(workflow, version), 1);
         }).WithName("GetWorkflowDefinitionJson");
 
-        group.MapPut("{workflow}/definition", async (string workflow, JsonObject definition, WorkflowRegistry registry, Persistence.WorkflowDbContext db, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
+        group.MapPut("{workflow}/definition", async (string workflow, JsonObject definition, WorkflowRegistry registry, Persistence.WorkflowDbContext db, WorkflowJobNotifier notifier, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
         {
             var user = WorkflowUser.From(principal);
             if (requireAuthorization && !user.IsInRole("ui-admin"))
@@ -116,7 +116,7 @@ public static class WorkflowEndpoints
                 throw new WorkflowValidationException(["The route workflow key and the definition 'key' differ."]);
             }
 
-            var savedJson = await PersistAndCommitDefinitionAsync(definition, registry, db, workflowOptions.Value, user, ct);
+            var savedJson = await PersistAndCommitDefinitionAsync(definition, registry, db, workflowOptions.Value, user, ct, notifier);
             return BaseResponseDataModel<JsonObject>.Success(savedJson, 1);
         }).WithName("SaveWorkflowDefinitionJson");
 
@@ -222,7 +222,7 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<WorkflowVersionDiffModel>.Success(diffModel, 1);
         }).WithName("GetWorkflowVersionDiff");
 
-        group.MapPost("{workflow}/versions/{version:int}/rollback", async (string workflow, int version, WorkflowRegistry registry, Persistence.WorkflowDbContext db, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
+        group.MapPost("{workflow}/versions/{version:int}/rollback", async (string workflow, int version, WorkflowRegistry registry, Persistence.WorkflowDbContext db, WorkflowJobNotifier notifier, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
         {
             var user = WorkflowUser.From(principal);
             if (requireAuthorization && !user.IsInRole("ui-admin"))
@@ -231,7 +231,7 @@ public static class WorkflowEndpoints
             }
 
             var targetJson = registry.GetJson(workflow, version);
-            var savedJson = await PersistAndCommitDefinitionAsync(targetJson, registry, db, workflowOptions.Value, user, ct);
+            var savedJson = await PersistAndCommitDefinitionAsync(targetJson, registry, db, workflowOptions.Value, user, ct, notifier);
             return BaseResponseDataModel<JsonObject>.Success(savedJson, 1);
         }).WithName("RollbackWorkflowVersion");
 
@@ -301,7 +301,7 @@ public static class WorkflowEndpoints
             return BaseResponseDataModel<WorkflowBundleModel>.Success(bundle, items.Count);
         }).WithName("ExportWorkflowBundle");
 
-        group.MapPost("bundle/import", async (WorkflowBundleImportRequest request, WorkflowRegistry registry, Persistence.WorkflowDbContext db, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
+        group.MapPost("bundle/import", async (WorkflowBundleImportRequest request, WorkflowRegistry registry, Persistence.WorkflowDbContext db, WorkflowJobNotifier notifier, Microsoft.Extensions.Options.IOptions<MiddtWorkflowOptions> workflowOptions, ClaimsPrincipal principal, CancellationToken ct) =>
         {
             var user = WorkflowUser.From(principal);
             if (requireAuthorization && !request.DryRun && !user.IsInRole("ui-admin"))
@@ -360,7 +360,7 @@ public static class WorkflowEndpoints
 
             foreach (var item in request.Items)
             {
-                var saved = await PersistAndCommitDefinitionAsync(item.Definition, registry, db, workflowOptions.Value, user, ct);
+                var saved = await PersistAndCommitDefinitionAsync(item.Definition, registry, db, workflowOptions.Value, user, ct, notifier);
                 result.ImportedWorkflows.Add(saved["key"]?.GetValue<string>() ?? item.Key);
             }
 
@@ -685,7 +685,8 @@ public static class WorkflowEndpoints
         Persistence.WorkflowDbContext db,
         MiddtWorkflowOptions workflowOptions,
         WorkflowUser user,
-        CancellationToken ct)
+        CancellationToken ct,
+        WorkflowJobNotifier? notifier = null)
     {
         var key = definition["key"]?.GetValue<string>()?.Trim();
         if (string.IsNullOrWhiteSpace(key))
@@ -704,6 +705,7 @@ public static class WorkflowEndpoints
 
         var (savedDef, savedJson) = registry.PrepareSave(definition, dbMaxVersion);
         var serialized = savedJson.ToJsonString(WorkflowJson.Options);
+        var now = DateTime.UtcNow;
 
         if (hasDefinitionsTable)
         {
@@ -721,7 +723,7 @@ public static class WorkflowEndpoints
                     Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title,
                     Content = serialized,
                     UpdatedBy = user.Id,
-                    UpdatedAt = DateTime.UtcNow,
+                    UpdatedAt = now,
                 });
             }
             else
@@ -729,7 +731,7 @@ public static class WorkflowEndpoints
                 existingRecord.Title = string.IsNullOrWhiteSpace(savedDef.Title) ? savedDef.Key : savedDef.Title;
                 existingRecord.Content = serialized;
                 existingRecord.UpdatedBy = user.Id;
-                existingRecord.UpdatedAt = DateTime.UtcNow;
+                existingRecord.UpdatedAt = now;
             }
 
             try
@@ -744,7 +746,11 @@ public static class WorkflowEndpoints
             }
         }
 
-        registry.CommitSaved(savedDef, savedJson);
+        registry.CommitSaved(savedDef, savedJson, now);
+        if (notifier is not null && hasDefinitionsTable)
+        {
+            await notifier.NotifyCatalogAsync(db, "workflows", ct);
+        }
 
         if (db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true)
         {

@@ -89,11 +89,25 @@ public sealed partial class WorkflowJobProcessor(
             await RecoverStuckInstancesAsync(db, now, cancellationToken);
         }
 
-        if (db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true)
+        var provider = db.Database.ProviderName ?? string.Empty;
+        if (provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
         {
             // One job at a time, claimed right before it runs: a slow job never holds back the ones other nodes could take.
             var processed = 0;
             while (processed < BatchSize && await ClaimNextAsync(db, now, now + Lease, cancellationToken) is { } claimedId)
+            {
+                processed++;
+                await ProcessAsync(claimedId, cancellationToken);
+                now = time.GetUtcNow().UtcDateTime;
+            }
+
+            return processed;
+        }
+
+        if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            var processed = 0;
+            while (processed < BatchSize && await ClaimNextSqlServerAsync(db, now, now + Lease, cancellationToken) is { } claimedId)
             {
                 processed++;
                 await ProcessAsync(claimedId, cancellationToken);
@@ -152,6 +166,42 @@ public sealed partial class WorkflowJobProcessor(
                 """;
             AddParameter(command, "lease", leaseUntil);
             AddParameter(command, "now", now);
+            return await command.ExecuteScalarAsync(cancellationToken) is Guid id ? id : null;
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
+    }
+
+    /// <summary>
+    /// SQL Server: claims the earliest due job using <c>WITH (UPDLOCK, READPAST, ROWLOCK)</c> and <c>OUTPUT inserted.[Id]</c>
+    /// so concurrent nodes skip locked rows without blocking.
+    /// </summary>
+    private static async Task<Guid?> ClaimNextSqlServerAsync(WorkflowDbContext db, DateTime now, DateTime leaseUntil, CancellationToken cancellationToken)
+    {
+        var entity = db.Model.FindEntityType(typeof(WorkflowJob))!;
+        var sql = db.GetService<ISqlGenerationHelper>();
+        var table = sql.DelimitIdentifier(entity.GetTableName()!, entity.GetSchema());
+
+        var connection = db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                ;WITH next AS (
+                    SELECT TOP (1) [Id], [WorkflowKey], [LockedUntil], [Attempts]
+                    FROM {table} WITH (UPDLOCK, READPAST, ROWLOCK)
+                    WHERE [DueAt] <= @now AND ([LockedUntil] IS NULL OR [LockedUntil] < @now)
+                    ORDER BY [DueAt]
+                )
+                UPDATE next
+                SET [LockedUntil] = @lease, [Attempts] = [Attempts] + 1
+                OUTPUT inserted.[Id];
+                """;
+            AddParameter(command, "@lease", leaseUntil);
+            AddParameter(command, "@now", now);
             return await command.ExecuteScalarAsync(cancellationToken) is Guid id ? id : null;
         }
         finally
@@ -219,6 +269,23 @@ public sealed partial class WorkflowJobProcessor(
             }
 
             done = outcome == WorkflowEngine.JobOutcome.Done;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                db.ChangeTracker.Clear();
+                await db.Jobs.Where(j => j.Id == jobId).ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.LockedUntil, (DateTime?)null)
+                    .SetProperty(j => j.Attempts, j => j.Attempts > 0 ? j.Attempts - 1 : 0),
+                    CancellationToken.None);
+            }
+            catch
+            {
+                // Best-effort lease release on graceful shutdown; lease expiry remains as fallback.
+            }
+
+            throw;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {

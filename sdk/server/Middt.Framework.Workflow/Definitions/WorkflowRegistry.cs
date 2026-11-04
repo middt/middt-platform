@@ -15,12 +15,17 @@ namespace Middt.Framework.Workflow.Definitions;
 /// <summary>Loads, validates and indexes the workflow definitions (all versions).</summary>
 public sealed class WorkflowRegistry
 {
+    private static readonly TimeSpan SyncCooldown = TimeSpan.FromSeconds(1);
+
     private readonly IServiceProvider services;
     private readonly IOptions<MiddtWorkflowOptions> options;
     private readonly WorkflowExpressionEngine expressions;
     private readonly WorkflowTaskRegistry tasks;
     private readonly Lock sync = new();
     private readonly Dictionary<(string Key, int Version), (WorkflowDefinition Definition, JsonObject RawJson)> runtimeDefinitions = [];
+    private readonly Dictionary<(string Key, int Version), DateTime> runtimeUpdatedAt = [];
+    private long lastSyncTicks = DateTime.MinValue.Ticks;
+    private volatile bool cacheInvalidated = true;
     private volatile Dictionary<(string Key, int Version), JsonObject>? rawJsonByVersion;
     private volatile IReadOnlyDictionary<string, SortedList<int, WorkflowDefinition>>? currentDefinitions;
 
@@ -31,6 +36,9 @@ public sealed class WorkflowRegistry
         this.expressions = expressions;
         this.tasks = tasks;
     }
+
+    /// <summary>Marks the in-memory definition cache as stale so the next access synchronizes from the database immediately.</summary>
+    public void InvalidateCache() => cacheInvalidated = true;
 
     private IReadOnlyDictionary<string, SortedList<int, WorkflowDefinition>> Definitions
     {
@@ -63,6 +71,7 @@ public sealed class WorkflowRegistry
     {
         lock (sync)
         {
+            cacheInvalidated = true;
             var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
             rawJsonByVersion = rawMap;
             currentDefinitions = loaded;
@@ -82,7 +91,13 @@ public sealed class WorkflowRegistry
     public IReadOnlyList<WorkflowDefinition> GetVersions(string key)
     {
         SyncPersistedDefinitions(key);
-        return Definitions.TryGetValue(key, out var versions)
+        if (Definitions.TryGetValue(key, out var versions))
+        {
+            return versions.Values.ToArray();
+        }
+
+        SyncPersistedDefinitions(key, force: true);
+        return Definitions.TryGetValue(key, out versions)
             ? versions.Values.ToArray()
             : throw new WorkflowNotFoundException($"Workflow '{key}' does not exist.");
     }
@@ -90,19 +105,26 @@ public sealed class WorkflowRegistry
     public WorkflowDefinition GetLatest(string key)
     {
         SyncPersistedDefinitions(key);
-        return Definitions.TryGetValue(key, out var versions)
+        if (Definitions.TryGetValue(key, out var versions))
+        {
+            return versions.Values[^1];
+        }
+
+        SyncPersistedDefinitions(key, force: true);
+        return Definitions.TryGetValue(key, out versions)
             ? versions.Values[^1]
             : throw new WorkflowNotFoundException($"Workflow '{key}' does not exist.");
     }
 
     public WorkflowDefinition Get(string key, int version)
     {
+        SyncPersistedDefinitions(key);
         if (Definitions.TryGetValue(key, out var versions) && versions.TryGetValue(version, out var definition))
         {
             return definition;
         }
 
-        SyncPersistedDefinitions(key);
+        SyncPersistedDefinitions(key, force: true);
         return Definitions.TryGetValue(key, out versions) && versions.TryGetValue(version, out definition)
             ? definition
             : throw new WorkflowNotFoundException($"Workflow '{key}' version {version} does not exist.");
@@ -175,7 +197,7 @@ public sealed class WorkflowRegistry
             throw new WorkflowValidationException(["'key' is required."]);
         }
 
-        SyncPersistedDefinitions(key);
+        SyncPersistedDefinitions(key, force: true);
 
         var existingLatestVersion = Definitions.TryGetValue(key, out var existingVersions) && existingVersions.Count > 0
             ? existingVersions.Keys[^1]
@@ -202,7 +224,7 @@ public sealed class WorkflowRegistry
     }
 
     /// <summary>Commits a validated workflow definition into the active in-memory registry after persistence succeeds.</summary>
-    public (WorkflowDefinition Definition, JsonObject RawJson) CommitSaved(WorkflowDefinition definition, JsonObject rawJson)
+    public (WorkflowDefinition Definition, JsonObject RawJson) CommitSaved(WorkflowDefinition definition, JsonObject rawJson, DateTime? updatedAt = null)
     {
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(rawJson);
@@ -211,6 +233,7 @@ public sealed class WorkflowRegistry
         lock (sync)
         {
             runtimeDefinitions[(definition.Key, definition.Version)] = (definition, clone);
+            runtimeUpdatedAt[(definition.Key, definition.Version)] = updatedAt ?? DateTime.UtcNow;
             TryWriteDefinitionFile(definition.Key, clone);
             var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
             rawJsonByVersion = rawMap;
@@ -335,12 +358,12 @@ public sealed class WorkflowRegistry
             throw new WorkflowValidationException(errors);
         }
 
+        var deployedAt = DateTime.UtcNow;
         await using (var dbScope = services.CreateAsyncScope())
         {
             var db = dbScope.ServiceProvider.GetService<Persistence.WorkflowDbContext>();
             if (db is not null)
             {
-                var now = DateTime.UtcNow;
                 foreach (var (def, _, normalizedJson) in parsedItems)
                 {
                     var existing = await db.Definitions
@@ -354,7 +377,7 @@ public sealed class WorkflowRegistry
                             Title = string.IsNullOrWhiteSpace(def.Title) ? def.Key : def.Title,
                             Content = normalizedJson,
                             UpdatedBy = deployedBy,
-                            UpdatedAt = now,
+                            UpdatedAt = deployedAt,
                         });
                     }
                     else
@@ -362,11 +385,15 @@ public sealed class WorkflowRegistry
                         existing.Title = string.IsNullOrWhiteSpace(def.Title) ? def.Key : def.Title;
                         existing.Content = normalizedJson;
                         existing.UpdatedBy = deployedBy;
-                        existing.UpdatedAt = now;
+                        existing.UpdatedAt = deployedAt;
                     }
                 }
 
                 await db.SaveChangesAsync(cancellationToken);
+                if (dbScope.ServiceProvider.GetService<WorkflowJobNotifier>() is { } notifier)
+                {
+                    await notifier.NotifyCatalogAsync(db, "workflows", cancellationToken);
+                }
             }
         }
 
@@ -375,6 +402,7 @@ public sealed class WorkflowRegistry
             foreach (var (def, rawObj, _) in parsedItems)
             {
                 runtimeDefinitions[(def.Key, def.Version)] = (def, (JsonObject)rawObj.DeepClone());
+                runtimeUpdatedAt[(def.Key, def.Version)] = deployedAt;
             }
 
             var (loaded, rawMap) = Load(services, options.Value, expressions, tasks, runtimeDefinitions);
@@ -407,8 +435,14 @@ public sealed class WorkflowRegistry
             .ToList();
     }
 
-    private void SyncPersistedDefinitions(string? key = null)
+    private void SyncPersistedDefinitions(string? key = null, bool force = false)
     {
+        var nowTicks = DateTime.UtcNow.Ticks;
+        if (!force && !cacheInvalidated && nowTicks - Interlocked.Read(ref lastSyncTicks) < SyncCooldown.Ticks)
+        {
+            return;
+        }
+
         try
         {
             using var scope = services.CreateScope();
@@ -430,18 +464,26 @@ public sealed class WorkflowRegistry
                 .OrderBy(d => d.Version)
                 .ToList();
 
-            var pending = new List<string>();
+            if (string.IsNullOrEmpty(key))
+            {
+                Interlocked.Exchange(ref lastSyncTicks, nowTicks);
+                cacheInvalidated = false;
+            }
+
+            var pending = new List<(string Content, DateTime UpdatedAt)>();
             foreach (var row in rows)
             {
-                bool alreadyLoaded;
+                bool upToDate;
                 lock (sync)
                 {
-                    alreadyLoaded = runtimeDefinitions.ContainsKey((row.Key, row.Version));
+                    upToDate = runtimeDefinitions.ContainsKey((row.Key, row.Version))
+                        && runtimeUpdatedAt.TryGetValue((row.Key, row.Version), out var prevUpdated)
+                        && row.UpdatedAt <= prevUpdated;
                 }
 
-                if (!alreadyLoaded)
+                if (!upToDate)
                 {
-                    pending.Add(row.Content);
+                    pending.Add((row.Content, row.UpdatedAt));
                 }
             }
 
@@ -460,14 +502,17 @@ public sealed class WorkflowRegistry
     internal void RestorePersistedDefinition(string json) => RestorePersistedDefinitions([json]);
 
     /// <summary>Restores persisted workflow definitions in a batch so cross-workflow subflow references validate together.</summary>
-    internal void RestorePersistedDefinitions(IEnumerable<string> jsons)
+    internal void RestorePersistedDefinitions(IEnumerable<string> jsons) =>
+        RestorePersistedDefinitions(jsons.Select(j => (j, DateTime.UtcNow)));
+
+    internal void RestorePersistedDefinitions(IEnumerable<(string Content, DateTime UpdatedAt)> items)
     {
         try
         {
             lock (sync)
             {
                 var anyAdded = false;
-                foreach (var json in jsons)
+                foreach (var (json, updatedAt) in items)
                 {
                     if (string.IsNullOrWhiteSpace(json))
                     {
@@ -495,6 +540,7 @@ public sealed class WorkflowRegistry
                     }
 
                     runtimeDefinitions[(definition.Key, definition.Version)] = (definition, rawObj);
+                    runtimeUpdatedAt[(definition.Key, definition.Version)] = updatedAt;
                     anyAdded = true;
                 }
 

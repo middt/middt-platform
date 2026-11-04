@@ -31,14 +31,28 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "Called through the DbContext instance.")]
     public Guid NewId() => Guid.CreateVersion7();
 
-    /// <summary>The schema the model maps to (SQLite has no schemas); part of the model cache key.</summary>
-    internal string? ModelSchema => (Database.ProviderName ?? string.Empty).Contains("Sqlite", StringComparison.Ordinal) ? null : workflowOptions.Value.Schema;
+    /// <summary>The schema the model maps to (only PostgreSQL and SQL Server use separate namespace schemas); part of the model cache key.</summary>
+    internal string? ModelSchema => SupportsDatabaseSchemas(Database.ProviderName) ? workflowOptions.Value.Schema : null;
+
+    /// <summary>Returns <see langword="true"/> when the EF Core provider supports lightweight namespace schemas inside a database (PostgreSQL and SQL Server).</summary>
+    internal static bool SupportsDatabaseSchemas(string? providerName)
+    {
+        if (string.IsNullOrEmpty(providerName))
+        {
+            return false;
+        }
+
+        return providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase)
+            || providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase);
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var provider = Database.ProviderName ?? string.Empty;
         var schema = ModelSchema;
-        var isPostgres = provider.Contains("Npgsql", StringComparison.Ordinal);
+        var isPostgres = provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
+        var isSqlServer = provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase);
+        var isOracle = provider.Contains("Oracle", StringComparison.OrdinalIgnoreCase);
 
         modelBuilder.Entity<WorkflowInstance>(e =>
         {
@@ -52,6 +66,12 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             e.Property(x => x.StartedBy).HasMaxLength(256);
             e.Property(x => x.LastExecutedBy).HasMaxLength(256);
             e.Property(x => x.AssignedTo).HasMaxLength(256);
+            if (isOracle)
+            {
+                e.Property(x => x.PendingInput).HasColumnType("NCLOB");
+                e.Property(x => x.Error).HasColumnType("NCLOB");
+            }
+
             e.Property(x => x.Revision).IsConcurrencyToken();
             e.Ignore(x => x.IsTerminal);
             e.Ignore(x => x.Data);
@@ -62,7 +82,19 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
                 .OnDelete(DeleteBehavior.Cascade);
             e.Navigation(x => x.InstanceData).AutoInclude();
             e.HasIndex(x => x.Id).IsUnique();
-            e.HasIndex(x => new { x.WorkflowKey, x.BusinessKey }).IsUnique();
+
+            // Oracle composite unique indexes index rows when any column (WorkflowKey) is non-null, which would reject
+            // multiple instances with BusinessKey = NULL; Oracle uses a function-based unique index in WorkflowStartup.
+            var businessKeyIndex = e.HasIndex(x => new { x.WorkflowKey, x.BusinessKey });
+            if (!isOracle)
+            {
+                businessKeyIndex.IsUnique();
+                if (isSqlServer)
+                {
+                    businessKeyIndex.HasFilter("[BusinessKey] IS NOT NULL");
+                }
+            }
+
             e.HasIndex(x => new { x.WorkflowKey, x.Status, x.State });
             e.HasIndex(x => new { x.WorkflowKey, x.ParentInstanceId });
             e.HasIndex(x => x.ParentInstanceId);
@@ -84,6 +116,10 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             if (isPostgres)
             {
                 e.Property(x => x.Data).HasColumnType("jsonb");
+            }
+            else if (isOracle)
+            {
+                e.Property(x => x.Data).HasColumnType("NCLOB");
             }
 
             e.Property(x => x.DataHash).HasMaxLength(64).IsRequired();
@@ -111,6 +147,13 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
                 e.Property(x => x.Patch).HasColumnType("jsonb");
                 e.Property(x => x.Tasks).HasColumnType("jsonb");
             }
+            else if (isOracle)
+            {
+                e.Property(x => x.Input).HasColumnType("NCLOB");
+                e.Property(x => x.Data).HasColumnType("NCLOB");
+                e.Property(x => x.Patch).HasColumnType("NCLOB");
+                e.Property(x => x.Tasks).HasColumnType("NCLOB");
+            }
 
             e.HasIndex(x => new { x.WorkflowKey, x.InstanceId });
             e.HasIndex(x => x.InstanceId);
@@ -129,6 +172,11 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             {
                 e.Property(x => x.Payload).HasColumnType("jsonb");
             }
+            else if (isOracle)
+            {
+                e.Property(x => x.Payload).HasColumnType("NCLOB");
+                e.Property(x => x.LastError).HasColumnType("NCLOB");
+            }
 
             e.HasIndex(x => x.Id).IsUnique();
             e.HasIndex(x => new { x.WorkflowKey, x.DueAt });
@@ -145,6 +193,11 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             e.Property(x => x.State).HasMaxLength(128);
             e.Property(x => x.TransitionKey).HasMaxLength(128);
             e.Property(x => x.TaskKey).HasMaxLength(128);
+            if (isOracle)
+            {
+                e.Property(x => x.Error).HasColumnType("NCLOB");
+            }
+
             e.HasIndex(x => new { x.WorkflowKey, x.InstanceId });
             e.HasIndex(x => x.InstanceId);
         });
@@ -160,6 +213,10 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             if (isPostgres)
             {
                 e.Property(x => x.SessionData).HasColumnType("jsonb");
+            }
+            else if (isOracle)
+            {
+                e.Property(x => x.SessionData).HasColumnType("NCLOB");
             }
 
             e.HasIndex(x => new { x.WorkflowKey, x.InstanceId, x.AgentName, x.TaskKey }).IsUnique();
@@ -184,6 +241,11 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
                 e.Property(x => x.AllowedTransitions).HasColumnType("jsonb");
                 e.Property(x => x.Output).HasColumnType("jsonb");
             }
+            else if (isOracle)
+            {
+                e.Property(x => x.AllowedTransitions).HasColumnType("NCLOB");
+                e.Property(x => x.Output).HasColumnType("NCLOB");
+            }
 
             e.HasIndex(x => new { x.WorkflowKey, x.InstanceId, x.CreatedAt });
             e.HasIndex(x => x.InstanceId);
@@ -203,6 +265,11 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
                 e.Property(x => x.Arguments).HasColumnType("jsonb");
                 e.Property(x => x.Result).HasColumnType("jsonb");
             }
+            else if (isOracle)
+            {
+                e.Property(x => x.Arguments).HasColumnType("NCLOB");
+                e.Property(x => x.Result).HasColumnType("NCLOB");
+            }
 
             e.HasIndex(x => new { x.WorkflowKey, x.InstanceId, x.Order });
             e.HasIndex(x => new { x.WorkflowKey, x.RunId, x.Order });
@@ -220,6 +287,10 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             if (isPostgres)
             {
                 e.Property(x => x.Content).HasColumnType("jsonb");
+            }
+            else if (isOracle)
+            {
+                e.Property(x => x.Content).HasColumnType("NCLOB");
             }
         });
 

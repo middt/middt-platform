@@ -271,6 +271,41 @@ public sealed class WorkflowPostgresTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Sse_events_and_catalog_invalidations_on_one_node_propagate_to_another_node_via_NOTIFY()
+    {
+        var schema = PostgresFixture.NewSchema();
+        await using var nodeA = await StartAsync(schema);
+        await using var nodeB = await StartAsync(schema, services: s => s.AddSingleton<WorkflowJobListener>());
+        var listener = nodeB.Services.GetRequiredService<WorkflowJobListener>();
+        var hubB = nodeB.Services.GetRequiredService<WorkflowEventStreamHub>();
+        await listener.StartAsync(Ct);
+        try
+        {
+            await listener.Listening.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+
+            await using var enumeratorB = hubB.SubscribeAsync("ledger", null, null, Ct).GetAsyncEnumerator(Ct);
+            var readFirst = enumeratorB.MoveNextAsync().AsTask();
+            var instance = await nodeA.StartInstanceAsync("ledger", new { amount = 42 });
+
+            (await readFirst.WaitAsync(TimeSpan.FromSeconds(10), Ct)).Should().BeTrue();
+            var startedEvent = enumeratorB.Current;
+            startedEvent.InstanceId.Should().Be(instance.Id);
+            startedEvent.Workflow.Should().Be("ledger");
+            startedEvent.Type.Should().Be("Started");
+
+            (await enumeratorB.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10), Ct)).Should().BeTrue();
+            var transitionedEvent = enumeratorB.Current;
+            transitionedEvent.InstanceId.Should().Be(instance.Id);
+            transitionedEvent.Workflow.Should().Be("ledger");
+            transitionedEvent.State.Should().Be("open");
+        }
+        finally
+        {
+            await listener.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task Delta_history_keeps_patches_in_jsonb_and_existing_tables_are_upgraded_at_startup()
     {
         var schema = PostgresFixture.NewSchema();

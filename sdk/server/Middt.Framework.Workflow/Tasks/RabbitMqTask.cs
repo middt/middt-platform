@@ -48,6 +48,9 @@ public interface IWorkflowRabbitMqPublisher
 /// </summary>
 public sealed class RabbitMqTask : IWorkflowTask
 {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, IConnection> SharedConnections = new(StringComparer.Ordinal);
+    private static readonly SemaphoreSlim ConnectionGate = new(1, 1);
+
     public IEnumerable<string> Validate(TaskDefinition task, WorkflowExpressionEngine expressions)
     {
         var config = task.Config;
@@ -178,32 +181,36 @@ public sealed class RabbitMqTask : IWorkflowTask
         }
 
         IConnectionFactory? factory = context.Services.GetService<IConnectionFactory>();
-        if (factory is null)
+        string connectionKey;
+        if (factory is not null)
         {
-            if (!string.IsNullOrWhiteSpace(connectionString))
-            {
-                factory = new ConnectionFactory { Uri = new Uri(connectionString) };
-            }
-            else
-            {
-                var host = context.RenderText("host") ?? "localhost";
-                var port = config["port"]?.GetValue<int>() ?? 5672;
-                var user = context.RenderText("user") ?? context.RenderText("username") ?? "guest";
-                var pass = context.RenderText("pass") ?? context.RenderText("password") ?? "guest";
-                var vhost = context.RenderText("vhost") ?? context.RenderText("virtualHost") ?? "/";
+            connectionKey = $"di:{factory.GetHashCode()}";
+        }
+        else if (!string.IsNullOrWhiteSpace(connectionString))
+        {
+            connectionKey = $"uri:{connectionString}";
+            factory = new ConnectionFactory { Uri = new Uri(connectionString) };
+        }
+        else
+        {
+            var host = context.RenderText("host") ?? "localhost";
+            var port = config["port"]?.GetValue<int>() ?? 5672;
+            var user = context.RenderText("user") ?? context.RenderText("username") ?? "guest";
+            var pass = context.RenderText("pass") ?? context.RenderText("password") ?? "guest";
+            var vhost = context.RenderText("vhost") ?? context.RenderText("virtualHost") ?? "/";
 
-                factory = new ConnectionFactory
-                {
-                    HostName = host,
-                    Port = port,
-                    UserName = user,
-                    Password = pass,
-                    VirtualHost = vhost
-                };
-            }
+            connectionKey = $"host:{host}:{port}:{vhost}:{user}";
+            factory = new ConnectionFactory
+            {
+                HostName = host,
+                Port = port,
+                UserName = user,
+                Password = pass,
+                VirtualHost = vhost
+            };
         }
 
-        await using var connection = await factory.CreateConnectionAsync(cancellationToken);
+        var connection = await GetOrCreateConnectionAsync(connectionKey, factory, cancellationToken);
         await using var channel = await connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
         var basicProperties = new BasicProperties
@@ -224,6 +231,47 @@ public sealed class RabbitMqTask : IWorkflowTask
             basicProperties: basicProperties,
             body: body,
             cancellationToken: cancellationToken);
+    }
+
+    private static async Task<IConnection> GetOrCreateConnectionAsync(
+        string connectionKey,
+        IConnectionFactory factory,
+        CancellationToken cancellationToken)
+    {
+        if (SharedConnections.TryGetValue(connectionKey, out var existing) && existing.IsOpen)
+        {
+            return existing;
+        }
+
+        await ConnectionGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (SharedConnections.TryGetValue(connectionKey, out existing))
+            {
+                if (existing.IsOpen)
+                {
+                    return existing;
+                }
+
+                SharedConnections.TryRemove(connectionKey, out _);
+                try
+                {
+                    await existing.DisposeAsync();
+                }
+                catch
+                {
+                    // Ignore disposal errors on stale closed connection.
+                }
+            }
+
+            var created = await factory.CreateConnectionAsync(cancellationToken);
+            SharedConnections[connectionKey] = created;
+            return created;
+        }
+        finally
+        {
+            ConnectionGate.Release();
+        }
     }
 
     private static void SetResult(WorkflowTaskContext context, string exchange, string routingKey)

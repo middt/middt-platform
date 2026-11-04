@@ -1218,6 +1218,93 @@ public sealed class MiddtAgentTests
         afterDeleteCatalog.Data.McpServers.Should().NotContain(m => m.Name == "studio-mcp");
     }
 
+    [Fact]
+    public async Task Agent_registry_syncs_updates_and_deletions_across_pods_via_persisted_catalog()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        const string definition = """
+            { "key": "agent-sync-dummy", "start": { "key": "start", "target": "open" }, "states": [ { "key": "open" } ] }
+            """;
+
+        await using var host = await WorkflowTestHost.StartAsync(
+            [definition],
+            services: s => s.AddMiddtAgents());
+
+        // Construct a second MiddtAgentRegistry + MiddtMcpClient instance sharing the same database (simulating Pod B).
+        var podBMcp = new MiddtMcpClient(
+            host.Services,
+            Options.Create(new AgentSettings()),
+            new MiddtAgentOptions());
+        var podBRegistry = new MiddtAgentRegistry(
+            host.Services,
+            Options.Create(new AgentSettings()),
+            new MiddtAgentOptions(),
+            podBMcp,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        podBRegistry.GetAllDefinitions().Should().BeEmpty();
+
+        // Pod A persists a catalog with 2 agents and 1 MCP server to the database.
+        var initialCatalog = new AgentCatalogFile
+        {
+            Agents =
+            [
+                new AgentDefinition { Name = "agent-alpha", Instructions = "Alpha v1" },
+                new AgentDefinition { Name = "agent-beta", Instructions = "Beta v1" },
+            ],
+            McpServers =
+            [
+                new McpServerDefinition { Name = "mcp-one", Description = "MCP One" },
+            ],
+        };
+        await host.WithDbAsync(async db =>
+        {
+            db.Definitions.Add(new Middt.Framework.Workflow.Persistence.WorkflowDefinitionRecord
+            {
+                Key = AgentEndpoints.PersistedCatalogKey,
+                Version = 1,
+                Title = "AI Agent Catalog",
+                Content = System.Text.Json.JsonSerializer.Serialize(initialCatalog),
+                UpdatedBy = "pod-a",
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(ct);
+            return 0;
+        });
+
+        // Pod B receives catalog invalidation and immediately sees both agents and the MCP server.
+        podBRegistry.OnCatalogInvalidated("agents");
+        podBRegistry.GetDefinition("agent-alpha")!.Instructions.Should().Be("Alpha v1");
+        podBRegistry.GetDefinition("agent-beta")!.Instructions.Should().Be("Beta v1");
+        podBMcp.GetServer("mcp-one").Should().NotBeNull();
+
+        // Pod A updates agent-alpha and deletes agent-beta + mcp-one in the database.
+        var updatedCatalog = new AgentCatalogFile
+        {
+            Agents =
+            [
+                new AgentDefinition { Name = "agent-alpha", Instructions = "Alpha v2" },
+            ],
+        };
+        await host.WithDbAsync(async db =>
+        {
+            var existing = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstAsync(
+                db.Definitions,
+                d => d.Key == AgentEndpoints.PersistedCatalogKey && d.Version == 1,
+                ct);
+            existing.Content = System.Text.Json.JsonSerializer.Serialize(updatedCatalog);
+            existing.UpdatedAt = DateTime.UtcNow.AddSeconds(5);
+            await db.SaveChangesAsync(ct);
+            return 0;
+        });
+
+        // Pod B reloads on invalidation: agent-alpha has v2 instructions, and deleted agent-beta + mcp-one are gone.
+        podBRegistry.OnCatalogInvalidated("agents");
+        podBRegistry.GetDefinition("agent-alpha")!.Instructions.Should().Be("Alpha v2");
+        podBRegistry.GetDefinition("agent-beta").Should().BeNull();
+        podBMcp.GetServer("mcp-one").Should().BeNull();
+    }
+
     private sealed class ToolTestingChatClient(string modelId) : IChatClient
     {
         public ChatClientMetadata Metadata { get; } = new("test-tool-client", null, modelId);

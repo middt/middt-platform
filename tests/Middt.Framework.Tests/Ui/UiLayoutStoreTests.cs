@@ -243,4 +243,49 @@ public sealed class UiLayoutStoreTests
         docA!.Body[0].StringProp("text").Should().Be("from-A");
         docB!.Body[0].StringProp("text").Should().Be("from-B");
     }
+
+    [Fact]
+    public async Task Multi_pod_stores_with_separate_memory_caches_detect_version_updates_and_deletions_across_nodes()
+    {
+        await using var host = await UiTestHost.StartAsync();
+        await host.WithStoreAsync(s => s.SaveAsync(Doc("orders", text: "v1-from-pod-a"), null, "pod-a", Ct));
+
+        // Simulate Pod B with its own isolated IMemoryCache reading from the same database.
+        using var podBCache = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        var validator = host.Services.GetRequiredService<Middt.Framework.Ui.Validation.UiLayoutValidator>();
+        var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Middt.Framework.Ui.Server.MiddtUiOptions>>();
+
+        await host.WithDbAsync(async db =>
+        {
+            var podBStore = new UiLayoutStore(db, podBCache, validator, host.Time, options);
+            var cachedOnPodB = await podBStore.FindAsync("orders", Ct);
+            cachedOnPodB!.Version.Should().Be(1);
+            cachedOnPodB.Body[0].StringProp("text").Should().Be("v1-from-pod-a");
+            return 0;
+        });
+
+        // Pod A updates the layout to version 2.
+        await host.WithStoreAsync(s => s.SaveAsync(Doc("orders", text: "v2-from-pod-a"), 1, "pod-a", Ct));
+
+        // Pod B immediately detects the version drift (v1 -> v2) and refreshes its local snapshot cache.
+        await host.WithDbAsync(async db =>
+        {
+            var podBStore = new UiLayoutStore(db, podBCache, validator, host.Time, options);
+            var refreshedOnPodB = await podBStore.FindAsync("orders", Ct);
+            refreshedOnPodB!.Version.Should().Be(2);
+            refreshedOnPodB.Body[0].StringProp("text").Should().Be("v2-from-pod-a");
+            return 0;
+        });
+
+        // Pod A deletes the layout.
+        await host.WithStoreAsync(s => s.DeleteAsync("orders", 2, "pod-a", Ct));
+
+        // Pod B immediately detects the deletion and returns null.
+        await host.WithDbAsync(async db =>
+        {
+            var podBStore = new UiLayoutStore(db, podBCache, validator, host.Time, options);
+            (await podBStore.FindAsync("orders", Ct)).Should().BeNull();
+            return 0;
+        });
+    }
 }
