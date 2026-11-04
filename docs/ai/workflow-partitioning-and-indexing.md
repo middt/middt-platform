@@ -57,6 +57,14 @@ When the runtime starts up or when definitions are deployed via `POST /api/workf
 5. Creates global `jsonb_path_ops` GIN indexes on `Data` for arbitrary JSON containment queries (`@>`).
 6. On **SQLite** (used in unit tests and local dev without Docker), creates partial expression indexes:
    `CREATE INDEX IF NOT EXISTS "IX_Part_{Suffix}_{prop}" ON "WorkflowInstanceData" (json_extract("Data", '$.{prop}')) WHERE "WorkflowKey" = '{key}';`
+7. **Multi-Database SQL Pushdown & Universal Fallback (`WorkflowPartitionManager` & `WorkflowInstanceDataQuery`)**:
+   - `BuildSqlDataFilterQuery` and `BuildOrderBySqlDataQuery` generate native SQL JSON filter & sort queries across:
+     - **PostgreSQL (`Npgsql`)**: `"Data"->>'prop'`, `::numeric`, `STRPOS(...) > 0`
+     - **SQL Server (`SqlServer`)**: `JSON_VALUE([Data], '$.prop')`, `TRY_CAST(... AS decimal(38,10))`, `CHARINDEX(...) > 0`
+     - **MySQL / MariaDB (`MySql`)**: `JSON_UNQUOTE(JSON_EXTRACT(\`Data\`, '$.prop'))`, `CAST(... AS DECIMAL(38,10))`, `LOCATE(...) > 0`
+     - **Oracle (`Oracle`)**: `JSON_VALUE("Data", '$.prop')`, `TO_NUMBER(... DEFAULT NULL ON CONVERSION ERROR)`, `INSTR(...) > 0`
+     - **SQLite (`Sqlite`)**: `json_extract("Data", '$.prop')`, `CAST(... AS REAL)`, `INSTR(...) > 0`
+   - For any other EF Core provider where `SupportsSqlDataPushdown` is `false`, `WorkflowInstanceDataQuery.MatchesAllConditions` evaluates filters and sorting in memory before pagination (`Skip`/`Take`).
 
 ---
 

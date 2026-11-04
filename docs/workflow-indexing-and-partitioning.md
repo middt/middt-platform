@@ -258,3 +258,19 @@ ON wf."WorkflowInstanceData_OrderPayment" (((data->>'statusCode')::text));
    komutuyla eski yılın partition'ı bir milisaniyede ana tablodan ayrılır ve soğuk depoya taşınır.
 3. **İzole Bakım:**
    `VACUUM (ANALYZE)` veya `REINDEX` işlemleri yoğun çalışan partition'lara ayrı ayrı uygulanabilir.
+
+---
+
+## 6. Çoklu Veritabanı (Multi-Database) Uyumluluğu (PostgreSQL, MS SQL Server, MySQL, Oracle, SQLite)
+
+Declarative Partitioning (`PARTITION BY LIST`) PostgreSQL'e özgü bir performans optimizasyonu olmakla birlikte, Middt Framework iş akışı ve UI motorları **veritabanından bağımsız (database-agnostic)** çalışacak şekilde tasarlanmıştır:
+
+| Veritabanı Sağlayıcısı | Şema (`wf` / `ui`) | JSON Filtreleme & Sıralama (SQL Pushdown) | Kuyruk (`WorkflowJobs`) Tüketimi | Çoklu Pod Senkronizasyonu |
+| :--- | :--- | :--- | :--- | :--- |
+| **PostgreSQL (`Npgsql`)** | `wf`, `ui` (Declarative Partitioning + `jsonb`) | `"Data"->>'prop'`, `::numeric`, `STRPOS` | `FOR UPDATE SKIP LOCKED` | `LISTEN` / `NOTIFY` + `IWorkflowClusterBus` |
+| **MS SQL Server (`SqlServer`)** | `wf`, `ui` (`IF SCHEMA_ID(...) IS NULL EXEC(...)`) | `JSON_VALUE([Data], '$.prop')`, `TRY_CAST`, `CHARINDEX` | `WITH (UPDLOCK, READPAST, ROWLOCK)` + `OUTPUT inserted.[Id]` | `IWorkflowClusterBus` + `UpdatedAt` Watermark |
+| **MySQL / MariaDB (`MySql`)** | Şemasız (`ModelSchema = null`) | `JSON_UNQUOTE(JSON_EXTRACT(\`Data\`, '$.prop'))`, `LOCATE` | Atomik `ExecuteUpdateAsync` | `IWorkflowClusterBus` + `UpdatedAt` Watermark |
+| **Oracle (`Oracle`)** | Şemasız (`ModelSchema = null`, `NCLOB`, Function-Based Unique Index) | `JSON_VALUE("Data", '$.prop')`, `TO_NUMBER(... DEFAULT NULL ON CONVERSION ERROR)`, `INSTR` | Atomik `ExecuteUpdateAsync` | `IWorkflowClusterBus` + `UpdatedAt` Watermark |
+| **SQLite (`Sqlite`)** | Şemasız (`ModelSchema = null`) | `json_extract("Data", '$.prop')`, `INSTR` | Atomik `ExecuteUpdateAsync` | `IWorkflowClusterBus` + `UpdatedAt` Watermark |
+
+Ayrıca bu 5 veritabanı dışında herhangi bir EF Core sağlayıcısı kullanıldığında `WorkflowInstanceDataQuery` otomatik olarak **bellek-içi (in-memory) filtreleme ve sıralama fallback** mekanizmasına geçer.

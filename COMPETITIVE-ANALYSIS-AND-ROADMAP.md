@@ -150,6 +150,21 @@ flowchart LR
 
 ---
 
+### ✅ Faz 5 (Tamamlandı): Yüksek Erişilebilirlik (HA), Multi-Pod Küme Senkronizasyonu ve Çoklu Veritabanı (MS SQL, MySQL, Oracle) Desteği
+
+#### [MODIFY] [`WorkflowJobNotifier.cs`](sdk/server/Middt.Framework.Workflow/Runtime/WorkflowJobNotifier.cs), [`WorkflowJobProcessor.cs`](sdk/server/Middt.Framework.Workflow/Runtime/WorkflowJobProcessor.cs), [`WorkflowPartitionManager.cs`](sdk/server/Middt.Framework.Workflow/Runtime/WorkflowPartitionManager.cs), [`WorkflowDbContext.cs`](sdk/server/Middt.Framework.Workflow/Persistence/WorkflowDbContext.cs), [`UiLayoutStore.cs`](sdk/server/Middt.Framework.Ui.Server/Runtime/UiLayoutStore.cs)
+- **Pod'lar Arası Gerçek Zamanlı SSE ve Katalog Önbellek Senkronizasyonu**:
+  - Bir pod üzerinde gerçekleşen akış olayları (`WorkflowEventStreamHub`) ve çalışma zamanı katalog güncellemeleri (`WorkflowRegistry`, `MiddtAgentRegistry`, `MiddtMcpClient`, `UiLayoutStore`) PostgreSQL `LISTEN`/`NOTIFY` (`middt_wf_events_*`, `middt_wf_catalog_*`, `middt_ui_layouts`) ve veritabanından bağımsız `IWorkflowClusterBus` üzerinden kümedeki tüm pod'lara anında yayılır.
+  - Ayrıca `WorkflowRegistry` ve `MiddtAgentRegistry` için `UpdatedAt` zaman damgası su izi (watermark) kontrolü eklendi.
+- **Sıfır Kesintili (Graceful) Pod Kapanışı ve Başlangıç Kilidi**:
+  - Pod kapanışında (`SIGTERM` / `OperationCanceledException`) çalışmakta olan arka plan işlerinin 5 dakikalık kira süresi (`LockedUntil`) anında serbest bırakılır (`LockedUntil = null`, `Attempts - 1`) ve `RabbitMqTask` bağlantıları endpoint bazında havuzlanır (`IConnection` pooling).
+  - Çoklu pod soğuk başlangıçlarında (`WorkflowStartup`, `UiStartup`, `IdentitySeeder`) eşzamanlı şema/tablo oluşturma ve seed yarışları veritabanı danışma kilitleriyle (`pg_advisory_lock`, `sp_getapplock`, `GET_LOCK`) seri hale getirildi.
+- **Tam Çoklu Veritabanı (PostgreSQL, MS SQL Server, MySQL, Oracle, SQLite) Uyumluluğu**:
+  - `WorkflowPartitionManager` içine PostgreSQL ve SQLite'a ek olarak **MS SQL Server (`JSON_VALUE` / `TRY_CAST` / `CHARINDEX`)**, **MySQL (`JSON_EXTRACT` / `JSON_UNQUOTE` / `LOCATE`)** ve **Oracle (`JSON_VALUE` / `TO_NUMBER` / `INSTR` / `NCLOB`)** yerel SQL pushdown desteği ve diğer tüm EF Core sağlayıcıları için bellek-içi fallback (`MatchesAllConditions`) eklendi.
+  - MS SQL Server için `WITH (UPDLOCK, READPAST, ROWLOCK)` kuyruk tüketimi ve Oracle için parçalı `BusinessKey` function-based unique index koruması eklendi.
+
+---
+
 ## 6. Doğrulama Planı (Verification Plan)
 
 Her faz tamamlandığında çalıştırılacak doğrulama adımları:

@@ -13,6 +13,7 @@ the workflow engine (root folders) and the Blazor UI (`Ui/`: account pages, jour
 - Materialize OpenIddict/EF async streams before per-row queries on the same connection. Tests use SQLite
   and do not catch open DataReader conflicts – check the admin pages against the PostgreSQL compose stack.
 - `WorkflowOpenIddictStores` stores `ApplicationId` in `LastExecutedBy` on `oauth-token` rows and `Type` in `LastExecutedBy` on `oauth-authorization` rows so lookups push down to SQL, and executes revocations, pruning, and cascade deletes in bounded batches (`BatchSize = 200`).
+- `IdentitySeeder` acquires a PostgreSQL advisory lock (`pg_advisory_lock`) on cold start and re-checks for existing roles/users/clients on concurrent creation races so multiple IdP pods can start simultaneously.
 - Discovery endpoints are rebased on the configured issuer (`IssuerEndpointRebaser`): relying parties fetch it over an
   internal URL but browsers must get the public one.
 - CSP of the IdP has no `form-action` on purpose (redirect to the client after a form post); keep `frame-ancestors 'none'`.

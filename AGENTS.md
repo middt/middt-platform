@@ -9,10 +9,10 @@ of the folder you work in. Task playbooks: [`docs/ai/`](docs/ai/README.md).
 
 A .NET 10 framework for line-of-business apps with **two interchangeable frontends** over one backend:
 
-- **Backend**: REST API (controllers + dynamic `WorkflowInstanceDataQuery` with SQL filter & numeric/text sort pushdown before pagination), JSON-defined
+- **Backend**: REST API (controllers + dynamic `WorkflowInstanceDataQuery` with multi-database SQL filter & numeric/text sort pushdown across PostgreSQL, SQL Server, MySQL, Oracle, and SQLite before pagination + universal in-memory fallback), JSON-defined
   **workflow engine** (partitioned by workflow key in PostgreSQL; message-driven `Event` transitions, background tasks,
-  history modes, human task claim/unclaim/assign & running instance version migration, real-time SSE event streaming via `WorkflowEventStreamHub`, multi-node jobs with `SKIP LOCKED` + `LISTEN`/`NOTIFY`, atomic job abandonment + incident recording), **Microsoft Agent Framework AI & MCP** (`Middt.Framework.Agents`: `agent` and `mcp` tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing via `allowedTransitions` / `transitionInto`, multi-agent `sequential` / `concurrent` / `handoff`, runtime CRUD + validation + live Playground at `/api/agents/*`), **100% server-driven JSON UI** (menus, list columns,
-  forms, state views, 16 built-in widgets including `stat`, `tabs`, `timeline`, and reusable nested `"widget": "layout"` blocks stored in DB and editable at runtime via the visual drag-and-drop Screen Designer `/ui-admin`, Workflow Designer `/workflow-admin`, and AI Agent & MCP Studio `/agent-admin`; see
+  history modes, human task claim/unclaim/assign & running instance version migration, real-time cross-pod SSE event streaming via `WorkflowEventStreamHub`, multi-node jobs with `SKIP LOCKED` / `READPAST` + `LISTEN`/`NOTIFY` & `IWorkflowClusterBus`, immediate job lease release on graceful shutdown, atomic job abandonment + incident recording), **Microsoft Agent Framework AI & MCP** (`Middt.Framework.Agents`: `agent` and `mcp` tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing via `allowedTransitions` / `transitionInto`, multi-agent `sequential` / `concurrent` / `handoff`, runtime CRUD + validation + live Playground at `/api/agents/*` with cross-pod catalog invalidation), **100% server-driven JSON UI** (menus, list columns,
+  forms, state views, 16 built-in widgets including `stat`, `tabs`, `timeline`, and reusable nested `"widget": "layout"` blocks stored in DB with cross-pod cache invalidation and editable at runtime via the visual drag-and-drop Screen Designer `/ui-admin`, Workflow Designer `/workflow-admin`, and AI Agent & MCP Studio `/agent-admin`; see
   [`docs/ai/backend-driven-json-ui.md`](docs/ai/backend-driven-json-ui.md)).
 - **Frontends**: **Blazor Server** (Radzen) and **Angular 22** (Material). Both sit behind a **BFF** (cookie session,
   server side tokens with multi-instance distributed refresh leases + optimistic session versioning, `/api` proxy). The browser never holds an API token. Neither demo frontend contains
@@ -109,7 +109,7 @@ docker compose up -d --build        # Blazor :8080 · Angular :8081 · IdP :8083
 - Browsers don't separate cookies by port: each BFF app on the same host needs its own `CookieName`.
 - Workflow and job keys use UUIDv7 (`Guid.CreateVersion7()`) for chronological B-tree indexing in PostgreSQL.
 - `WorkflowDbContext`'s model depends on the workflow schema: EF caches it per schema (`WorkflowModelCacheKeyFactory`);
-  without that, a second schema in the same process silently used the first one's tables (`UiDbContext` does the same via `UiModelCacheKeyFactory`). More workflow pitfalls:
+  without that, a second schema in the same process silently used the first one's tables (`UiDbContext` does the same via `UiModelCacheKeyFactory`). Only PostgreSQL (`Npgsql`) and SQL Server (`SqlServer`) use separate namespace schemas (`wf`, `ui`); SQLite, MySQL, and Oracle map `ModelSchema` to `null` (`SupportsDatabaseSchemas`). More workflow pitfalls:
   [`docs/ai/gotchas.md`](docs/ai/gotchas.md).
 - Seeds (`demo/Middt.Demo.Workflows/Layouts`, `Workflows`, `Agents`) are validated at startup or when deployed over HTTP (`POST /api/agents/catalog`, `POST /api/workflows/definitions`, `POST /api/ui/layouts/seed`).
 - E2E (Playwright) suites live in `tests/e2e`; see `docs/ai/testing.md`.
