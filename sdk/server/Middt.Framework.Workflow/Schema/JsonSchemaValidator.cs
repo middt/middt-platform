@@ -395,14 +395,14 @@ public static partial class JsonSchemaValidator
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.CultureInvariant)]
     private static partial Regex FieldRegex();
 
-    public static List<string> Validate(JsonNode? instance, JsonObject schema, JsonObject? data = null, ExpressionUser? user = null)
+    public static List<string> Validate(JsonNode? instance, JsonObject schema, JsonObject? data = null, ExpressionUser? user = null, JsonObject? prefillData = null)
     {
         var errors = new List<string>();
-        Validate(instance, schema, "$", errors, data, user);
+        Validate(instance, schema, "$", errors, data, user, prefillData);
         return errors;
     }
 
-    private static void Validate(JsonNode? node, JsonObject schema, string path, List<string> errors, JsonObject? data, ExpressionUser? user)
+    private static void Validate(JsonNode? node, JsonObject schema, string path, List<string> errors, JsonObject? data, ExpressionUser? user, JsonObject? prefillData = null)
     {
         if (schema["type"] is JsonValue typeValue && typeValue.TryGetValue<string>(out var type) && !IsType(node, type))
         {
@@ -423,7 +423,7 @@ public static partial class JsonSchemaValidator
         switch (node)
         {
             case JsonObject obj:
-                ValidateObject(obj, schema, path, errors, data, user);
+                ValidateObject(obj, schema, path, errors, data, user, prefillData);
                 break;
             case JsonArray array:
                 ValidateArray(array, schema, path, errors, data, user);
@@ -445,7 +445,7 @@ public static partial class JsonSchemaValidator
         }
     }
 
-    private static void ValidateObject(JsonObject obj, JsonObject schema, string path, List<string> errors, JsonObject? data, ExpressionUser? user)
+    private static void ValidateObject(JsonObject obj, JsonObject schema, string path, List<string> errors, JsonObject? data, ExpressionUser? user, JsonObject? prefillData = null)
     {
         var properties = schema["properties"] as JsonObject;
         var visibleProps = GetVisibleProperties(obj, properties, data, user);
@@ -517,9 +517,15 @@ public static partial class JsonSchemaValidator
                 {
                     JsonNode? expectedValue = null;
                     var hasExpected = false;
-                    if (data is not null && data.TryGetPropertyValue(name, out var dataVal) && dataVal is not null)
+                    var sourceObj = prefillData ?? data;
+                    if (sourceObj is not null && sourceObj.TryGetPropertyValue(name, out var dataVal) && dataVal is not null)
                     {
                         expectedValue = dataVal;
+                        hasExpected = true;
+                    }
+                    else if (data is not null && !ReferenceEquals(sourceObj, data) && data.TryGetPropertyValue(name, out var rootVal) && rootVal is not null)
+                    {
+                        expectedValue = rootVal;
                         hasExpected = true;
                     }
                     else if (propertySchema["default"] is { } defaultVal)
@@ -537,7 +543,8 @@ public static partial class JsonSchemaValidator
 
                 if (value is not null)
                 {
-                    Validate(value, propertySchema, $"{path}.{name}", errors, data, user);
+                    var childPrefill = (prefillData ?? data)?[name] as JsonObject;
+                    Validate(value, propertySchema, $"{path}.{name}", errors, data, user, childPrefill);
                 }
             }
             else if (!allowAdditional)

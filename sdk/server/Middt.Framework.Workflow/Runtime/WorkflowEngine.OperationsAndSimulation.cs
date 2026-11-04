@@ -322,7 +322,7 @@ public sealed partial class WorkflowEngine
         var now = Now;
         var assignee = user.AuditName;
         var updated = await db.Instances
-            .Where(i => i.Id == instanceId && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
+            .Where(i => i.Id == instanceId && i.WorkflowKey == snapshot.WorkflowKey && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(i => i.AssignedTo, assignee)
                 .SetProperty(i => i.AssignedAt, now)
@@ -366,7 +366,7 @@ public sealed partial class WorkflowEngine
 
         var now = Now;
         var updated = await db.Instances
-            .Where(i => i.Id == instanceId && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
+            .Where(i => i.Id == instanceId && i.WorkflowKey == snapshot.WorkflowKey && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(i => i.AssignedTo, (string?)null)
                 .SetProperty(i => i.AssignedAt, (DateTime?)null)
@@ -424,7 +424,7 @@ public sealed partial class WorkflowEngine
 
         var now = Now;
         var updated = await db.Instances
-            .Where(i => i.Id == instanceId && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
+            .Where(i => i.Id == instanceId && i.WorkflowKey == snapshot.WorkflowKey && i.Status == WorkflowInstanceStatus.Active && i.Revision == snapshot.Revision)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(i => i.AssignedTo, targetAssignee)
                 .SetProperty(i => i.AssignedAt, now)
@@ -574,14 +574,26 @@ public sealed partial class WorkflowEngine
             instance.UpdatedAt = now;
             instance.Revision++;
 
-            if (fromState != toState)
+            var targetStateDef = targetDef.FindState(toState);
+            var pendingScheduled = await db.Jobs
+                .Where(j => j.InstanceId == instance.Id && j.WorkflowKey == instance.WorkflowKey && j.Kind == WorkflowJobKind.Scheduled && j.State == fromState)
+                .ToListAsync(cancellationToken);
+            if (pendingScheduled.Count > 0)
             {
-                var pendingScheduled = await db.Jobs
-                    .Where(j => j.InstanceId == instance.Id && j.Kind == WorkflowJobKind.Scheduled && j.State == fromState)
-                    .ToListAsync(cancellationToken);
+                var validScheduledKeys = targetStateDef?.Transitions
+                    .Where(t => t.Trigger == TriggerType.Scheduled)
+                    .Select(t => t.Key)
+                    .ToHashSet(StringComparer.Ordinal) ?? [];
                 foreach (var job in pendingScheduled)
                 {
-                    job.State = toState;
+                    if (job.TransitionKey is not null && !validScheduledKeys.Contains(job.TransitionKey))
+                    {
+                        db.Jobs.Remove(job);
+                    }
+                    else
+                    {
+                        job.State = toState;
+                    }
                 }
             }
 
@@ -701,7 +713,7 @@ public sealed partial class WorkflowEngine
         {
             var startInput = WorkflowHttpInput.EnsureEnvelope(request.Data);
             ValidateInput(definition.Start, startInput, data: null, user: user);
-            ApplySimulatedInput(definition.Start, workingData, startInput);
+            ApplySimulatedInput(definition.Start, definition, simInstance, workingData, startInput, user);
             await ExecuteSimulatedTasksAsync(definition.Start.OnExecute, definition, simInstance, workingData, startInput, user, request.TaskMocks, cancellationToken);
             executedTransitions.Add(definition.Start.Key);
 
@@ -730,7 +742,7 @@ public sealed partial class WorkflowEngine
                 var currentStateDef = definition.FindState(simInstance.State)
                     ?? throw new WorkflowConflictException($"State '{simInstance.State}' does not exist.");
 
-                ApplySimulatedInput(transition, workingData, stepInput);
+                ApplySimulatedInput(transition, definition, simInstance, workingData, stepInput, user);
                 await ExecuteSimulatedTasksAsync(transition.OnExecute, definition, simInstance, workingData, stepInput, user, request.TaskMocks, cancellationToken);
                 await ExecuteSimulatedTasksAsync(currentStateDef.OnExit, definition, simInstance, workingData, stepInput, user, request.TaskMocks, cancellationToken);
                 executedTransitions.Add(transition.Key);
@@ -839,15 +851,18 @@ public sealed partial class WorkflowEngine
             };
         }
 
-        var historyRows = await db.History.Where(h => instanceIds.Contains(h.InstanceId)).ToListAsync(cancellationToken);
-        var incidentRows = await db.Incidents.Where(inc => instanceIds.Contains(inc.InstanceId)).ToListAsync(cancellationToken);
+        var workflowKeys = targetInstances.Select(i => i.WorkflowKey).Distinct(StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
+        var historyRows = await db.History.Where(h => workflowKeys.Contains(h.WorkflowKey) && instanceIds.Contains(h.InstanceId)).ToListAsync(cancellationToken);
+        var incidentRows = await db.Incidents.Where(inc => workflowKeys.Contains(inc.WorkflowKey) && instanceIds.Contains(inc.InstanceId)).ToListAsync(cancellationToken);
 
         if (!request.DryRun)
         {
-            var agentRuns = await db.AgentRuns.Where(r => instanceIds.Contains(r.InstanceId)).ToListAsync(cancellationToken);
-            var toolCalls = await db.AgentToolCalls.Where(tc => instanceIds.Contains(tc.InstanceId)).ToListAsync(cancellationToken);
-            var sessions = await db.AgentSessions.Where(s => instanceIds.Contains(s.InstanceId)).ToListAsync(cancellationToken);
+            var jobRows = await db.Jobs.Where(j => workflowKeys.Contains(j.WorkflowKey) && instanceIds.Contains(j.InstanceId)).ToListAsync(cancellationToken);
+            var agentRuns = await db.AgentRuns.Where(r => workflowKeys.Contains(r.WorkflowKey) && instanceIds.Contains(r.InstanceId)).ToListAsync(cancellationToken);
+            var toolCalls = await db.AgentToolCalls.Where(tc => workflowKeys.Contains(tc.WorkflowKey) && instanceIds.Contains(tc.InstanceId)).ToListAsync(cancellationToken);
+            var sessions = await db.AgentSessions.Where(s => workflowKeys.Contains(s.WorkflowKey) && instanceIds.Contains(s.InstanceId)).ToListAsync(cancellationToken);
 
+            db.Jobs.RemoveRange(jobRows);
             db.AgentToolCalls.RemoveRange(toolCalls);
             db.AgentRuns.RemoveRange(agentRuns);
             db.AgentSessions.RemoveRange(sessions);
@@ -867,25 +882,37 @@ public sealed partial class WorkflowEngine
         };
     }
 
-    private static void ApplySimulatedInput(TransitionDefinition transition, JsonObject workingData, JsonObject? envelopeInput)
+    private void ApplySimulatedInput(
+        TransitionDefinition transition,
+        WorkflowDefinition definition,
+        WorkflowInstance simInstance,
+        JsonObject workingData,
+        JsonObject? envelopeInput,
+        WorkflowUser user)
     {
-        var body = WorkflowHttpInput.ExtractBody(envelopeInput, transition.Input?.Schema);
-        if (body is null || body.Count == 0)
+        if (transition.Input is not { } inputDef)
         {
             return;
         }
 
-        var clean = transition.Input?.Persistable(body) ?? body;
-        var into = transition.Input?.Into;
-        if (!string.IsNullOrWhiteSpace(into))
+        var body = WorkflowHttpInput.ExtractBody(envelopeInput, inputDef.Schema);
+        if (inputDef.Schema is not null && body is { Count: > 0 } && inputDef.Persistable(body) is { } clean)
         {
-            var target = JsonPath.Get(workingData, into) as JsonObject ?? [];
-            JsonPath.Merge(target, clean);
-            JsonPath.Set(workingData, into, target);
+            JsonPath.Merge(workingData, clean, inputDef.Into);
         }
-        else
+
+        var scopeInput = envelopeInput is not null ? (JsonObject)envelopeInput.DeepClone() : [];
+        scopeInput["removed"] = new JsonArray();
+        AttachEnumFromLabels(inputDef.Schema, RuleScope(definition, simInstance, workingData, user, scopeInput));
+        foreach (var (path, expression) in inputDef.EffectiveSet)
         {
-            JsonPath.Merge(workingData, clean);
+            var value = expressions.EvaluateToNode(expression, RuleScope(definition, simInstance, workingData, user, scopeInput));
+            if (value is JsonArray updatedArr && JsonDynamic.GetRemovedItems(updatedArr) is { Count: > 0 } removedByExpr)
+            {
+                scopeInput["removed"] = removedByExpr.DeepClone();
+            }
+
+            JsonPath.Set(workingData, path, value);
         }
     }
 

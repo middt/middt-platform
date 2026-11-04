@@ -14,7 +14,9 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
    - [3.2. Veri Şeması, Otomatik İndeksleme ve Arama (`dataSchema`)](#32-veri-şeması-otomatik-indeksleme-ve-arama-dataschema)
    - [3.3. Başlangıç Formu ve Giriş Kuralları (`start`)](#33-başlangıç-formu-ve-giriş-kuralları-start)
    - [3.4. Durumlar (`states`), Sihirbaz Adımları ve Ekran Bağlama](#34-durumlar-states-sihirbaz-adımları-ve-ekran-bağlama)
-   - [3.5. Geçişler (`transitions`) ve Tetikleyiciler (`trigger`)](#35-geçişler-transitions-ve-tetikleyiciler-trigger)
+   - [3.5. Geçişler (`transitions`), Paylaşılan Geçişler (`sharedTransitions`) ve Tetikleyiciler (`trigger`)](#35-geçişler-transitions-paylaşılan-geçişler-sharedtransitions-ve-tetikleyiciler-trigger)
+     - [3.5.1. Kurumsal BPM Yönetişimi: Görev Üstlenme (`claim`), Çoklu Kişi / Rol Atama (`assign`) ve Çalışan Sürüm Göçü (`migrate`)](#351-kurumsal-bpm-yönetişimi-görev-üstlenme-claim-çoklu-kişi--rol-atama-assign-ve-çalışan-sürüm-göçü-migrate)
+     - [3.5.2. Alt Nesne, İç İçe Dizi (`billingContact.emails[]`) ve JSON Patch (`input.format: "jsonPatch"`) ile Veri Güncelleme](#352-alt-nesne-iç-içe-dizi-billingcontactemails-ve-json-patch-inputformat-jsonpatch-ile-veri-güncelleme)
    - [3.6. Yerleşik Görevler (Built-in Tasks) ve Ayarları Referansı](#36-yerleşik-görevler-built-in-tasks-ve-ayarları-referansı)
      - [0. Tüm Görevlerde Ortak Ayarlar (`key`, `when`, `background`, `onError`)](#0-tüm-görevlerde-ortak-ayarlar-key-when-background-onerror)
      - [1. `set` — Veri Hesaplama ve Atama](#1-set--veri-hesaplama-ve-atama)
@@ -35,6 +37,8 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
    - [4.3. Akış İçinde Ajan Çağırma ve Otomatik Geçiş Kararı (`selectedTransition`)](#43-akış-içinde-ajan-çağırma-ve-otomatik-geçiş-kararı-selectedtransition)
    - [4.4. Görsel AI Ajan, Araç ve MCP Stüdyosu (`/agent-admin`) ve Canlı Test Playground](#44-görsel-ai-ajan-araç-ve-mcp-stüdyosu-agent-admin-ve-canlı-test-playground)
 5. [Bölüm 3: İfade Dili (Expression Language) Rehberi](#5-bölüm-3-ifade-dili-expression-language-rehberi)
+   - [5.1. Taşınabilir İfade Dili (Portable Expressions) Metotları (.NET & TypeScript Ortak)](#51-taşınabilir-ifade-dili-portable-expressions-metotları-net--typescript-ortak)
+   - [5.2. Sunucu İş Akışı İfadelerinde Dizi ve Nesne Yardımcıları (`JsonDynamic` & `JsonDynamicArray`)](#52-sunucu-iş-akışı-ifadelerinde-dizi-ve-nesne-yardımcıları-jsondynamic--jsondynamicarray)
 6. [Bölüm 4: Sunucu Güdümlü Ekran Tasarımı (`Layouts/*.json`), 16 Widget ve Canlı Tasarımcılar](#6-bölüm-4-sunucu-güdümlü-ekran-tasarımı-layoutsjson)
    - [6.1. Ekran Bileşenleri (Widgets) Kataloğu (`stat`, `tabs`, `timeline` Dahil 16 Bileşen)](#61-ekran-bileşenleri-widgets-kataloğu)
      - [6.1.1. `stat` — KPI / Metrik Kartı Bileşeni Detaylı Kullanımı](#611-stat--kpi--metrik-kartı-bileşeni-detaylı-kullanımı)
@@ -196,12 +200,14 @@ Her iş akışı `Workflows/` klasöründe bir `.json` dosyasıdır:
 }
 ```
 
-- **`"x-search": true`**:
-  - `string` alanlarda büyük/küçük harf duyarsız arama kutusu (veya `enum` ise açılır kutu) oluşturur.
-  - `number` / `integer` alanlarda otomatik olarak **Min (≥)** ve **Max (≤)** aralık filtreleri oluşturur.
+- **`"x-search"` (Arama Çubuğu ve Veritabanı İndeksi)**:
+  - `"x-search": true`: `string` alanlarda büyük/küçük harf duyarsız arama kutusu (veya `enum` ise açılır kutu), `number` / `integer` alanlarda ise otomatik olarak **Min (≥)** ve **Max (≤)** aralık filtreleri oluşturur.
+  - Özel arama modları: `true`/`false` yerine doğrudan `"text"`, `"select"`, `"range"`, `"min"`, `"max"`, `"gte"`, `"lte"`, `"date-range"` verilebilir (ör. yalnızca alt sınır araması için `"x-search": "min"`).
+- **`"x-index": true`**: Alanı liste arama çubuğuna (`x-search`) eklemeden yalnızca veritabanında fonksiyonel indeks oluşturmak için kullanılır (`queryWorkflow` / `loadWorkflow` `where` sorgularını hızlandırır).
+- **`"x-date-search": true | false` (`dataSchema` kök seviyesinde)**: İş akışı liste sayfasında **Başlangıç tarihi (`createdFrom`)** ve **Bitiş tarihi (`createdTo`)** filtrelerinin gösterilip gösterilmeyeceğini belirler (en az bir `x-search` alanı varsa varsayılan olarak `true` çalışır).
 - **Alan Gizleme ve Maskeleme (İç İçe Nesneler Dahil)**:
-  - `"x-mask": { "pattern": "last4" | "email" | "middle", "exceptRoles": ["manager", "idp-admin"] }`: Yetkisiz kullanıcılara alanı `*******8901` şeklinde maskeler, `exceptRoles` içindeki rollere tam değeri gösterir. (`data.customer.identityNumber` gibi iç içe nesne ve dizilerde de otomatik çalışır.)
-  - `"x-roles": ["manager"]`: Yetkisiz kullanıcılardan alanı tamamen gizler (API yanıtından çıkarır) ve yetkisiz kullanıcıların bu alanı yazmasını engeller.
+  - `"x-mask": { "pattern": "last4" | "email" | "***", "exceptRoles": ["manager", "idp-admin"] }`: Yetkisiz kullanıcılara alanı `*******8901` (`last4`), `a***@domain.com` (`email`) veya `***` şeklinde maskeler, `exceptRoles` içindeki rollere tam değeri gösterir. (`data.customer.identityNumber` gibi iç içe nesne ve dizilerde de otomatik çalışır.)
+  - `"x-roles": ["manager"]`: Yetkisiz kullanıcılardan alanı tamamen gizler (API yanıtından çıkarır) ve yetkisiz kullanıcıların bu alanı görmesini/filtrelemesini engeller.
 - **`"x-list": false`**: Alanın liste tablosunda sütun olarak görünmesini engeller, yalnızca detayda kullanılır.
 
 ---
@@ -266,9 +272,43 @@ Kullanıcı **"Yeni Başlat"** butonuna bastığında açılan form `start.input
 }
 ```
 
-- **`x-lookup`**: Başka bir iş akışının aktif kayıtlarını açılır liste (Dropdown) olarak bağlar (`entity`: diğer akışın PascalCase adı, `valueField`: kaydedilecek alan, `textField`: gösterilecek metin).
-- **`input.rule` & `input.ruleMessage`**: Form gönderildiğinde sunucu tarafında çalışan iş kuralı. Sağlanmazsa kullanıcıya `ruleMessage` gösterilir.
-- **`input.sensitive`**: `["cardPin", "cvv"]` gibi tanımlanan alanlar yalnızca görev çalışırken bellekte kullanılır; veritabanına ve tarihçeye **asla** kaydedilmez.
+- **`x-lookup`**: Başka bir iş akışının aktif kayıtlarını açılır liste (Dropdown) olarak bağlar (`entity`: diğer akışın PascalCase adı, `valueField`: kaydedilecek alan, `textField`: gösterilecek metin). Alanın `type` değeri `integer` veya `number` ise seçilen değer otomatik olarak sayıya dönüştürülür.
+- **`x-enumFrom` (Kayıt İçi Diziden Dinamik Açılır Liste)**: Bir geçiş formundaki açılır listenin (`enum`) seçeneklerini o anki iş akışı kaydının `data` içindeki bir dizisinden dinamik olarak doldurur. İki kullanım biçimini destekler:
+  1. **Kısa Yol (`"<diziYolu>.<alan>"`)**:
+     ```json
+     "reference": {
+       "type": "string",
+       "title": "Silinecek Ödeme Referansı",
+       "x-enumFrom": "partialPayment.reference"
+     }
+     ```
+  2. **Biçimlendirilmiş Şablon (`{ "source": "...", "format": "{{ ... }}" }`)**:
+     ```json
+     "reference": {
+       "type": "string",
+       "title": "Silinecek Ödeme Hareketi",
+       "x-enumFrom": {
+         "source": "partialPayment",
+         "format": "{{ row.reference }} ({{ row.amount }} ₺ — {{ row.paidAt }})"
+       }
+     }
+     ```
+     > **Akıllı Etiket Eşleştirme (`FormattedLabels`)**: `format` şablonu kullanıldığında kullanıcı açılır kutudan `"EFT-1001 (5000 ₺ — 2026-03-01)"` gibi biçimlendirilmiş bir metin seçse dahi, motor bu etiketi dizideki orijinal nesneyle otomatik ilişkilendirir; böylece `set` veya `rule` içinde `data.partialPayment.Remove("reference", input.reference)`, `.Find("reference", input.reference)` ve `.Any("reference", input.reference)` doğrudan ilgili dizi elemanını bulur!
+- **URL Sorgu Parametreleriyle Başlangıç Formu Otomatik Doldurma (`?start=1&key=...&<alan>=...`)**:
+  - Herhangi bir iş akışı liste sayfasına `?start=1` parametresiyle gidildiğinde (ör. `/workflow/credit-allocation?start=1&key=KRD-2026-01&customerKey=CUST-123&amount=250000`) **"Yeni Başlat"** penceresi otomatik açılır, `key` iş anahtarına yazılır ve `start.input.schema` içindeki alanlarla eşleşen tüm URL parametreleri şema tipine (`number`, `integer`, `boolean`, `string`) dönüştürülerek forma otomatik doldurulur.
+  - Ekran tasarımlarında (`Layouts/*.json`) bir kayıttan başka bir akışı hazır verilerle başlatmak için `link` bileşenini kullanabilirsiniz:
+    ```json
+    {
+      "widget": "link",
+      "text": "Bu Müşteri İçin Kredi Başvurusu Başlat",
+      "href": "/workflow/credit-allocation?start=1&customerKey={{ instance.key }}&amount=100000",
+      "style": "button"
+    }
+    ```
+- **`input.rule` & `input.ruleMessage`**: Form gönderildiğinde sunucu tarafında çalışan iş kuralı. Sağlanmazsa `409 Conflict` ile reddedilir ve kullanıcıya `ruleMessage` gösterilir.
+- **`input.sensitive`**: `["cardPin", "cvv"]` gibi tanımlanan üst düzey alanlar yalnızca geçişin görevleri ve ifadeleri çalışırken bellekte (`input.cardPin`) görünür; `instance.data`, `WorkflowHistory` ve `PendingInput` (retry) kayıtlarına **asla** yazılmaz.
+- **Otomatik HTTP Üst Bilgi Zenginleştirmesi (`input.header`)**: `/instances`, `/transitions` veya `/messages` uçlarına gelen her HTTP çağrısında motor `input.header` nesnesini otomatik olarak doldurur:
+  - `input.header.correlationId` (`X-Correlation-ID`), `input.header.traceId`, `input.header.spanId`, `input.header.clientIp`, `input.header.userAgent`. Bu değerleri `set` veya `log` görevlerinde denetim izi olarak kullanabilirsiniz.
 
 #### Canlı Form Alanı Kuralları (`visibleWhen`, `requiredWhen`, `disabledWhen` ve `ui.<alan>`)
 
@@ -367,18 +407,87 @@ Hem iş akışı başlangıç/geçiş formlarında (`input.schema.properties`) h
 - **`step`**: `1, 2, 3...` verildiğinde ekranın üst kısmında otomatik olarak **Sihirbaz (Wizard) Adım Çubuğu** gösterilir.
 - **`view.layout`**: Bu durumda hangi JSON ekran tasarımının (`Layouts/<key>.json`) gösterileceğini belirler.
 
+#### Alt İş Akışı Durumları (`type: "SubFlow"` ve `subFlow` Ayarları)
+Bir durum `"type": "SubFlow"` olarak işaretlendiğinde, duruma girildiği anda `subFlow.workflow` ile belirtilen alt iş akışı otomatik başlatılır ve üst akış alt akış tamamlanana (`Finish`) kadar bekler:
+
+```json
+{
+  "key": "risk-evaluation-subflow",
+  "title": "Risk & Limit Değerlendirme Alt Akışı",
+  "type": "SubFlow",
+  "step": 2,
+  "subFlow": {
+    "workflow": "risk-limit-eval",
+    "forwardTransitions": true,
+    "input": {
+      "customerKey": "data.customerKey",
+      "amount": "data.amount",
+      "checkType": "\"Kredi Tahsis Risk Analizi\""
+    },
+    "output": {
+      "riskScore": "child.data.riskScore",
+      "recommendedLimit": "child.data.recommendedLimit",
+      "riskDecision": "child.subType"
+    },
+    "into": "riskResult"
+  },
+  "transitions": [
+    {
+      "key": "subflow-approved",
+      "target": "committee-approval",
+      "trigger": "Automatic",
+      "rule": "child.subType == \"Success\""
+    },
+    {
+      "key": "subflow-rejected",
+      "target": "rejected",
+      "trigger": "Automatic",
+      "default": true
+    }
+  ]
+}
+```
+- **`subFlow.input`**: Üst akışın verisinden (`data.*`) alt akışa gönderilecek başlangıç alanlarının `{ "hedefAlan": "C# İfadesi" }` eşlemesi (boş bırakılırsa üst akışın tüm `data` nesnesi kopyalanır).
+- **`subFlow.into`**: Alt akış tamamlandığında çıktısının üst akışın `data` nesnesinde yazılacağı alt yol (ör. `"riskResult"`).
+- **`subFlow.output` *(veya `select`)*:** Alt akışın tüm verisi yerine yalnızca seçilen alanları (`["riskScore", "recommendedLimit"]`) veya `child.data.*` / `child.subType` üzerinden hesaplanan ifadeleri üst akışa yazar.
+- **`subFlow.forwardTransitions`**: `true` *(varsayılan)* olduğunda, üst akışın detay ekranı beklerken otomatik olarak aktif alt akışın ekranını (`view.layout`) ve aksiyon butonlarını gösterir; kullanıcı üst ekrandan çıkmadan alt akışın adımlarını tamamlayabilir. Üst akış iptal edilirse aktif alt akış da otomatik iptal edilir.
+- **`child.subType`**: Alt akış bittiğinde `Automatic` geçiş kurallarında alt akışın nasıl sonlandığını (`"Success"`, `"Error"`, `"Cancelled"`) kontrol etmek için kullanılır.
+
 ---
 
-### 3.5. Geçişler (`transitions`) ve Tetikleyiciler (`trigger`)
+### 3.5. Geçişler (`transitions`), Paylaşılan Geçişler (`sharedTransitions`) ve Tetikleyiciler (`trigger`)
 
 Bir durumdan diğerine (veya `"$self"` ile aynı durumun kendisine) geçişler 4 farklı şekilde tetiklenebilir:
 
 | `trigger` | Açıklama | Önemli Alanlar |
 |---|---|---|
-| `"Manual"` (Varsayılan) | Kullanıcının ekranda gördüğü aksiyon butonlarıdır. | `title`, `description`, `style` (`primary`, `success`, `warning`, `danger`, `secondary`, `light`), `icon`, `roles`, `inline` (`true` ise popup yerine sayfa içinde form açar), `rule` (butonun görünme koşulu). |
+| `"Manual"` (Varsayılan) | Kullanıcının ekranda gördüğü aksiyon butonlarıdır. | `title`, `description`, `style` (`primary`, `success`, `warning`, `danger`, `secondary`, `light`), `icon`, `roles`, `denyRoles`, `toolbar` (`false` ise üst araç çubuğunda gizlenir, yalnızca `list` satır aksiyonlarından tetiklenir), `view.inline` (`true` ise popup yerine sayfa içinde sihirbaz formu açar), `rule` (butonun görünme koşulu). |
 | `"Automatic"` | `onEntry` görevleri biter bitmez motor tarafından otomatik değerlendirilir. | `rule` (koşul ifadesi; ör. `"data.amount <= 5000"` veya `"instance.agents.aiUnderwriter.selectedTransition == \"to-approved\""`), `default: true` (hiçbir kural tutmazsa seçilecek geçiş). |
-| `"Scheduled"` | Belirtilen süre sonunda arka plan zamanlayıcısı ile tetiklenir (SLA / Hatırlatma). | `after`: `"00:15:00"` veya dinamik `"{{ data.slaDuration }}"`. |
+| `"Scheduled"` | Belirtilen süre sonunda (`after`) veya belirli bir tarih/saatte (`at`) arka plan zamanlayıcısı ile tetiklenir (SLA / Hatırlatma). | `after`: `"00:15:00"`, `"PT15M"` veya dinamik `"{{ data.slaDuration }}"`<br>`at`: `"2026-12-31T23:59:59Z"` veya dinamik `"{{ data.dueDate }}"` (ISO 8601 UTC zaman damgası). |
 | `"Event"` | Dış sistemden veya başka akıştan mesaj geldiğinde tetiklenir. | `event`: `"payment.received"`, `rule`: `"input.amount > 0"`. |
+
+**Paylaşılan Geçişler (`sharedTransitions` ve `availableIn`)**:
+İptal etme, not ekleme veya iletişim bilgisi güncelleme gibi birden fazla durumda aynı şekilde çalışan geçişleri her durumun içine tekrar tekrar yazmak yerine akışın kök seviyesindeki `sharedTransitions` dizisinde tek seferde tanımlayabilirsiniz:
+```json
+"sharedTransitions": [
+  {
+    "key": "cancel-request",
+    "title": "Talebi İptal Et",
+    "target": "cancelled",
+    "style": "danger",
+    "icon": "cancel",
+    "availableIn": ["*"],
+    "roles": ["$starter", "manager"]
+  },
+  {
+    "key": "add-note",
+    "title": "Not Ekle",
+    "target": "$self",
+    "availableIn": ["kyc-review", "committee-review"]
+  }
+]
+```
+- `"availableIn": ["*"]` geçişi bitiş (`Finish`) olmayan **tüm aktif durumlarda** kullanılabilir yapar; belirli durum anahtarları verilirse yalnızca o durumlarda gösterilir.
 
 **4-Göz (Four-Eyes) Onay Kuralı Örneği**:
 Bir önceki adımı onaylayan kişinin ikinci adımı onaylayamaması için `"denyRoles": ["$previousUser"]` kullanılır:
@@ -461,6 +570,240 @@ Aktif bir insan görevi adımında kayıt detay ekranındaki araç çubuğundan 
   ```
 - **`dryRun: true` (`🔍 Önizle`)**: Veritabanını değiştirmeden kaç kaydın taşınacağını (`migratedCount`), hangi kayıtların hangi durumdan hangi duruma geçeceğini (`items`) ve yeni sürümde karşılığı bulunmayan durumları (`errors`) raporlar.
 - **`dryRun: false` (`🚀 Göçü Uygula`)**: Kayıtları atomik olarak hedef sürüme ve yeni durum anahtarlarına taşır, tarihçeye (`WorkflowHistory`) `$migrate` (`Trigger = "Migration"`) kaydı düşer ve açık ekranları SSE (`instance.migrated`) ile anında günceller.
+
+### 3.5.2. Alt Nesne, İç İçe Dizi (`billingContact.emails[]`) ve JSON Patch (`input.format: "jsonPatch"`) ile Veri Güncelleme
+
+Bir geçiş (`transition`) çalıştığında formdan veya API'den gelen veriyi `instance.data` içine **3 farklı yöntemle** yazabilirsiniz:
+
+| Yöntem | `input` Tanımı | Ne Zaman Kullanılır? |
+|---|---|---|
+| **1. Klasik Nesne Birleştirme (Merge)** | `"into": "billingContact"` veya `"into": "billingContact.emails[0]"` *(veya boş)* | Gönderilen alanları hedef nesnenin (veya sabit `[0]` indeksli dizi elemanının) üzerine yazar/ekler (`format` belirtilmez). |
+| **2. Diziye Yeni Eleman Ekleme (`[]` ve `[-1]`)** | `"into": "partialPayment[]"` veya `"into": "billingContact.emails[]"` | Gönderilen nesneyi hedef dizinin **sonuna ekler (append)**. `set` içinde `[-1]` ile yeni eklenen son elemana otomatik alan (`addedAt`, `recordedBy`) yazılır. |
+| **3. Sabit Dizi İndeksine Yazma (`[0]`, `[1]`, ...)** | `"into": "billingContact.emails[0]"` veya `"set": { "billingContact.emails[0].email": "input.email" }` | Doğrudan dizinin belirli bir indeksini (`0`, `1`, ...) okur, forma önceden doldurur (`StepPrefill` / `TransitionPrefill`) ve günceller. |
+| **4. RFC 6902 JSON Patch (`jsonPatch`)** | `"format": "jsonPatch"`, `"into": "billingContact"`, `"into": "billingContact.emails"` veya `"into": "billingContact.emails[0]"` | Yalnızca değişen alanları (`replace`, `add`, `remove`) ve iyimser kilitleme kontrolünü (`test`) atomik olarak uygular. |
+
+#### Örnek A — Tekil Alt Nesneyi JSON Patch ile Güncelleme (`invoice-collection.json` → `update-billing-contact`)
+
+[`demo/Middt.Demo.Workflows/Workflows/invoice-collection.json`](../demo/Middt.Demo.Workflows/Workflows/invoice-collection.json) içindeki `update-billing-contact` geçişi `"format": "jsonPatch"` kullanır. Blazor ve Angular arayüzleri mevcut `data.billingContact` değerlerini forma doldurur; kullanıcı kaydettiğinde tüm nesneyi ezmek yerine yalnızca değişen alanlar için `test` + `replace` / `add` / `remove` patch dizisi gönderir:
+
+```json
+{
+  "key": "update-billing-contact",
+  "title": "Fatura İletişim Bilgilerini Güncelle",
+  "target": "$self",
+  "input": {
+    "format": "jsonPatch",
+    "into": "billingContact",
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "email": { "type": "string", "format": "email", "maxLength": 200, "title": "E-posta" },
+        "phone": { "type": "string", "maxLength": 30, "title": "Telefon" },
+        "address": { "type": "string", "maxLength": 300, "title": "Adres" }
+      }
+    },
+    "set": {
+      "contactUpdatedBy": "user.Name",
+      "contactUpdatedAt": "now"
+    }
+  }
+}
+```
+
+#### Örnek B — İç İçe Dizi Tanımlama ve Kullanma (`billingContact.emails[0].email`)
+
+`billingContact` altında birden fazla e-posta tutmak ve `data.billingContact.emails[0].email` şeklinde erişmek için:
+
+**1. `dataSchema` ve `start.input.schema` Tanımı:**
+```json
+"billingContact": {
+  "type": "object",
+  "title": "Fatura İletişim Bilgileri",
+  "properties": {
+    "phone": { "type": "string", "maxLength": 30, "title": "Telefon" },
+    "address": { "type": "string", "maxLength": 300, "title": "Adres" },
+    "emails": {
+      "type": "array",
+      "title": "E-posta Listesi",
+      "items": {
+        "type": "object",
+        "required": [ "email" ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Tür",
+            "enum": [ "Birincil", "Muhasebe", "Finans" ],
+            "default": "Birincil"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 200,
+            "title": "E-posta Adresi"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**2. Diziye Yeni Eleman Ekleme Geçişi (`into: "billingContact.emails[]"` ve `[-1]`):**
+```json
+{
+  "key": "add-billing-email",
+  "title": "Yeni E-posta Ekle",
+  "target": "$self",
+  "input": {
+    "into": "billingContact.emails[]",
+    "schema": {
+      "type": "object",
+      "required": [ "email" ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [ "Birincil", "Muhasebe", "Finans" ],
+          "default": "Birincil",
+          "title": "E-posta Türü"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200,
+          "title": "E-posta Adresi"
+        }
+      }
+    },
+    "set": {
+      "billingContact.emails[-1].addedBy": "user.Name",
+      "billingContact.emails[-1].addedAt": "now"
+    }
+  }
+}
+```
+
+**3. Sabit İndeksi (`billingContact.emails[0]`) Doğrudan `into` veya `set` ile Güncelleme:**
+`JsonPath` ve arayüz form doldurucuları (`WorkflowUi.StepPrefill` / `workflowStepPrefill`) `[]` (sona ekle) ve `[-1]` (son eleman) yanında **`[0]`, `[1]` gibi sabit indeksleri** de doğrudan destekler:
+```json
+{
+  "key": "update-primary-email",
+  "title": "Birincil E-postayı Güncelle",
+  "target": "$self",
+  "input": {
+    "format": "jsonPatch",
+    "into": "billingContact.emails[0]",
+    "schema": {
+      "type": "object",
+      "required": [ "email" ],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": [ "Birincil", "Muhasebe", "Finans" ], "title": "Tür" },
+        "email": { "type": "string", "format": "email", "maxLength": 200, "title": "E-posta Adresi" }
+      }
+    },
+    "set": {
+      "billingContact.emails[0].updatedBy": "user.Name",
+      "billingContact.emails[0].updatedAt": "now"
+    }
+  }
+}
+```
+- Kullanıcı **"Birincil E-postayı Güncelle"** butonuna tıkladığında Blazor ve Angular formu otomatik olarak `data.billingContact.emails[0]` içindeki mevcut değerlerle açar (`StepPrefill`), kaydedildiğinde yalnızca değişen alanı `billingContact.emails[0]` üzerinde günceller.
+
+**4. Dizi Üzerinde (`into: "billingContact.emails"`) JSON Patch ile Güncelleme veya Silme ve `input.removed` Denetim İzi:**
+```json
+{
+  "key": "patch-billing-emails",
+  "title": "E-posta Listesini Güncelle",
+  "target": "$self",
+  "toolbar": false,
+  "input": {
+    "format": "jsonPatch",
+    "into": "billingContact.emails",
+    "schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [ "email" ],
+        "properties": {
+          "type": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "addedBy": { "type": "string" },
+          "addedAt": { "type": "string" }
+        }
+      }
+    },
+    "set": {
+      "deletedEmails[]": "input.removed.With(\"deletedAt\", now).With(\"deletedBy\", user.Name)"
+    }
+  }
+}
+```
+> **Silinen Kayıtları Denetim Dizisine Aktarma (`input.removed` ve `.With(...)`)**:
+> Hem `input.format: "jsonPatch"` içindeki `remove` operasyonlarında hem de `set` içindeki `.Remove(...)` / `.RemoveAll(...)` / `.RemoveAt(...)` ifadelerinde silinen elemanlar otomatik olarak `input.removed` (`JsonArray`) değişkenine aktarılır. `.With("deletedAt", now).With("deletedBy", user.Name)` zinciriyle silinen her nesneye silinme zamanı ve silen kullanıcı bilgisini ekleyip `"deletedEmails[]"` (veya `"deletedPayment[]"`) denetim dizisine tek satırda kaydedebilirsiniz!
+
+Bu geçişe gönderilebilecek RFC 6902 JSON Patch örnekleri (`path` her zaman `into` alanına görelidir):
+```json
+[
+  // 0. indeksteki (ilk) e-posta adresini iyimser kilitleme (test) ile güncelleme:
+  { "op": "test",    "path": "/0/email", "value": "eski@firma.com" },
+  { "op": "replace", "path": "/0/email", "value": "yeni@firma.com" },
+
+  // Dizinin sonuna (-) yeni eleman ekleme:
+  { "op": "add",     "path": "/-", "value": { "type": "Finans", "email": "finans@firma.com" } },
+
+  // 1. indeksteki elemanı silme:
+  { "op": "remove",  "path": "/1" }
+]
+```
+
+**5. Ekran Tasarımında (`Layouts/*.json`) ve İfadelerde (`Expressions`) Okuma:**
+- **İlk elemanı doğrudan okuma (`[0]`)**:
+  ```json
+  {
+    "label": "Birincil E-posta",
+    "value": "{{ data.billingContact.emails[0].email ?? '-' }}",
+    "visibleWhen": "data.billingContact != null && data.billingContact.emails != null"
+  }
+  ```
+- **Tüm diziyi `list` bileşeniyle listeleme ve satır bazlı silme (`rowTransitions`)**:
+  ```json
+  {
+    "widget": "list",
+    "source": "data.billingContact.emails",
+    "emptyText": "Kayıtlı e-posta adresi yok.",
+    "rowTransitions": [
+      {
+        "transition": "patch-billing-emails",
+        "title": "Sil",
+        "icon": "delete",
+        "style": "danger",
+        "confirm": "{{ row.email }} adresini silmek istediğinize emin misiniz?",
+        "body": {
+          "patch": [
+            { "op": "test", "path": "/{{ row.rowNumber - 1 }}/email", "value": "{{ row.email }}" },
+            { "op": "remove", "path": "/{{ row.rowNumber - 1 }}" }
+          ]
+        }
+      }
+    ],
+    "children": [
+      {
+        "widget": "fields",
+        "items": [
+          { "label": "{{ row.type ?? 'E-posta' }} (#{{ row.rowNumber }})", "value": "{{ row.email }}" }
+        ]
+      }
+    ]
+  }
+  ```
+- **Sunucu iş kurallarında (`rule` / `set`) dizi yardımcıları**:
+  - `data.billingContact.emails[0].email` (indeks ile erişim)
+  - `data.billingContact.emails.Any("email", "muhasebe@firma.com")` (dizide değer arama)
+  - `data.billingContact.emails.Find("type", "Birincil")` (eşleşen nesneyi bulma)
 
 ---
 
@@ -1390,6 +1733,34 @@ Middt Platform'da iki yerde ifade kullanılır:
 - Koşullu metin (Ternary): `{{ data.amount > 500000 ? "Yüksek Tutar" : "Standart" }}`
 - Dizi eleman sayısı: `instance.toolCalls != null && instance.toolCalls.Count > 0`
 - Açık formdaki anlık değere göre alan veya uyarı gösterme (`ui.<alan>`): `"visibleWhen": "ui.conditionalApproval == true"`
+
+#### 5.1. Taşınabilir İfade Dili (Portable Expressions) Metotları (.NET & TypeScript Ortak)
+Ekran tasarımlarında (`Layouts/*.json`), form alanı kurallarında (`visibleWhen`, `requiredWhen`, `disabledWhen`) ve deklaratif AI araçlarında (`kind: "expression"`) kullanılabilen yerleşik metotlar:
+
+| Hedef | Metot / Özellik | Açıklama ve Örnek |
+|---|---|---|
+| **Kullanıcı (`user`)** | `user.IsInRole("rol")`, `user.Name`, `user.Id`, `user.Roles` | Oturum açmış kullanıcının rolünü veya kimliğini kontrol eder (`user.IsInRole("manager")`). |
+| **Metin (`string`)** | `.Length`, `.Contains("x")`, `.StartsWith("x")`, `.EndsWith("x")`, `.ToUpper()`, `.ToLower()`, `.Trim()`, `s[0]` | Metin işlemleri (`data.invoiceNo.StartsWith("FTR-")`). |
+| **Dizi (`JsonArray`)** | `.Count`, `.Length`, `.Contains(deger)`, `arr[0]`, `arr[-1]` | Eleman sayısı, içerme kontrolü ve 0 tabanlı veya negatif (`-1` = son eleman) indeksleme (`data.tags.Contains("VIP")`). |
+| **Matematik (`Math`)** | `Math.Round(x)`, `Math.Round(x, basamak)`, `Math.Abs(x)`, `Math.Floor(x)`, `Math.Ceiling(x)`, `Math.Min(a, b)`, `Math.Max(a, b)` | Sayısal yuvarlama ve karşılaştırma (`Math.Round((data.paidAmount / data.total) * 100, 1)`). |
+
+#### 5.2. Sunucu İş Akışı İfadelerinde Dizi ve Nesne Yardımcıları (`JsonDynamic` & `JsonDynamicArray`)
+`Workflows/*.json` içindeki `rule`, `input.rule` ve `set` ifadelerinde JSON dizileri ve nesneleri üzerinde aşağıdaki yardımcı metotlar doğrudan çağrılabilir:
+
+| Metot / Özellik | Açıklama | Örnek Kullanım (`rule` veya `set`) |
+|---|---|---|
+| `arr.Count` / `arr.Length` | Dizideki eleman sayısını döner. | `data.partialPayment.Count > 0` |
+| `arr[0]` / `arr[-1]` | Belirtilen indeksteki (`0`, `1`, ... veya `-1` son) elemanı döner. | `data.billingContact.emails[0].email` |
+| `arr.Any()` | Dizi boş değilse `true` döner. | `data.partialPayment.Any()` |
+| `arr.Any("alan", deger)` | Dizideki nesnelerden herhangi birinin `"alan"` özelliği `deger` ile eşleşiyorsa `true` döner (`x-enumFrom` formatlı etiketleriyle de eşleşir). | `data.partialPayment.Any("reference", input.reference)` |
+| `arr.Contains(deger)` | İlkel dizide `deger` varsa `true` döner. | `data.approvers.Contains(user.Name)` |
+| `arr.Find("alan", deger)` | `"alan"` özelliği `deger` ile eşleşen **en güncel nesneyi** döner (bulunamazsa `null`). | `data.partialPayment.Find("reference", input.reference).amount` |
+| `arr.Sum("alan")` | Dizideki nesnelerin sayısal `"alan"` değerlerinin toplamını döner. | `data.partialPayment.Sum("amount") <= data.total` |
+| `arr.Last()` / `arr.Last("alan")` | Dizinin son nesnesini veya son nesnenin belirtilen alanını döner. | `data.partialPayment.Last("paidAt")` |
+| `arr.Remove("alan", deger)` | Eşleşen tek elemanı silerek yeni diziyi döner ve silinen elemanı `input.removed` içine kaydeder. | `"partialPayment": "data.partialPayment.Remove(\"reference\", input.reference)"` |
+| `arr.RemoveAll("alan", deger)` | Eşleşen **tüm** elemanları silerek yeni diziyi döner ve silinenleri `input.removed` içine kaydeder. | `"items": "data.items.RemoveAll(\"status\", \"Cancelled\")"` |
+| `arr.RemoveAt(indeks)` | Belirtilen indeksteki (`0`, `1` veya `-1` son) elemanı silerek yeni diziyi döner ve `input.removed` içine kaydeder. | `"emails": "data.billingContact.emails.RemoveAt(0)"` |
+| `obj.With("alan", deger)` / `arr.With("alan", deger)` | Nesneyi (veya dizideki tüm nesneleri) kopyalayıp `"alan": deger` özelliğini ekler/günceller. | `"deletedPayment[]": "input.removed.With(\"deletedAt\", now).With(\"deletedBy\", user.Name)"` |
 
 ---
 

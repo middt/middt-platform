@@ -181,6 +181,7 @@ public sealed class WorkflowDbContext(DbContextOptions<WorkflowDbContext> option
             e.HasIndex(x => x.Id).IsUnique();
             e.HasIndex(x => new { x.WorkflowKey, x.DueAt });
             e.HasIndex(x => x.DueAt);
+            e.HasIndex(x => new { x.LockedUntil, x.DueAt }, "IX_WorkflowJobs_LockedUntil_DueAt");
             e.HasIndex(x => x.InstanceId);
         });
 

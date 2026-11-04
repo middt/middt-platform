@@ -71,7 +71,7 @@ A workflow definition automatically registers:
     }
   }
   ```
-- **`"x-enumFrom": "<arrayPath>.<field>"`**: Populates a transition form property's `enum` and `default` dynamically from an array in the current workflow instance's `data` (e.g. `"x-enumFrom": "partialPayment.reference"` on `delete-payment`).
+- **`"x-enumFrom": "<arrayPath>.<field>"` or `{ "source": "<arrayPath>", "format": "{{ ... }}" }`**: Populates a transition form property's `enum` and `default` dynamically from an array in the current workflow instance's `data` (e.g. `"x-enumFrom": "partialPayment.reference"` or formatted `{ "source": "partialPayment", "format": "{{ row.reference }} ({{ row.amount }} ₺)" }` on `delete-payment`).
 - **`"visibleWhen"`, `"requiredWhen"`, `"disabledWhen"` (or `"x-*"` aliases) with `ui.<field>`**: Controls live field visibility, conditional requiredness, and disabled state inside an open start/transition form (`JsonSchemaForm` / `MiddtJsonSchemaFormComponent`) or a layout `grid.form` / `grid.search` (`UiField`) **before** clicking Save/Submit:
   ```json
   "segment": {

@@ -299,11 +299,30 @@ export function workflowStepStatusText(step: WorkflowWizardStep): string {
   return step.completed ? 'tamamlandı' : 'sıradaki adım';
 }
 
-/** Data path value (`a.b.c`); null when missing. */
+const ARRAY_SEGMENT = /^(.+)\[(-1|\d{1,4})\]$/;
+const MAX_ARRAY_INDEX = 1000;
+
+/** Data path value (`a.b.c`, `items[0].name`, `items[-1]`); null when missing. */
 export function workflowDataGet(data: WorkflowData | null | undefined, path: string): unknown {
   let current: unknown = data;
   for (const segment of path.split('.').map(s => s.trim()).filter(s => s !== '')) {
-    current = isObject(current) && Object.hasOwn(current, segment) ? current[segment] : null;
+    const match = ARRAY_SEGMENT.exec(segment);
+    if (match !== null) {
+      const arrayKey = match[1]!;
+      const idx = Number.parseInt(match[2]!, 10);
+      if (idx > MAX_ARRAY_INDEX) {
+        return null;
+      }
+      const arr = isObject(current) && Object.hasOwn(current, arrayKey) ? current[arrayKey] : null;
+      if (!Array.isArray(arr) || arr.length === 0) {
+        return null;
+      }
+
+      current = idx === -1 ? arr[arr.length - 1] : idx >= 0 && idx < arr.length ? arr[idx] : null;
+    } else {
+      current = isObject(current) && Object.hasOwn(current, segment) ? current[segment] : null;
+    }
+
     if (current === null || current === undefined) {
       return null;
     }

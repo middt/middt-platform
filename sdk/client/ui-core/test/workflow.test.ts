@@ -355,6 +355,16 @@ test('layout variables and data helpers', () => {
   assert.deepEqual(workflowLayoutVariables(model, { segment: 'Kurumsal' })['ui'], { segment: 'Kurumsal' });
   assert.equal(workflowDataGet(model.data, 'credit.score'), 42);
   assert.equal(workflowDataGet(model.data, 'credit.score.x'), null);
+
+  const nestedData = { billingContact: { emails: [{ type: 'Birincil', email: 'a@firma.com' }, { type: 'Finans', email: 'b@firma.com' }] } };
+  const emailSchema = { type: 'object', properties: { type: { type: 'string' }, email: { type: 'string' } } };
+  assert.equal(workflowDataGet(nestedData, 'billingContact.emails[0].email'), 'a@firma.com');
+  assert.equal(workflowDataGet(nestedData, 'billingContact.emails[1].email'), 'b@firma.com');
+  assert.equal(workflowDataGet(nestedData, 'billingContact.emails[-1].email'), 'b@firma.com');
+  assert.equal(workflowDataGet(nestedData, 'billingContact.emails[2].email'), null);
+  assert.deepEqual(workflowStepPrefill(nestedData, 'billingContact.emails[0]', emailSchema), { type: 'Birincil', email: 'a@firma.com' });
+  assert.deepEqual(workflowStepPrefill(nestedData, 'billingContact.emails[-1]', emailSchema), { type: 'Finans', email: 'b@firma.com' });
+  assert.equal(workflowStepPrefill(nestedData, 'billingContact.emails[2]', emailSchema), null);
 });
 
 const customerSchema = {

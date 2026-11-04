@@ -71,7 +71,7 @@ public sealed partial class WorkflowJobNotifier(
 
         try
         {
-            await db.Database.ExecuteSqlAsync($"SELECT pg_notify({Channel}, '')", cancellationToken);
+            await db.Database.ExecuteSqlAsync($"SELECT pg_notify({Channel}, {NodeId})", cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

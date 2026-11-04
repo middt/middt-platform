@@ -5,9 +5,53 @@ using System.Text.Json.Nodes;
 
 namespace Middt.Framework.Expressions;
 
-/// <summary>Dot-path access (<c>customer.address.city</c>) and deep merge for instance data.</summary>
+/// <summary>Dot-path access (<c>customer.address.city</c>, <c>items[0].name</c>, <c>items[-1]</c>, <c>items[]</c>) and deep merge for instance data.</summary>
 public static class JsonPath
 {
+    /// <summary>Upper bound for fixed array index segments (<c>[0]</c> .. <c>[1000]</c>) to prevent excessive array padding allocations.</summary>
+    public const int MaxArrayIndex = 1000;
+
+    private static bool TryParseArraySegment(string segment, out string arrayKey, out int? index)
+    {
+        arrayKey = string.Empty;
+        index = null;
+        if (!segment.EndsWith(']'))
+        {
+            return false;
+        }
+
+        var open = segment.LastIndexOf('[');
+        if (open <= 0)
+        {
+            return false;
+        }
+
+        var idxSpan = segment.AsSpan(open + 1, segment.Length - open - 2);
+        if (idxSpan.IsEmpty)
+        {
+            arrayKey = segment[..open];
+            return true;
+        }
+
+        if (idxSpan.SequenceEqual("-1"))
+        {
+            arrayKey = segment[..open];
+            index = -1;
+            return true;
+        }
+
+        if (int.TryParse(idxSpan, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
+            && parsed >= 0
+            && parsed <= MaxArrayIndex)
+        {
+            arrayKey = segment[..open];
+            index = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
     public static JsonNode? Get(JsonObject root, string? path)
     {
         if (string.IsNullOrEmpty(path))
@@ -18,14 +62,20 @@ public static class JsonPath
         JsonNode? current = root;
         foreach (var segment in path.Split('.'))
         {
-            if (segment.EndsWith("[-1]", StringComparison.Ordinal))
+            if (TryParseArraySegment(segment, out var arrayKey, out var index) && index is { } idx)
             {
-                var arrayKey = segment[..^4];
-                current = current is JsonObject arrParent
+                if (current is JsonObject arrParent
                     && arrParent.TryGetPropertyValue(arrayKey, out var arrNode)
-                    && arrNode is JsonArray { Count: > 0 } arr
-                    ? arr[^1]
-                    : null;
+                    && arrNode is JsonArray arr)
+                {
+                    current = idx == -1
+                        ? (arr.Count > 0 ? arr[^1] : null)
+                        : (idx < arr.Count ? arr[idx] : null);
+                }
+                else
+                {
+                    current = null;
+                }
             }
             else
             {
@@ -41,7 +91,7 @@ public static class JsonPath
         return current;
     }
 
-    /// <summary>Sets a value at <paramref name="path"/>, creating intermediate objects (or appending to a <see cref="JsonArray"/> when a segment ends with <c>[]</c>).</summary>
+    /// <summary>Sets a value at <paramref name="path"/>, creating intermediate objects (or appending/indexing into a <see cref="JsonArray"/> when a segment ends with <c>[]</c>, <c>[-1]</c>, or <c>[N]</c>).</summary>
     public static void Set(JsonObject root, string path, JsonNode? value)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
@@ -54,39 +104,67 @@ public static class JsonPath
         var current = root;
         foreach (var segment in segments[..^1])
         {
-            if (segment.EndsWith("[-1]", StringComparison.Ordinal))
+            if (TryParseArraySegment(segment, out var arrayKey, out var index))
             {
-                var arrayKey = segment[..^4];
-                if (current[arrayKey] is JsonArray { Count: > 0 } existingArr && existingArr[^1] is JsonObject lastObj)
-                {
-                    current = lastObj;
-                    continue;
-                }
-
-                if (current[arrayKey] is not JsonArray newArr)
-                {
-                    newArr = [];
-                    current[arrayKey] = newArr;
-                }
-
-                var created = new JsonObject();
-                newArr.Add(created);
-                current = created;
-                continue;
-            }
-
-            if (segment.EndsWith("[]", StringComparison.Ordinal))
-            {
-                var arrayKey = segment[..^2];
                 if (current[arrayKey] is not JsonArray arr)
                 {
+                    if (value is null)
+                    {
+                        return;
+                    }
+
                     arr = [];
                     current[arrayKey] = arr;
                 }
 
-                var created = new JsonObject();
-                arr.Add(created);
-                current = created;
+                if (index is null)
+                {
+                    var created = new JsonObject();
+                    arr.Add(created);
+                    current = created;
+                    continue;
+                }
+
+                if (index == -1)
+                {
+                    if (arr.Count > 0 && arr[^1] is JsonObject lastObj)
+                    {
+                        current = lastObj;
+                        continue;
+                    }
+
+                    var created = new JsonObject();
+                    if (arr.Count > 0)
+                    {
+                        arr[^1] = created;
+                    }
+                    else
+                    {
+                        arr.Add(created);
+                    }
+
+                    current = created;
+                    continue;
+                }
+
+                var targetIndex = index.Value;
+                if (value is null && (arr.Count <= targetIndex || arr[targetIndex] is not JsonObject))
+                {
+                    return;
+                }
+
+                while (arr.Count <= targetIndex)
+                {
+                    arr.Add((JsonNode?)null);
+                }
+
+                if (arr[targetIndex] is not JsonObject indexedObj)
+                {
+                    indexedObj = [];
+                    arr[targetIndex] = indexedObj;
+                }
+
+                current = indexedObj;
                 continue;
             }
 
@@ -101,43 +179,65 @@ public static class JsonPath
 
         var leaf = segments[^1];
         var cloned = value?.Parent is null ? value : value.DeepClone();
-        if (leaf.EndsWith("[]", StringComparison.Ordinal))
+        if (TryParseArraySegment(leaf, out var leafArrayKey, out var leafIndex))
         {
-            if (cloned is null || (cloned is JsonArray emptyArr && emptyArr.Count == 0))
+            if (leafIndex is null)
             {
-                return;
-            }
-
-            var arrayKey = leaf[..^2];
-            if (current[arrayKey] is not JsonArray arr)
-            {
-                arr = [];
-                current[arrayKey] = arr;
-            }
-
-            if (cloned is JsonArray itemsToAppend)
-            {
-                foreach (var item in itemsToAppend.ToList())
+                if (cloned is null || (cloned is JsonArray emptyArr && emptyArr.Count == 0))
                 {
-                    itemsToAppend.Remove(item);
-                    arr.Add(item);
+                    return;
+                }
+
+                if (current[leafArrayKey] is not JsonArray arr)
+                {
+                    arr = [];
+                    current[leafArrayKey] = arr;
+                }
+
+                if (cloned is JsonArray itemsToAppend)
+                {
+                    foreach (var item in itemsToAppend.ToList())
+                    {
+                        itemsToAppend.Remove(item);
+                        arr.Add(item);
+                    }
+                }
+                else
+                {
+                    arr.Add(cloned);
+                }
+            }
+            else if (leafIndex == -1)
+            {
+                if (current[leafArrayKey] is JsonArray { Count: > 0 } arr)
+                {
+                    arr[^1] = cloned;
+                }
+                else
+                {
+                    current[leafArrayKey] = new JsonArray { cloned };
                 }
             }
             else
             {
-                arr.Add(cloned);
-            }
-        }
-        else if (leaf.EndsWith("[-1]", StringComparison.Ordinal))
-        {
-            var arrayKey = leaf[..^4];
-            if (current[arrayKey] is JsonArray { Count: > 0 } arr)
-            {
-                arr[^1] = cloned;
-            }
-            else
-            {
-                current[arrayKey] = new JsonArray { cloned };
+                var targetIndex = leafIndex.Value;
+                if (cloned is null && (current[leafArrayKey] is not JsonArray existingArr || existingArr.Count <= targetIndex))
+                {
+                    return;
+                }
+
+                if (current[leafArrayKey] is not JsonArray arr)
+                {
+                    arr = [];
+                    current[leafArrayKey] = arr;
+                }
+
+                while (arr.Count <= targetIndex)
+                {
+                    arr.Add((JsonNode?)null);
+                }
+
+                arr[targetIndex] = cloned;
             }
         }
         else

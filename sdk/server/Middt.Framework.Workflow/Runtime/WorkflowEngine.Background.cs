@@ -40,7 +40,7 @@ public sealed partial class WorkflowEngine
             var worker = scope.ServiceProvider.GetRequiredService<WorkflowEngine>();
             payload["result"] = await worker.ExecuteBackgroundTaskAsync(job, instance, payload["taskIndex"]!.GetValue<int>(), cancellationToken);
             var text = payload.ToJsonString();
-            await db.Jobs.Where(j => j.Id == job.Id).ExecuteUpdateAsync(s => s.SetProperty(j => j.Payload, text), cancellationToken);
+            await db.Jobs.Where(j => j.Id == job.Id && j.WorkflowKey == job.WorkflowKey).ExecuteUpdateAsync(s => s.SetProperty(j => j.Payload, text), cancellationToken);
         }
 
         try

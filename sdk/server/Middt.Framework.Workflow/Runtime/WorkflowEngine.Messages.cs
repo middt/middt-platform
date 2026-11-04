@@ -280,7 +280,7 @@ public sealed partial class WorkflowEngine
         }
 
         // Not waiting for it now: park until a matching state is entered (SaveAsync wakes it) or it expires.
-        await db.Jobs.Where(j => j.Id == job.Id).ExecuteUpdateAsync(s => s
+        await db.Jobs.Where(j => j.Id == job.Id && j.WorkflowKey == job.WorkflowKey).ExecuteUpdateAsync(s => s
             .SetProperty(j => j.DueAt, expiresAt)
             .SetProperty(j => j.LockedUntil, (DateTime?)null)
             .SetProperty(j => j.Attempts, 0), cancellationToken);

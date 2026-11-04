@@ -164,5 +164,17 @@ public sealed class WorkflowStartPrefillTests
         graph.Edges.Single(e => e.Id == "kyc-review->active").IsAvailable.Should().BeTrue();
         graph.Edges.Single(e => e.Id == "active->kyc-scoring").IsBackEdge.Should().BeTrue();
     }
+
+    [Fact]
+    public void StepPrefill_supports_nested_array_index_paths()
+    {
+        var data = JsonNode.Parse("""{ "billingContact": { "emails": [ { "type": "Birincil", "email": "a@firma.com" }, { "type": "Finans", "email": "b@firma.com" } ] } }""")!.AsObject();
+        var schema = JsonNode.Parse("""{ "type": "object", "properties": { "type": { "type": "string" }, "email": { "type": "string" } } }""")!.AsObject();
+
+        WorkflowUi.StepPrefill(data, "billingContact.emails[0]", schema)!.ToJsonString().Should().Be("""{"type":"Birincil","email":"a@firma.com"}""");
+        WorkflowUi.StepPrefill(data, "billingContact.emails[1]", schema)!.ToJsonString().Should().Be("""{"type":"Finans","email":"b@firma.com"}""");
+        WorkflowUi.StepPrefill(data, "billingContact.emails[-1]", schema)!.ToJsonString().Should().Be("""{"type":"Finans","email":"b@firma.com"}""");
+        WorkflowUi.StepPrefill(data, "billingContact.emails[2]", schema).Should().BeNull();
+    }
 }
 

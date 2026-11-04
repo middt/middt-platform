@@ -239,6 +239,7 @@ public sealed partial class WorkflowJobProcessor(
             activity.SetTag("middt.workflow.instance_id", job.InstanceId.ToString());
         }
 
+        var wfKey = job.WorkflowKey;
         string? error = null;
         bool done;
         try
@@ -247,7 +248,7 @@ public sealed partial class WorkflowJobProcessor(
             // Renew the lease while the job runs (a background task may take longer than the lease); stopped before the
             // job is released or deleted below, so a late beat cannot lock it again.
             await using (WorkflowHeartbeat.Start(scopeFactory, options.Value.BusyHeartbeatInterval, time, logger, (beatDb, now, ct) =>
-                beatDb.Jobs.Where(j => j.Id == jobId && j.LockedUntil != null)
+                beatDb.Jobs.Where(j => j.Id == jobId && j.WorkflowKey == wfKey && j.LockedUntil != null)
                     .ExecuteUpdateAsync(s => s.SetProperty(j => j.LockedUntil, (DateTime?)(now + Lease)), ct)))
             {
                 outcome = await engine.ProcessJobAsync(job, cancellationToken);
@@ -261,7 +262,7 @@ public sealed partial class WorkflowJobProcessor(
             if (outcome == WorkflowEngine.JobOutcome.Postpone)
             {
                 var later = time.GetUtcNow().UtcDateTime.AddMinutes(1);
-                await db.Jobs.Where(j => j.Id == jobId).ExecuteUpdateAsync(s => s
+                await db.Jobs.Where(j => j.Id == jobId && j.WorkflowKey == wfKey).ExecuteUpdateAsync(s => s
                     .SetProperty(j => j.DueAt, later)
                     .SetProperty(j => j.LockedUntil, (DateTime?)null)
                     .SetProperty(j => j.Attempts, 0), cancellationToken);
@@ -275,7 +276,7 @@ public sealed partial class WorkflowJobProcessor(
             try
             {
                 db.ChangeTracker.Clear();
-                await db.Jobs.Where(j => j.Id == jobId).ExecuteUpdateAsync(s => s
+                await db.Jobs.Where(j => j.Id == jobId && j.WorkflowKey == wfKey).ExecuteUpdateAsync(s => s
                     .SetProperty(j => j.LockedUntil, (DateTime?)null)
                     .SetProperty(j => j.Attempts, j => j.Attempts > 0 ? j.Attempts - 1 : 0),
                     CancellationToken.None);
@@ -299,7 +300,7 @@ public sealed partial class WorkflowJobProcessor(
         db.ChangeTracker.Clear();
         if (done)
         {
-            await db.Jobs.Where(j => j.Id == jobId).ExecuteDeleteAsync(cancellationToken);
+            await db.Jobs.Where(j => j.Id == jobId && j.WorkflowKey == wfKey).ExecuteDeleteAsync(cancellationToken);
             return;
         }
 
@@ -311,7 +312,7 @@ public sealed partial class WorkflowJobProcessor(
             {
                 db.ChangeTracker.Clear();
                 await using var tx = await db.Database.BeginTransactionAsync(ct);
-                var deleted = await db.Jobs.Where(j => j.Id == jobId).ExecuteDeleteAsync(ct);
+                var deleted = await db.Jobs.Where(j => j.Id == jobId && j.WorkflowKey == wfKey).ExecuteDeleteAsync(ct);
                 if (deleted > 0)
                 {
                     db.Incidents.Add(new WorkflowIncident
@@ -334,7 +335,7 @@ public sealed partial class WorkflowJobProcessor(
 
         // Retry with backoff (busy instance or transient failure).
         var retryAt = time.GetUtcNow().UtcDateTime.AddMilliseconds(Math.Min(60_000, 250 * (1 << Math.Min(job.Attempts, 8))));
-        await db.Jobs.Where(j => j.Id == jobId).ExecuteUpdateAsync(s => s
+        await db.Jobs.Where(j => j.Id == jobId && j.WorkflowKey == wfKey).ExecuteUpdateAsync(s => s
             .SetProperty(j => j.DueAt, retryAt)
             .SetProperty(j => j.LockedUntil, (DateTime?)null)
             .SetProperty(j => j.LastError, error), cancellationToken);
@@ -364,7 +365,7 @@ public sealed partial class WorkflowJobProcessor(
             foreach (var candidate in candidates)
             {
                 var changed = await db.Instances
-                    .Where(i => i.Id == candidate.Id && i.Status == WorkflowInstanceStatus.Busy && i.BusySince < threshold)
+                    .Where(i => i.Id == candidate.Id && i.WorkflowKey == candidate.WorkflowKey && i.Status == WorkflowInstanceStatus.Busy && i.BusySince < threshold)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(i => i.Status, WorkflowInstanceStatus.Faulted)
                         .SetProperty(i => i.BusySince, (DateTime?)null)

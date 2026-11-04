@@ -258,13 +258,11 @@ public static class WorkflowUi
         JsonNode? source = data;
         if (!string.IsNullOrWhiteSpace(inputInto))
         {
-            foreach (var segment in inputInto.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            var normalizedPath = string.Join('.', inputInto.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            source = Middt.Framework.Expressions.JsonPath.Get(data, normalizedPath);
+            if (source is null)
             {
-                source = source is JsonObject obj && obj.TryGetPropertyValue(segment, out var next) ? next : null;
-                if (source is null)
-                {
-                    return null;
-                }
+                return null;
             }
         }
 

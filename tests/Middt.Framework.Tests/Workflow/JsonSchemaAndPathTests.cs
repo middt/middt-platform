@@ -309,6 +309,16 @@ public sealed class JsonSchemaValidatorTests
             persistedData,
             managerUser).Should().BeEmpty();
 
+        // Nested prefillData (e.g. transition with into: "billingContact.emails[0]") allows unchanged disabled field value
+        var nestedRootData = JsonNode.Parse("""{ "monthlyIncome": 180000, "billingContact": { "emails": [ { "taxOffice": "Şişli V.D." } ] } }""")!.AsObject();
+        var nestedPrefill = JsonPath.Get(nestedRootData, "billingContact.emails[0]") as JsonObject;
+        JsonSchemaValidator.Validate(
+            JsonNode.Parse("""{ "monthlyIncome": 180000, "segment": "Kurumsal", "taxOffice": "Şişli V.D." }"""),
+            roleAndDataSchema,
+            nestedRootData,
+            standardUser,
+            nestedPrefill).Should().BeEmpty();
+
         var badSchema = JsonNode.Parse("""
             { "type": "object", "properties": { "a": { "type": "string", "requiredWhen": "ui.segment ==" } } }
             """)!.AsObject();
@@ -375,6 +385,34 @@ public sealed class JsonPathTests
         JsonPath.Merge(target, Obj("""{ "v": 1 }"""), "deep.inner");
 
         target.ToJsonString().Should().Be("""{"review":{"by":"bob","comment":"ok"},"deep":{"inner":{"v":1}}}""");
+    }
+
+    [Fact]
+    public void Get_Set_and_Merge_support_fixed_last_and_append_array_indexes()
+    {
+        var root = Obj("""{ "billingContact": { "emails": [ { "type": "Birincil", "email": "old@firma.com" } ] } }""");
+
+        JsonPath.Get(root, "billingContact.emails[0].email")!.GetValue<string>().Should().Be("old@firma.com");
+        JsonPath.Get(root, "billingContact.emails[-1].email")!.GetValue<string>().Should().Be("old@firma.com");
+        JsonPath.Get(root, "billingContact.emails[1].email").Should().BeNull();
+
+        JsonPath.Set(root, "billingContact.emails[0].email", JsonValue.Create("new@firma.com"));
+        JsonPath.Set(root, "billingContact.emails[]", Obj("""{ "type": "Muhasebe", "email": "acc@firma.com" }"""));
+        JsonPath.Set(root, "billingContact.emails[-1].addedBy", JsonValue.Create("alice"));
+        JsonPath.Merge(root, Obj("""{ "verified": true }"""), "billingContact.emails[1]");
+        JsonPath.Set(root, "billingContact.emails[2].email", JsonValue.Create("fin@firma.com"));
+
+        JsonPath.Get(root, "billingContact.emails[0].email")!.GetValue<string>().Should().Be("new@firma.com");
+        JsonPath.Get(root, "billingContact.emails[1].email")!.GetValue<string>().Should().Be("acc@firma.com");
+        JsonPath.Get(root, "billingContact.emails[1].addedBy")!.GetValue<string>().Should().Be("alice");
+        JsonPath.Get(root, "billingContact.emails[1].verified")!.GetValue<bool>().Should().BeTrue();
+        JsonPath.Get(root, "billingContact.emails[2].email")!.GetValue<string>().Should().Be("fin@firma.com");
+
+        // Null on missing fixed index does not create phantom elements, whereas null on existing element clears property
+        JsonPath.Set(root, "billingContact.phones[0].number", null);
+        JsonPath.Get(root, "billingContact.phones").Should().BeNull();
+        JsonPath.Set(root, "billingContact.emails[1].addedBy", null);
+        JsonPath.Get(root, "billingContact.emails[1].addedBy").Should().BeNull();
     }
 
     [Fact]

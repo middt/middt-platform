@@ -1135,9 +1135,20 @@ public sealed partial class WorkflowEngine
             && pathVal.TryGetValue<string>(out var enumFrom)
             && !string.IsNullOrWhiteSpace(enumFrom))
         {
-            var lastDot = enumFrom.LastIndexOf('.');
-            var arrayPath = lastDot > 0 ? enumFrom[..lastDot] : enumFrom;
-            var fieldName = lastDot > 0 ? enumFrom[(lastDot + 1)..] : null;
+            string arrayPath;
+            string? fieldName;
+            if (JsonPath.Get(scope.Data, enumFrom) is JsonArray)
+            {
+                arrayPath = enumFrom;
+                fieldName = null;
+            }
+            else
+            {
+                var lastDot = enumFrom.LastIndexOf('.');
+                arrayPath = lastDot > 0 ? enumFrom[..lastDot] : enumFrom;
+                fieldName = lastDot > 0 ? enumFrom[(lastDot + 1)..] : null;
+            }
+
             if (JsonPath.Get(scope.Data, arrayPath) is not JsonArray arr || arr.Count == 0)
             {
                 return [];
