@@ -201,9 +201,11 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
             }
         }
 
+        List<WorkflowPartitionManager.SqlDataCondition> activeSqlConditions = [];
         if (rawDataFilters.Count > 0)
         {
             var (sqlConditions, unsupportedData, createdFromUtc, createdToUtc) = WorkflowPartitionManager.ClassifyDataFilters(rawDataFilters, projectedSchema, rawSchema);
+            activeSqlConditions = sqlConditions;
             unsupportedFilters.AddRange(unsupportedData);
             if (sqlConditions.Count > 0 || createdFromUtc is not null || createdToUtc is not null)
             {
@@ -222,6 +224,8 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
             };
         }
 
+        var supportsSqlPushdown = WorkflowPartitionManager.SupportsSqlDataPushdown(db.Database.ProviderName);
+        var isCustomDataSort = false;
         IQueryable<WorkflowInstance> sortedQuery;
         if (defaultSort)
         {
@@ -246,7 +250,35 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
                 };
             }
 
+            isCustomDataSort = true;
             sortedQuery = WorkflowPartitionManager.OrderBySqlDataProperty(query, db, options?.Value.Schema, workflowKey, sortProperty!, ascending);
+        }
+
+        if (!supportsSqlPushdown && (activeSqlConditions.Count > 0 || isCustomDataSort))
+        {
+            var candidateRows = await sortedQuery.ToListAsync(cancellationToken);
+            var projectedAll = ProjectRows(candidateRows, user);
+            if (activeSqlConditions.Count > 0)
+            {
+                projectedAll = projectedAll.Where(item => MatchesAllConditions(item, activeSqlConditions)).ToList();
+            }
+
+            if (!defaultSort && !string.IsNullOrWhiteSpace(sortProperty))
+            {
+                projectedAll.Sort((left, right) => CompareItems(left, right, sortProperty, ascending));
+            }
+
+            var pagedInMemory = projectedAll
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList();
+
+            return new BaseResponseDataModel<List<JsonObject>>
+            {
+                Result = ResultEnum.Success,
+                Count = projectedAll.Count,
+                Data = pagedInMemory,
+            };
         }
 
         var filteredTotal = await query.IgnoreAutoIncludes().CountAsync(cancellationToken);
@@ -588,6 +620,80 @@ public sealed class WorkflowInstanceDataQuery(WorkflowDbContext db, WorkflowRegi
         var idCmp = StringComparer.OrdinalIgnoreCase.Compare(leftId, rightId);
         return ascending ? idCmp : -idCmp;
     }
+
+    internal static bool MatchesAllConditions(JsonObject item, IReadOnlyList<WorkflowPartitionManager.SqlDataCondition> conditions)
+    {
+        foreach (var cond in conditions)
+        {
+            if (!MatchesCondition(item, cond))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool MatchesCondition(JsonObject item, WorkflowPartitionManager.SqlDataCondition cond)
+    {
+        var node = GetCaseInsensitive(item, cond.Property);
+        if (node is null)
+        {
+            return false;
+        }
+
+        switch (cond.Kind)
+        {
+            case WorkflowPartitionManager.SqlConditionKind.Numeric:
+                if (!WorkflowPartitionManager.TryGetNodeDecimal(node, out var actualDec) || cond.Parameter is not decimal targetDec)
+                {
+                    return false;
+                }
+
+                return CompareByOp(decimal.Compare(actualDec, targetDec), cond.SqlOp);
+
+            case WorkflowPartitionManager.SqlConditionKind.Boolean:
+                if (cond.Parameter is not bool targetBool)
+                {
+                    return false;
+                }
+
+                if (node is JsonValue boolVal && boolVal.GetValueKind() is JsonValueKind.True or JsonValueKind.False)
+                {
+                    return boolVal.GetValue<bool>() == targetBool;
+                }
+
+                return bool.TryParse(node.ToString(), out var parsedBool) && parsedBool == targetBool;
+
+            case WorkflowPartitionManager.SqlConditionKind.DateBound:
+            case WorkflowPartitionManager.SqlConditionKind.ExactText:
+            {
+                var actualStr = node is JsonValue strVal && strVal.GetValueKind() == JsonValueKind.String ? strVal.GetValue<string>() : node.ToString();
+                var targetStr = cond.Parameter?.ToString() ?? string.Empty;
+                return CompareByOp(StringComparer.Ordinal.Compare(actualStr, targetStr), cond.SqlOp);
+            }
+
+            case WorkflowPartitionManager.SqlConditionKind.ContainsText:
+            {
+                var actualStr = node is JsonValue strVal && strVal.GetValueKind() == JsonValueKind.String ? strVal.GetValue<string>() : node.ToString();
+                var targetStr = cond.Parameter?.ToString() ?? string.Empty;
+                return WorkflowPartitionManager.FoldTurkishLower(actualStr).Contains(targetStr, StringComparison.Ordinal);
+            }
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool CompareByOp(int cmp, string sqlOp) => sqlOp switch
+    {
+        "=" => cmp == 0,
+        ">" => cmp > 0,
+        ">=" => cmp >= 0,
+        "<" => cmp < 0,
+        "<=" => cmp <= 0,
+        _ => false,
+    };
 
     private static JsonNode? GetCaseInsensitive(JsonObject item, string property)
     {

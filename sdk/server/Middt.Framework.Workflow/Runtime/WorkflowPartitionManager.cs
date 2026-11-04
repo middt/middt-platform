@@ -1148,6 +1148,21 @@ public static class WorkflowPartitionManager
         return (sqlConditions, unsupported, createdFromUtc, createdToUtc);
     }
 
+    /// <summary>Returns <see langword="true"/> when the provider has native SQL JSON filter &amp; sort pushdown (PostgreSQL, SQLite, SQL Server, MySQL, Oracle).</summary>
+    internal static bool SupportsSqlDataPushdown(string? providerName)
+    {
+        if (string.IsNullOrEmpty(providerName))
+        {
+            return false;
+        }
+
+        return providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase)
+            || providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)
+            || providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase)
+            || providerName.Contains("MySql", StringComparison.OrdinalIgnoreCase)
+            || providerName.Contains("Oracle", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Pushes <c>CreatedAt</c> date bounds, exact-match <c>enum</c> filters, numeric/date/boolean comparisons, and
     /// Turkish case-insensitive substring filters down to SQL before pagination.
@@ -1176,21 +1191,43 @@ public static class WorkflowPartitionManager
             return query;
         }
 
-        var provider = db.Database.ProviderName ?? string.Empty;
-        var isPostgres = provider.Contains("Npgsql", StringComparison.Ordinal);
-        var isSqlite = provider.Contains("Sqlite", StringComparison.Ordinal);
-        if (!isPostgres && !isSqlite)
+        var (sql, parameters) = BuildSqlDataFilterQuery(db.Database.ProviderName, schema, workflowKey, sqlConditions);
+        if (sql is null)
         {
             return query;
         }
 
-        var table = isPostgres ? $"{ValidateIdentifier(schema)}.\"WorkflowInstanceData\"" : "\"WorkflowInstanceData\"";
+#pragma warning disable EF1002
+        var matchingData = db.InstanceData.FromSqlRaw(sql, [.. parameters]);
+#pragma warning restore EF1002
+        return query.Where(i => matchingData.Any(d => d.InstanceId == i.Id && d.WorkflowKey == i.WorkflowKey));
+    }
+
+    internal static (string? Sql, List<object> Parameters) BuildSqlDataFilterQuery(
+        string? providerName,
+        string? schema,
+        string? workflowKey,
+        IReadOnlyList<SqlDataCondition> sqlConditions)
+    {
+        var provider = providerName ?? string.Empty;
+        var isPostgres = provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
+        var isSqlite = provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase);
+        var isSqlServer = provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase);
+        var isMySql = provider.Contains("MySql", StringComparison.OrdinalIgnoreCase);
+        var isOracle = provider.Contains("Oracle", StringComparison.OrdinalIgnoreCase);
+        if (!isPostgres && !isSqlite && !isSqlServer && !isMySql && !isOracle)
+        {
+            return (null, []);
+        }
+
+        var table = ResolveInstanceDataTableSql(schema, isPostgres, isSqlServer, isMySql);
+        var wfKeyCol = QuoteColumn("WorkflowKey", isSqlServer, isMySql);
         var parameters = new List<object>();
         var clauses = new List<string>(sqlConditions.Count + 1);
         if (!string.IsNullOrWhiteSpace(workflowKey))
         {
             parameters.Add(workflowKey);
-            clauses.Add("\"WorkflowKey\" = {0}");
+            clauses.Add($"{wfKeyCol} = {{0}}");
         }
 
         foreach (var cond in sqlConditions)
@@ -1208,7 +1245,13 @@ public static class WorkflowPartitionManager
                     parameters.Add(isSqlite ? Convert.ToDouble(cond.Parameter, CultureInfo.InvariantCulture) : cond.Parameter);
                     var expr = isPostgres
                         ? $"((((\"Data\"->>'{cond.Property}')::numeric))) {cond.SqlOp} {{{idx}}}"
-                        : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS REAL) {cond.SqlOp} {{{idx}}}";
+                        : isSqlServer
+                            ? $"TRY_CAST(JSON_VALUE([Data], '$.{cond.Property}') AS decimal(38,10)) {cond.SqlOp} {{{idx}}}"
+                            : isMySql
+                                ? $"CAST(JSON_UNQUOTE(JSON_EXTRACT(`Data`, '$.{cond.Property}')) AS DECIMAL(38,10)) {cond.SqlOp} {{{idx}}}"
+                                : isOracle
+                                    ? $"TO_NUMBER(JSON_VALUE(\"Data\", '$.{cond.Property}') DEFAULT NULL ON CONVERSION ERROR) {cond.SqlOp} {{{idx}}}"
+                                    : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS REAL) {cond.SqlOp} {{{idx}}}";
                     clauses.Add(expr);
                     break;
                 }
@@ -1220,10 +1263,25 @@ public static class WorkflowPartitionManager
                         parameters.Add(boolVal);
                         clauses.Add($"((((\"Data\"->>'{cond.Property}')::boolean))) = {{{idx}}}");
                     }
-                    else
+                    else if (isSqlite)
                     {
                         parameters.Add(boolVal ? 1 : 0);
                         clauses.Add($"json_extract(\"Data\", '$.{cond.Property}') = {{{idx}}}");
+                    }
+                    else if (isSqlServer)
+                    {
+                        parameters.Add(boolVal ? "true" : "false");
+                        clauses.Add($"LOWER(JSON_VALUE([Data], '$.{cond.Property}')) = {{{idx}}}");
+                    }
+                    else if (isMySql)
+                    {
+                        parameters.Add(boolVal ? "true" : "false");
+                        clauses.Add($"LOWER(JSON_UNQUOTE(JSON_EXTRACT(`Data`, '$.{cond.Property}'))) = {{{idx}}}");
+                    }
+                    else
+                    {
+                        parameters.Add(boolVal ? "true" : "false");
+                        clauses.Add($"LOWER(JSON_VALUE(\"Data\", '$.{cond.Property}')) = {{{idx}}}");
                     }
 
                     break;
@@ -1233,7 +1291,13 @@ public static class WorkflowPartitionManager
                     parameters.Add(cond.Parameter);
                     var expr = isPostgres
                         ? $"((\"Data\"->>'{cond.Property}')::text) {cond.SqlOp} {{{idx}}}"
-                        : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS TEXT) {cond.SqlOp} {{{idx}}}";
+                        : isSqlServer
+                            ? $"JSON_VALUE([Data], '$.{cond.Property}') {cond.SqlOp} {{{idx}}}"
+                            : isMySql
+                                ? $"JSON_UNQUOTE(JSON_EXTRACT(`Data`, '$.{cond.Property}')) {cond.SqlOp} {{{idx}}}"
+                                : isOracle
+                                    ? $"JSON_VALUE(\"Data\", '$.{cond.Property}') {cond.SqlOp} {{{idx}}}"
+                                    : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS TEXT) {cond.SqlOp} {{{idx}}}";
                     clauses.Add(expr);
                     break;
                 }
@@ -1242,11 +1306,21 @@ public static class WorkflowPartitionManager
                     parameters.Add(cond.Parameter);
                     var rawTextExpr = isPostgres
                         ? $"(\"Data\"->>'{cond.Property}')"
-                        : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS TEXT)";
+                        : isSqlServer
+                            ? $"JSON_VALUE([Data], '$.{cond.Property}')"
+                            : isMySql
+                                ? $"JSON_UNQUOTE(JSON_EXTRACT(`Data`, '$.{cond.Property}'))"
+                                : isOracle
+                                    ? $"JSON_VALUE(\"Data\", '$.{cond.Property}')"
+                                    : $"CAST(json_extract(\"Data\", '$.{cond.Property}') AS TEXT)";
                     var foldedExpr = FoldTurkishLowerSql(rawTextExpr);
                     var expr = isPostgres
                         ? $"STRPOS({foldedExpr}, {{{idx}}}) > 0"
-                        : $"INSTR({foldedExpr}, {{{idx}}}) > 0";
+                        : isSqlServer
+                            ? $"CHARINDEX({{{idx}}}, {foldedExpr}) > 0"
+                            : isMySql
+                                ? $"LOCATE({{{idx}}}, {foldedExpr}) > 0"
+                                : $"INSTR({foldedExpr}, {{{idx}}}) > 0";
                     clauses.Add(expr);
                     break;
                 }
@@ -1255,7 +1329,13 @@ public static class WorkflowPartitionManager
                     parameters.Add(cond.Parameter);
                     var expr = isPostgres
                         ? $"((\"Data\"->>'{cond.Property}')::text) {cond.SqlOp} {{{idx}}}"
-                        : $"json_extract(\"Data\", '$.{cond.Property}') {cond.SqlOp} {{{idx}}}";
+                        : isSqlServer
+                            ? $"JSON_VALUE([Data], '$.{cond.Property}') {cond.SqlOp} {{{idx}}}"
+                            : isMySql
+                                ? $"JSON_UNQUOTE(JSON_EXTRACT(`Data`, '$.{cond.Property}')) {cond.SqlOp} {{{idx}}}"
+                                : isOracle
+                                    ? $"JSON_VALUE(\"Data\", '$.{cond.Property}') {cond.SqlOp} {{{idx}}}"
+                                    : $"json_extract(\"Data\", '$.{cond.Property}') {cond.SqlOp} {{{idx}}}";
                     clauses.Add(expr);
                     break;
                 }
@@ -1264,14 +1344,10 @@ public static class WorkflowPartitionManager
 
         if (clauses.Count == 0)
         {
-            return query;
+            return (null, []);
         }
 
-        var sql = $"SELECT * FROM {table} WHERE {string.Join(" AND ", clauses)}";
-#pragma warning disable EF1002
-        var matchingData = db.InstanceData.FromSqlRaw(sql, [.. parameters]);
-#pragma warning restore EF1002
-        return query.Where(i => matchingData.Any(d => d.InstanceId == i.Id && d.WorkflowKey == i.WorkflowKey));
+        return ($"SELECT * FROM {table} WHERE {string.Join(" AND ", clauses)}", parameters);
     }
 
     /// <summary>
@@ -1292,17 +1368,42 @@ public static class WorkflowPartitionManager
             throw new ArgumentException($"Invalid sort property '{sortProperty}'.", nameof(sortProperty));
         }
 
-        var provider = db.Database.ProviderName ?? string.Empty;
-        var isPostgres = provider.Contains("Npgsql", StringComparison.Ordinal);
-        var isSqlite = provider.Contains("Sqlite", StringComparison.Ordinal);
-        if (!isPostgres && !isSqlite)
+        var (sql, parameters) = BuildOrderBySqlDataQuery(db.Database.ProviderName, schema, workflowKey, sortProperty, ascending);
+        if (sql is null)
         {
             return ascending
                 ? query.OrderBy(i => i.CreatedAt).ThenBy(i => i.Id)
                 : query.OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id);
         }
 
-        var table = isPostgres ? $"{ValidateIdentifier(schema)}.\"WorkflowInstanceData\"" : "\"WorkflowInstanceData\"";
+#pragma warning disable EF1002
+        var rankedData = db.InstanceData.FromSqlRaw(sql, parameters).AsNoTracking();
+#pragma warning restore EF1002
+        return from i in query
+               join d in rankedData on new { Id = i.Id, i.WorkflowKey } equals new { Id = d.InstanceId, d.WorkflowKey }
+               orderby d.DataVersion ascending
+               select i;
+    }
+
+    internal static (string? Sql, object[] Parameters) BuildOrderBySqlDataQuery(
+        string? providerName,
+        string? schema,
+        string? workflowKey,
+        string sortProperty,
+        bool ascending)
+    {
+        var provider = providerName ?? string.Empty;
+        var isPostgres = provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
+        var isSqlite = provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase);
+        var isSqlServer = provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase);
+        var isMySql = provider.Contains("MySql", StringComparison.OrdinalIgnoreCase);
+        var isOracle = provider.Contains("Oracle", StringComparison.OrdinalIgnoreCase);
+        if (!isPostgres && !isSqlite && !isSqlServer && !isMySql && !isOracle)
+        {
+            return (null, []);
+        }
+
+        var table = ResolveInstanceDataTableSql(schema, isPostgres, isSqlServer, isMySql);
         var dir = ascending ? "ASC" : "DESC";
         var invDir = ascending ? "DESC" : "ASC";
         string orderByClause;
@@ -1318,6 +1419,47 @@ public static class WorkflowPartitionManager
                     WHEN jsonb_typeof("Data"->'{sortProperty}') = 'number' THEN (("Data"->>'{sortProperty}')::numeric)
                 END {dir},
                 {FoldTurkishLowerSql($"(\"Data\"->>'{sortProperty}')")} {dir},
+                "InstanceId" {dir}
+                """;
+        }
+        else if (isSqlServer)
+        {
+            orderByClause = $"""
+                CASE
+                    WHEN TRY_CAST(JSON_VALUE([Data], '$.{sortProperty}') AS decimal(38,10)) IS NOT NULL THEN 0
+                    WHEN JSON_VALUE([Data], '$.{sortProperty}') IS NULL THEN 2
+                    ELSE 1
+                END ASC,
+                TRY_CAST(JSON_VALUE([Data], '$.{sortProperty}') AS decimal(38,10)) {dir},
+                {FoldTurkishLowerSql($"JSON_VALUE([Data], '$.{sortProperty}')")} {dir},
+                [InstanceId] {dir}
+                """;
+        }
+        else if (isMySql)
+        {
+            orderByClause = $"""
+                CASE
+                    WHEN JSON_TYPE(JSON_EXTRACT(`Data`, '$.{sortProperty}')) IN ('INTEGER', 'DOUBLE', 'DECIMAL') THEN 0
+                    WHEN JSON_EXTRACT(`Data`, '$.{sortProperty}') IS NULL OR JSON_TYPE(JSON_EXTRACT(`Data`, '$.{sortProperty}')) = 'NULL' THEN 2
+                    ELSE 1
+                END ASC,
+                CASE
+                    WHEN JSON_TYPE(JSON_EXTRACT(`Data`, '$.{sortProperty}')) IN ('INTEGER', 'DOUBLE', 'DECIMAL') THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`Data`, '$.{sortProperty}')) AS DECIMAL(38,10))
+                END {dir},
+                {FoldTurkishLowerSql($"JSON_UNQUOTE(JSON_EXTRACT(`Data`, '$.{sortProperty}'))")} {dir},
+                `InstanceId` {dir}
+                """;
+        }
+        else if (isOracle)
+        {
+            orderByClause = $"""
+                CASE
+                    WHEN TO_NUMBER(JSON_VALUE("Data", '$.{sortProperty}') DEFAULT NULL ON CONVERSION ERROR) IS NOT NULL THEN 0
+                    WHEN JSON_VALUE("Data", '$.{sortProperty}') IS NULL THEN 2
+                    ELSE 1
+                END ASC,
+                TO_NUMBER(JSON_VALUE("Data", '$.{sortProperty}') DEFAULT NULL ON CONVERSION ERROR) {dir},
+                {FoldTurkishLowerSql($"JSON_VALUE(\"Data\", '$.{sortProperty}')")} {dir},
                 "InstanceId" {dir}
                 """;
         }
@@ -1345,36 +1487,66 @@ public static class WorkflowPartitionManager
                 """;
         }
 
-        string sql;
-        object[] parameters;
+        var cols = string.Join(", ",
+            QuoteColumn("InstanceId", isSqlServer, isMySql),
+            QuoteColumn("WorkflowKey", isSqlServer, isMySql),
+            QuoteColumn("Data", isSqlServer, isMySql),
+            QuoteColumn("DataHash", isSqlServer, isMySql),
+            QuoteColumn("ETag", isSqlServer, isMySql),
+            QuoteColumn("UpdatedAt", isSqlServer, isMySql));
+        var dataVersionCol = QuoteColumn("DataVersion", isSqlServer, isMySql);
+        var wfKeyCol = QuoteColumn("WorkflowKey", isSqlServer, isMySql);
+        var intType = isMySql ? "SIGNED" : isOracle ? "NUMBER(10)" : "int";
+
         if (!string.IsNullOrWhiteSpace(workflowKey))
         {
-            sql = $$"""
-                SELECT "InstanceId", "WorkflowKey", "Data", "DataHash", "ETag", "UpdatedAt",
-                       CAST(ROW_NUMBER() OVER (ORDER BY {{orderByClause}}) AS int) AS "DataVersion"
+            var sql = $$"""
+                SELECT {{cols}},
+                       CAST(ROW_NUMBER() OVER (ORDER BY {{orderByClause}}) AS {{intType}}) AS {{dataVersionCol}}
                 FROM {{table}}
-                WHERE "WorkflowKey" = {0}
+                WHERE {{wfKeyCol}} = {0}
                 """;
-            parameters = [workflowKey];
+            return (sql, [workflowKey]);
         }
         else
         {
-            sql = $"""
-                SELECT "InstanceId", "WorkflowKey", "Data", "DataHash", "ETag", "UpdatedAt",
-                       CAST(ROW_NUMBER() OVER (ORDER BY {orderByClause}) AS int) AS "DataVersion"
+            var sql = $"""
+                SELECT {cols},
+                       CAST(ROW_NUMBER() OVER (ORDER BY {orderByClause}) AS {intType}) AS {dataVersionCol}
                 FROM {table}
                 """;
-            parameters = [];
+            return (sql, []);
+        }
+    }
+
+    private static string ResolveInstanceDataTableSql(string? schema, bool isPostgres, bool isSqlServer, bool isMySql)
+    {
+        if (isPostgres)
+        {
+            return $"{ValidateIdentifier(schema)}.\"WorkflowInstanceData\"";
         }
 
-#pragma warning disable EF1002
-        var rankedData = db.InstanceData.FromSqlRaw(sql, parameters).AsNoTracking();
-#pragma warning restore EF1002
-        return from i in query
-               join d in rankedData on new { Id = i.Id, i.WorkflowKey } equals new { Id = d.InstanceId, d.WorkflowKey }
-               orderby d.DataVersion ascending
-               select i;
+        if (isSqlServer)
+        {
+            var safeSchema = string.IsNullOrWhiteSpace(schema) ? "dbo" : schema;
+            if (!SafeIdRegex.IsMatch(safeSchema))
+            {
+                throw new InvalidOperationException($"Invalid SQL identifier '{schema}'.");
+            }
+
+            return $"[{safeSchema}].[WorkflowInstanceData]";
+        }
+
+        if (isMySql)
+        {
+            return "`WorkflowInstanceData`";
+        }
+
+        return "\"WorkflowInstanceData\"";
     }
+
+    private static string QuoteColumn(string name, bool isSqlServer, bool isMySql) =>
+        isSqlServer ? $"[{name}]" : isMySql ? $"`{name}`" : $"\"{name}\"";
 
     private static string CleanIdentifier(string text) =>
         Regex.Replace(text, "[^A-Za-z0-9_]", "_");

@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -8,6 +9,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Middt.Framework.Workflow.Runtime;
 using OpenAI;
 
 namespace Middt.Framework.Agents;
@@ -16,8 +18,9 @@ namespace Middt.Framework.Agents;
 /// Default implementation of <see cref="IMiddtAgentRegistry"/> backed by <see cref="AgentSettings"/>,
 /// <see cref="MiddtAgentOptions"/>, <see cref="IMiddtMcpClient"/>, <c>Microsoft.Agents.AI</c>, and <c>Microsoft.Extensions.AI</c>.
 /// </summary>
-public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
+public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry, IWorkflowCatalogInvalidationHandler
 {
+    private static readonly long SyncCooldownTicks = Stopwatch.Frequency;
     private static readonly JsonSerializerOptions CatalogJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -30,11 +33,16 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
     private readonly MiddtAgentOptions _options;
     private readonly IMiddtMcpClient _mcpClient;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly Dictionary<string, AgentDefinition> _baselineDefinitions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, AITool> _baselineTools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, AgentToolDefinition> _baselineDeclarativeTools = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AgentDefinition> _definitions = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AITool> _tools = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AgentToolDefinition> _declarativeTools = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _sync = new();
-    private volatile bool _persistedLoaded;
+    private DateTime _persistedUpdatedAt = DateTime.MinValue;
+    private long _lastSyncTicks;
+    private volatile bool _cacheInvalidated = true;
 
     public MiddtAgentRegistry(
         IServiceProvider services,
@@ -109,6 +117,21 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
 
             _definitions[def.Name] = def;
         }
+
+        foreach (var (k, v) in _definitions)
+        {
+            _baselineDefinitions[k] = v;
+        }
+
+        foreach (var (k, v) in _tools)
+        {
+            _baselineTools[k] = v;
+        }
+
+        foreach (var (k, v) in _declarativeTools)
+        {
+            _baselineDeclarativeTools[k] = v;
+        }
     }
 
     /// <summary>Gets the active <see cref="AgentSettings"/> for runtime inspection by the Agent Studio.</summary>
@@ -121,11 +144,61 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         || !string.IsNullOrWhiteSpace(_settings.ApiKey)
         || string.Equals(_settings.Provider, "Ollama", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Invalidates the in-memory persisted catalog watermark so the next read re-checks the database immediately.</summary>
+    public void InvalidateCache() => _cacheInvalidated = true;
+
+    /// <inheritdoc />
+    public void OnCatalogInvalidated(string catalog)
+    {
+        if (string.IsNullOrEmpty(catalog) || string.Equals(catalog, "agents", StringComparison.OrdinalIgnoreCase))
+        {
+            InvalidateCache();
+        }
+    }
+
+    internal void MarkPersistedAt(DateTime updatedAt)
+    {
+        lock (_sync)
+        {
+            _persistedUpdatedAt = updatedAt;
+            _lastSyncTicks = Stopwatch.GetTimestamp();
+            _cacheInvalidated = false;
+        }
+    }
+
+    internal void ReloadPersistedCatalog() => EnsurePersistedCatalogLoaded(force: true);
+
     public void RegisterCatalog(AgentCatalogFile catalog)
     {
         ArgumentNullException.ThrowIfNull(catalog);
-        EnsurePersistedCatalogLoaded();
+        EnsurePersistedCatalogLoaded(force: true);
         RegisterCatalogCore(catalog);
+    }
+
+    private void ResetToBaselineCore()
+    {
+        if (_mcpClient is MiddtMcpClient concreteMcp)
+        {
+            concreteMcp.ResetToBaseline();
+        }
+
+        _definitions.Clear();
+        foreach (var (k, v) in _baselineDefinitions)
+        {
+            _definitions[k] = v;
+        }
+
+        _tools.Clear();
+        foreach (var (k, v) in _baselineTools)
+        {
+            _tools[k] = v;
+        }
+
+        _declarativeTools.Clear();
+        foreach (var (k, v) in _baselineDeclarativeTools)
+        {
+            _declarativeTools[k] = v;
+        }
     }
 
     private void RegisterCatalogCore(AgentCatalogFile catalog)
@@ -151,14 +224,14 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
     public bool RemoveAgent(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        EnsurePersistedCatalogLoaded();
+        EnsurePersistedCatalogLoaded(force: true);
         return _definitions.TryRemove(name, out _);
     }
 
     public bool RemoveDeclarativeTool(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        EnsurePersistedCatalogLoaded();
+        EnsurePersistedCatalogLoaded(force: true);
         var removedDecl = _declarativeTools.TryRemove(name, out _);
         var removedTool = _tools.TryRemove(name, out _);
         return removedDecl || removedTool;
@@ -167,7 +240,7 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
     public bool RemoveMcpServer(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        EnsurePersistedCatalogLoaded();
+        EnsurePersistedCatalogLoaded(force: true);
         var prefix = $"mcp:{name}:";
         foreach (var key in _tools.Keys.Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
         {
@@ -309,16 +382,18 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
         }
     }
 
-    private void EnsurePersistedCatalogLoaded()
+    internal void EnsurePersistedCatalogLoaded(bool force = false)
     {
-        if (_persistedLoaded)
+        var nowTicks = Stopwatch.GetTimestamp();
+        if (!force && !_cacheInvalidated && nowTicks - Interlocked.Read(ref _lastSyncTicks) < SyncCooldownTicks)
         {
             return;
         }
 
         lock (_sync)
         {
-            if (_persistedLoaded)
+            nowTicks = Stopwatch.GetTimestamp();
+            if (!force && !_cacheInvalidated && nowTicks - _lastSyncTicks < SyncCooldownTicks)
             {
                 return;
             }
@@ -329,19 +404,34 @@ public sealed partial class MiddtAgentRegistry : IMiddtAgentRegistry
                 var db = scope.ServiceProvider.GetService<Middt.Framework.Workflow.Persistence.WorkflowDbContext>();
                 if (db is null)
                 {
-                    _persistedLoaded = true;
+                    _lastSyncTicks = nowTicks;
+                    _cacheInvalidated = false;
+                    return;
+                }
+
+                var meta = Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Definitions)
+                    .Where(d => d.Key == AgentEndpoints.PersistedCatalogKey && d.Version == 1)
+                    .Select(d => new { d.UpdatedAt })
+                    .FirstOrDefault();
+
+                _lastSyncTicks = nowTicks;
+                _cacheInvalidated = false;
+
+                if (meta is null || meta.UpdatedAt <= _persistedUpdatedAt)
+                {
                     return;
                 }
 
                 var record = Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Definitions)
                     .FirstOrDefault(d => d.Key == AgentEndpoints.PersistedCatalogKey && d.Version == 1);
-                _persistedLoaded = true;
                 if (record is not null && !string.IsNullOrWhiteSpace(record.Content))
                 {
                     var catalog = JsonSerializer.Deserialize<AgentCatalogFile>(record.Content, CatalogJsonOptions);
                     if (catalog is not null)
                     {
+                        ResetToBaselineCore();
                         RegisterCatalogCore(catalog);
+                        _persistedUpdatedAt = record.UpdatedAt;
                     }
                 }
             }

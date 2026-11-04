@@ -41,9 +41,16 @@ public sealed class DistributedServerTokenStore(
             try
             {
                 var latest = await ReadValidEntryAsync(sessionId, cancellationToken);
-                if (latest is not null && now - latest.LastActivity > TouchThrottle)
+                if (latest is not null)
                 {
-                    await WriteAsync(sessionId, latest with { LastActivity = now }, cancellationToken);
+                    entry = latest;
+                    var hasActiveLease = !string.IsNullOrEmpty(latest.LeaseOwner)
+                                         && latest.LeaseExpiresAt is { } leaseExp
+                                         && leaseExp > now;
+                    if (!hasActiveLease && now - latest.LastActivity > TouchThrottle)
+                    {
+                        await WriteAsync(sessionId, latest with { LastActivity = now }, cancellationToken);
+                    }
                 }
             }
             finally

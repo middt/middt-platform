@@ -534,10 +534,12 @@ public static class AgentEndpoints
         string? userId,
         CancellationToken ct)
     {
-        var toPersist = registry is MiddtAgentRegistry concrete
+        var concrete = registry as MiddtAgentRegistry;
+        var toPersist = concrete is not null
             ? concrete.ExportCatalog()
             : (fallbackCatalog ?? new AgentCatalogFile());
         var serialized = JsonSerializer.Serialize(toPersist, JsonOptions);
+        var now = DateTime.UtcNow;
 
         await using var scope = services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetService<WorkflowDbContext>();
@@ -554,17 +556,24 @@ public static class AgentEndpoints
                     Title = "AI Agent Catalog",
                     Content = serialized,
                     UpdatedBy = userId,
-                    UpdatedAt = DateTime.UtcNow,
+                    UpdatedAt = now,
                 });
             }
             else
             {
                 existing.Content = serialized;
                 existing.UpdatedBy = userId;
-                existing.UpdatedAt = DateTime.UtcNow;
+                existing.UpdatedAt = now;
             }
 
             await db.SaveChangesAsync(ct);
+            concrete?.MarkPersistedAt(now);
+
+            var notifier = scope.ServiceProvider.GetService<Middt.Framework.Workflow.Runtime.WorkflowJobNotifier>();
+            if (notifier is not null)
+            {
+                await notifier.NotifyCatalogAsync(db, "agents", ct);
+            }
         }
     }
 }

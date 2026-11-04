@@ -49,13 +49,26 @@ public sealed class UiDbContext(DbContextOptions<UiDbContext> options, IOptions<
 
     public DbSet<UiLayoutRevisionEntity> Revisions => Set<UiLayoutRevisionEntity>();
 
-    internal string? ModelSchema => (Database.ProviderName ?? string.Empty).Contains("Sqlite", StringComparison.Ordinal) ? null : uiOptions.Value.Schema;
+    internal string? ModelSchema => SupportsDatabaseSchemas(Database.ProviderName) ? uiOptions.Value.Schema : null;
+
+    /// <summary>Returns <see langword="true"/> when the EF Core provider supports lightweight namespace schemas inside a database (PostgreSQL and SQL Server).</summary>
+    internal static bool SupportsDatabaseSchemas(string? providerName)
+    {
+        if (string.IsNullOrEmpty(providerName))
+        {
+            return false;
+        }
+
+        return providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase)
+            || providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase);
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var provider = Database.ProviderName ?? string.Empty;
         var schema = ModelSchema;
-        var isPostgres = provider.Contains("Npgsql", StringComparison.Ordinal);
+        var isPostgres = provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
+        var isOracle = provider.Contains("Oracle", StringComparison.OrdinalIgnoreCase);
 
         modelBuilder.Entity<UiLayoutEntity>(e =>
         {
@@ -68,6 +81,10 @@ public sealed class UiDbContext(DbContextOptions<UiDbContext> options, IOptions<
             if (isPostgres)
             {
                 e.Property(x => x.Content).HasColumnType("jsonb");
+            }
+            else if (isOracle)
+            {
+                e.Property(x => x.Content).HasColumnType("NCLOB");
             }
 
             e.Property(x => x.Version).IsConcurrencyToken();
@@ -84,6 +101,10 @@ public sealed class UiDbContext(DbContextOptions<UiDbContext> options, IOptions<
             if (isPostgres)
             {
                 e.Property(x => x.Content).HasColumnType("jsonb");
+            }
+            else if (isOracle)
+            {
+                e.Property(x => x.Content).HasColumnType("NCLOB");
             }
 
             e.Property(x => x.CreatedBy).HasMaxLength(256);

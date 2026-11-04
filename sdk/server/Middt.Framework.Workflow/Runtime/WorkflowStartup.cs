@@ -24,54 +24,70 @@ internal sealed class WorkflowStartup(
 
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<WorkflowDbContext>();
-
+        var provider = db.Database.ProviderName ?? string.Empty;
+        var isPostgres = provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
+        var lockKey = $"middt_wf_startup_{options.Value.Schema ?? "public"}";
+        var lockAcquired = false;
         if (options.Value.AutoCreateSchema)
         {
-            var creator = db.GetService<IRelationalDatabaseCreator>();
+            lockAcquired = await AcquireStartupLockAsync(db, provider, lockKey, cancellationToken);
+        }
 
-            if (!await creator.ExistsAsync(cancellationToken))
+        try
+        {
+            if (options.Value.AutoCreateSchema)
             {
-                await creator.CreateAsync(cancellationToken);
-            }
+                var creator = db.GetService<IRelationalDatabaseCreator>();
 
-            var isPostgres = db.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true;
-
-            if (!await TablesExistAsync(db, cancellationToken))
-            {
-                // Tables of this context only (the database may contain other application tables).
-                if (options.Value.Schema is { Length: > 0 } schema && !db.Database.ProviderName!.Contains("Sqlite", StringComparison.Ordinal))
+                if (!await creator.ExistsAsync(cancellationToken))
                 {
-                    await EnsureSchemaAsync(db, schema, cancellationToken);
+                    await creator.CreateAsync(cancellationToken);
                 }
 
-                if (isPostgres)
+                if (!await TablesExistAsync(db, cancellationToken))
                 {
-                    await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
+                    // Tables of this context only (the database may contain other application tables).
+                    if (options.Value.Schema is { Length: > 0 } schema && WorkflowDbContext.SupportsDatabaseSchemas(provider))
+                    {
+                        await EnsureSchemaAsync(db, schema, cancellationToken);
+                    }
+
+                    if (isPostgres)
+                    {
+                        await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
+                    }
+                    else
+                    {
+                        await creator.CreateTablesAsync(cancellationToken);
+                    }
                 }
                 else
                 {
-                    await creator.CreateTablesAsync(cancellationToken);
+                    // CreateTables only runs for a new database: ensure any newly added partitioned tables and nullable columns exist.
+                    if (isPostgres)
+                    {
+                        await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
+                    }
+
+                    await EnsureWorkflowKeyMigrationAsync(db, options.Value.Schema, cancellationToken);
+                    await EnsureColumnsAsync(db, cancellationToken);
                 }
             }
-            else
-            {
-                // CreateTables only runs for a new database: ensure any newly added partitioned tables and nullable columns exist.
-                if (isPostgres)
-                {
-                    await WorkflowPartitionManager.CreatePartitionedTablesAsync(db, options.Value.Schema, cancellationToken);
-                }
 
-                await EnsureWorkflowKeyMigrationAsync(db, options.Value.Schema, cancellationToken);
-                await EnsureColumnsAsync(db, cancellationToken);
+            await RestorePersistedDefinitionsAsync(db, registry, options.Value.Schema, cancellationToken);
+
+            if (options.Value.AutoCreateSchema)
+            {
+                await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, options.Value.Schema, logger, cancellationToken);
+                await EnsureIndexesAsync(db, cancellationToken);
             }
         }
-
-        await RestorePersistedDefinitionsAsync(db, registry, options.Value.Schema, cancellationToken);
-
-        if (options.Value.AutoCreateSchema)
+        finally
         {
-            await WorkflowPartitionManager.EnsurePartitionsAndIndexesAsync(db, registry, options.Value.Schema, logger, cancellationToken);
-            await EnsureIndexesAsync(db, cancellationToken);
+            if (lockAcquired)
+            {
+                await ReleaseStartupLockAsync(db, provider, lockKey);
+            }
         }
     }
 
@@ -208,6 +224,20 @@ internal sealed class WorkflowStartup(
             await db.Database.ExecuteSqlRawAsync(statement, cancellationToken);
 #pragma warning restore EF1002
         }
+
+        if ((db.Database.ProviderName ?? string.Empty).Contains("Oracle", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(
+                    "CREATE UNIQUE INDEX \"IX_WorkflowInstances_WorkflowKey_BusinessKey_UQ\" ON \"WorkflowInstances\" (CASE WHEN \"BusinessKey\" IS NOT NULL THEN \"WorkflowKey\" END, \"BusinessKey\")",
+                    cancellationToken);
+            }
+            catch
+            {
+                // Ignored when the index already exists (ORA-00955 / ORA-01408).
+            }
+        }
     }
 
     internal static IEnumerable<string> EnsureIndexStatements(WorkflowDbContext db)
@@ -258,12 +288,24 @@ internal sealed class WorkflowStartup(
 
     internal static async Task<bool> TableExistsAsync(WorkflowDbContext db, string? schemaName, string tableName, CancellationToken cancellationToken)
     {
-        if (db.Database.ProviderName?.Contains("Sqlite", StringComparison.Ordinal) == true)
+        var provider = db.Database.ProviderName ?? string.Empty;
+        if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
             return await db.Database.SqlQuery<int>($"SELECT COUNT(*) AS \"Value\" FROM sqlite_master WHERE type = 'table' AND name = {tableName}").SingleAsync(cancellationToken) > 0;
         }
 
-        var schema = schemaName ?? "public";
+        if (provider.Contains("MySql", StringComparison.OrdinalIgnoreCase))
+        {
+            return await db.Database.SqlQuery<int>($"SELECT CAST(COUNT(*) AS SIGNED) AS `Value` FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = {tableName}").SingleAsync(cancellationToken) > 0;
+        }
+
+        if (provider.Contains("Oracle", StringComparison.OrdinalIgnoreCase))
+        {
+            return await db.Database.SqlQuery<int>($"SELECT CAST(COUNT(*) AS NUMBER(10)) AS \"Value\" FROM USER_TABLES WHERE UPPER(TABLE_NAME) = UPPER({tableName})").SingleAsync(cancellationToken) > 0;
+        }
+
+        var defaultSchema = provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) ? "dbo" : "public";
+        var schema = string.IsNullOrWhiteSpace(schemaName) ? defaultSchema : schemaName;
         return await db.Database.SqlQuery<int>($"SELECT CAST(COUNT(*) AS int) AS \"Value\" FROM information_schema.tables WHERE table_schema = {schema} AND table_name = {tableName}").SingleAsync(cancellationToken) > 0;
     }
 
@@ -277,10 +319,63 @@ internal sealed class WorkflowStartup(
 
         var provider = db.Database.ProviderName ?? string.Empty;
 #pragma warning disable EF1002 // schema is a validated identifier
-        if (provider.Contains("Npgsql", StringComparison.Ordinal))
+        if (provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
         {
             await db.Database.ExecuteSqlRawAsync($"CREATE SCHEMA IF NOT EXISTS \"{schema}\"", cancellationToken);
         }
+        else if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            await db.Database.ExecuteSqlRawAsync($"IF SCHEMA_ID(N'{schema}') IS NULL EXEC(N'CREATE SCHEMA [{schema}]');", cancellationToken);
+        }
 #pragma warning restore EF1002
+    }
+
+    internal static async Task<bool> AcquireStartupLockAsync(DbContext db, string provider, string lockKey, CancellationToken cancellationToken)
+    {
+        if (provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
+        {
+            await db.Database.OpenConnectionAsync(cancellationToken);
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_lock(hashtext({lockKey}))", cancellationToken);
+            return true;
+        }
+
+        if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            await db.Database.OpenConnectionAsync(cancellationToken);
+            await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sp_getapplock @Resource = {lockKey}, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 30000", cancellationToken);
+            return true;
+        }
+
+        if (provider.Contains("MySql", StringComparison.OrdinalIgnoreCase))
+        {
+            await db.Database.OpenConnectionAsync(cancellationToken);
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT GET_LOCK({lockKey}, 30)", cancellationToken);
+            return true;
+        }
+
+        return false;
+    }
+
+    internal static async Task ReleaseStartupLockAsync(DbContext db, string provider, string lockKey)
+    {
+        try
+        {
+            if (provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_unlock(hashtext({lockKey}))", CancellationToken.None);
+            }
+            else if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sp_releaseapplock @Resource = {lockKey}, @LockOwner = 'Session'", CancellationToken.None);
+            }
+            else if (provider.Contains("MySql", StringComparison.OrdinalIgnoreCase))
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT RELEASE_LOCK({lockKey})", CancellationToken.None);
+            }
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
     }
 }

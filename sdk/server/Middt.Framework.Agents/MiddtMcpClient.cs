@@ -27,8 +27,8 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
     private static readonly WorkflowExpressionEngine DefaultExpressions = new();
 
     private readonly IServiceProvider _services;
+    private readonly Dictionary<string, McpServerDefinition> _baselineServers = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, McpServerDefinition> _servers = new(StringComparer.OrdinalIgnoreCase);
-    private volatile bool _persistedChecked;
 
     public MiddtMcpClient(
         IServiceProvider services,
@@ -48,6 +48,7 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
                 server.Name = key;
             }
 
+            _baselineServers[server.Name] = server;
             _servers[server.Name] = server;
         }
 
@@ -58,6 +59,7 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
                 server.Name = key;
             }
 
+            _baselineServers[server.Name] = server;
             _servers[server.Name] = server;
         }
     }
@@ -70,6 +72,15 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
 
     internal IReadOnlyCollection<McpServerDefinition> GetRegisteredServersSnapshot() => [.. _servers.Values];
 
+    internal void ResetToBaseline()
+    {
+        _servers.Clear();
+        foreach (var (name, server) in _baselineServers)
+        {
+            _servers[name] = server;
+        }
+    }
+
     public McpServerDefinition? GetServer(string serverName)
     {
         EnsurePersistedLoaded();
@@ -78,13 +89,10 @@ public sealed class MiddtMcpClient : IMiddtMcpClient
 
     private void EnsurePersistedLoaded()
     {
-        if (_persistedChecked)
+        if (_services.GetService<IMiddtAgentRegistry>() is MiddtAgentRegistry concrete)
         {
-            return;
+            concrete.EnsurePersistedCatalogLoaded();
         }
-
-        _persistedChecked = true;
-        _ = _services.GetService<IMiddtAgentRegistry>()?.GetAllDefinitions();
     }
 
     public void RegisterServer(McpServerDefinition server)

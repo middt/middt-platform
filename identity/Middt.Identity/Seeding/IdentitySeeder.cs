@@ -30,11 +30,43 @@ internal sealed partial class IdentitySeeder(
             LogDevelopmentMailbox(logger);
         }
 
-        var seed = options.Value.Seed;
-        await SeedRolesAsync(services.GetRequiredService<RoleManager<IdentityRole>>(), seed);
-        await SeedScopesAsync(services.GetRequiredService<IOpenIddictScopeManager>(), seed, cancellationToken);
-        await SeedClientsAsync(services.GetRequiredService<IOpenIddictApplicationManager>(), seed, cancellationToken);
-        await SeedUsersAsync(services.GetRequiredService<UserManager<MiddtIdentityUser>>(), seed);
+        var db = services.GetService<Middt.Framework.Workflow.Persistence.WorkflowDbContext>();
+        var isPostgres = db?.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true;
+        const string lockKey = "middt_identity_seeder";
+        if (isPostgres && db is not null)
+        {
+            await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.OpenConnectionAsync(db.Database, cancellationToken);
+            await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlInterpolatedAsync(
+                db.Database,
+                $"SELECT pg_advisory_lock(hashtext({lockKey}))",
+                cancellationToken);
+        }
+
+        try
+        {
+            var seed = options.Value.Seed;
+            await SeedRolesAsync(services.GetRequiredService<RoleManager<IdentityRole>>(), seed);
+            await SeedScopesAsync(services.GetRequiredService<IOpenIddictScopeManager>(), seed, cancellationToken);
+            await SeedClientsAsync(services.GetRequiredService<IOpenIddictApplicationManager>(), seed, cancellationToken);
+            await SeedUsersAsync(services.GetRequiredService<UserManager<MiddtIdentityUser>>(), seed);
+        }
+        finally
+        {
+            if (isPostgres && db is not null)
+            {
+                try
+                {
+                    await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlInterpolatedAsync(
+                        db.Database,
+                        $"SELECT pg_advisory_unlock(hashtext({lockKey}))",
+                        CancellationToken.None);
+                }
+                finally
+                {
+                    await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.CloseConnectionAsync(db.Database);
+                }
+            }
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -47,7 +79,11 @@ internal sealed partial class IdentitySeeder(
         {
             if (!await roles.RoleExistsAsync(name))
             {
-                Check(await roles.CreateAsync(new IdentityRole(name)), $"role '{name}'");
+                var result = await roles.CreateAsync(new IdentityRole(name));
+                if (!result.Succeeded && !await roles.RoleExistsAsync(name))
+                {
+                    Check(result, $"role '{name}'");
+                }
             }
         }
     }
@@ -180,7 +216,18 @@ internal sealed partial class IdentitySeeder(
                     user.PasswordHash = users.PasswordHasher.HashPassword(user, item.Password);
                 }
 
-                Check(await users.CreateAsync(user), $"user '{item.UserName}'");
+                var createResult = await users.CreateAsync(user);
+                if (!createResult.Succeeded)
+                {
+                    if (await users.FindByNameAsync(item.UserName) is { } concurrentUser)
+                    {
+                        user = concurrentUser;
+                    }
+                    else
+                    {
+                        Check(createResult, $"user '{item.UserName}'");
+                    }
+                }
             }
 
             var missing = item.Roles.Except(await users.GetRolesAsync(user), StringComparer.Ordinal).ToList();

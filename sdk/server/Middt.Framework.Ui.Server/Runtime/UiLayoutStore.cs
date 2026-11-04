@@ -36,12 +36,22 @@ public sealed class UiLayoutStore(UiDbContext db, IMemoryCache cache, UiLayoutVa
         public SemaphoreSlim Reload { get; } = new(1, 1);
 
         public long Generation;
+
+        public long LoadedGlobalGeneration = -1;
     }
 
     // One gate map per cache instance, keyed by schema (the store itself is scoped).
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IMemoryCache, System.Collections.Concurrent.ConcurrentDictionary<string, SnapshotGate>> Gates = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> GlobalSchemaGenerations = new(StringComparer.Ordinal);
 
     private string SchemaKey => string.IsNullOrWhiteSpace(options.Value.Schema) ? "ui" : options.Value.Schema;
+
+    /// <summary>Invalidates all in-memory layout caches for the given <paramref name="schema"/> across the process.</summary>
+    public static void InvalidateSchema(string? schema = null)
+    {
+        var key = string.IsNullOrWhiteSpace(schema) ? "ui" : schema;
+        GlobalSchemaGenerations.AddOrUpdate(key, 1, static (_, v) => v + 1);
+    }
 
     private SnapshotGate Gate =>
         Gates.GetValue(cache, _ => new System.Collections.Concurrent.ConcurrentDictionary<string, SnapshotGate>(StringComparer.Ordinal))
@@ -168,6 +178,7 @@ public sealed class UiLayoutStore(UiDbContext db, IMemoryCache cache, UiLayoutVa
     public void Invalidate()
     {
         Interlocked.Increment(ref Gate.Generation);
+        InvalidateSchema(SchemaKey);
         cache.Remove(CacheKey);
     }
 
@@ -214,6 +225,18 @@ public sealed class UiLayoutStore(UiDbContext db, IMemoryCache cache, UiLayoutVa
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+            if ((db.Database.ProviderName ?? string.Empty).Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var schemaPayload = SchemaKey;
+                    await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_notify('middt_ui_layouts', {schemaPayload})", cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Best-effort cross-pod cache invalidation; CacheDuration expiration remains as fallback.
+                }
+            }
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -231,18 +254,24 @@ public sealed class UiLayoutStore(UiDbContext db, IMemoryCache cache, UiLayoutVa
 
     private async Task<Dictionary<string, Entry>> SnapshotAsync(CancellationToken cancellationToken)
     {
-        if (cache.TryGetValue(CacheKey, out Dictionary<string, Entry>? snapshot) && snapshot is not null)
+        var gate = Gate;
+        var globalGen = GlobalSchemaGenerations.GetValueOrDefault(SchemaKey);
+        if (Interlocked.Read(ref gate.LoadedGlobalGeneration) == globalGen
+            && cache.TryGetValue(CacheKey, out Dictionary<string, Entry>? snapshot)
+            && snapshot is not null)
         {
             Activity.Current?.SetTag("middt.ui.cache_hit", true);
             return snapshot;
         }
 
-        var gate = Gate;
         await gate.Reload.WaitAsync(cancellationToken);
         try
         {
+            globalGen = GlobalSchemaGenerations.GetValueOrDefault(SchemaKey);
             // Another request may have loaded it while this one waited.
-            if (cache.TryGetValue(CacheKey, out snapshot) && snapshot is not null)
+            if (Interlocked.Read(ref gate.LoadedGlobalGeneration) == globalGen
+                && cache.TryGetValue(CacheKey, out snapshot)
+                && snapshot is not null)
             {
                 Activity.Current?.SetTag("middt.ui.cache_hit", true);
                 return snapshot;
@@ -253,6 +282,7 @@ public sealed class UiLayoutStore(UiDbContext db, IMemoryCache cache, UiLayoutVa
             snapshot = await LoadSnapshotAsync(cancellationToken);
             if (Interlocked.Read(ref gate.Generation) == generation)
             {
+                Interlocked.Exchange(ref gate.LoadedGlobalGeneration, GlobalSchemaGenerations.GetValueOrDefault(SchemaKey));
                 cache.Set(CacheKey, snapshot, new MemoryCacheEntryOptions
                 {
                     AbsoluteExpirationRelativeToNow = options.Value.CacheDuration,

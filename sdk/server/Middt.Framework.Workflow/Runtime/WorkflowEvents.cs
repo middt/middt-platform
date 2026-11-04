@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
+using Microsoft.Extensions.DependencyInjection;
 using Middt.Framework.Model.Workflow;
 
 namespace Middt.Framework.Workflow.Runtime;
@@ -34,18 +35,35 @@ public interface IWorkflowEventHandler
     Task HandleAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken);
 }
 
-/// <summary>In-memory pub/sub hub that broadcasts committed <see cref="WorkflowEvent"/> notifications to Server-Sent Events (SSE) subscribers.</summary>
-public sealed class WorkflowEventStreamHub : IWorkflowEventHandler
+/// <summary>Notified when a runtime catalog (such as workflow definitions or AI agents) is updated on any node in the cluster.</summary>
+public interface IWorkflowCatalogInvalidationHandler
+{
+    void OnCatalogInvalidated(string catalog);
+}
+
+/// <summary>
+/// Optional database-agnostic cluster broadcast transport (e.g. RabbitMQ/Rebus or Redis Pub/Sub) used to propagate
+/// job wakeups, real-time SSE events, and catalog invalidations across nodes when running on non-PostgreSQL databases
+/// (SQL Server, MySQL, Oracle, SQLite).
+/// </summary>
+public interface IWorkflowClusterBus
+{
+    Task PublishAsync(string channel, string? payload, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Pub/sub hub that broadcasts committed <see cref="WorkflowEvent"/> notifications to Server-Sent Events (SSE) subscribers
+/// on this node and (via PostgreSQL <c>LISTEN</c>/<c>NOTIFY</c> in <see cref="WorkflowJobNotifier"/>) across all nodes sharing the database.
+/// </summary>
+public sealed class WorkflowEventStreamHub(
+    IServiceScopeFactory? scopeFactory = null,
+    WorkflowJobNotifier? jobNotifier = null) : IWorkflowEventHandler
 {
     private readonly ConcurrentDictionary<Guid, Subscription> subscriptions = new();
 
-    public Task HandleAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken)
+    public async Task HandleAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(workflowEvent);
-        if (subscriptions.IsEmpty)
-        {
-            return Task.CompletedTask;
-        }
 
         var model = new WorkflowEventStreamModel
         {
@@ -60,6 +78,23 @@ public sealed class WorkflowEventStreamHub : IWorkflowEventHandler
             OccurredAt = workflowEvent.OccurredAt,
         };
 
+        PublishLocal(model);
+
+        if (jobNotifier is not null && scopeFactory is not null)
+        {
+            await jobNotifier.NotifyEventAsync(scopeFactory, model, cancellationToken);
+        }
+    }
+
+    /// <summary>Broadcasts a workflow event stream model to SSE subscribers connected to this node.</summary>
+    public void PublishLocal(WorkflowEventStreamModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        if (subscriptions.IsEmpty)
+        {
+            return;
+        }
+
         foreach (var (_, sub) in subscriptions)
         {
             if (sub.Matches(model))
@@ -67,8 +102,6 @@ public sealed class WorkflowEventStreamHub : IWorkflowEventHandler
                 sub.Channel.Writer.TryWrite(model);
             }
         }
-
-        return Task.CompletedTask;
     }
 
     public async IAsyncEnumerable<WorkflowEventStreamModel> SubscribeAsync(

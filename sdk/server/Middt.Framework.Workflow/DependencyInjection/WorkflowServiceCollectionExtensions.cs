@@ -75,11 +75,11 @@ public static class WorkflowServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         services.AddHostedService<WorkflowStartup>();
+        services.TryAddSingleton<WorkflowJobListener>();
         if (options.EnableJobProcessor)
         {
             services.AddSingleton<WorkflowJobProcessor>();
             services.AddHostedService(sp => sp.GetRequiredService<WorkflowJobProcessor>());
-            services.AddSingleton<WorkflowJobListener>();
             services.AddHostedService(sp => sp.GetRequiredService<WorkflowJobListener>());
         }
 

@@ -37,3 +37,23 @@ public sealed class WorkflowLayoutRenderer(UiLayoutStore store, UiHtmlRenderer r
         }, user);
     }
 }
+
+/// <summary>Bridges PostgreSQL <c>LISTEN</c>/<c>NOTIFY</c> catalog invalidation events to <see cref="UiLayoutStore.InvalidateSchema"/>.</summary>
+public sealed class UiLayoutCatalogInvalidationHandler : IWorkflowCatalogInvalidationHandler
+{
+    public void OnCatalogInvalidated(string catalog)
+    {
+        if (string.IsNullOrEmpty(catalog) || string.Equals(catalog, "*", StringComparison.Ordinal))
+        {
+            UiLayoutStore.InvalidateSchema();
+        }
+        else if (string.Equals(catalog, "ui", StringComparison.OrdinalIgnoreCase))
+        {
+            UiLayoutStore.InvalidateSchema();
+        }
+        else if (catalog.StartsWith("ui:", StringComparison.OrdinalIgnoreCase))
+        {
+            UiLayoutStore.InvalidateSchema(catalog[3..]);
+        }
+    }
+}

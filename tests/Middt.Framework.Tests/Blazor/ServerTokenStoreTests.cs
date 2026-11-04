@@ -249,6 +249,29 @@ public sealed class ServerTokenStoreTests
         (await node2Store.RemoveIfMatchAsync("s-multi", "rt-v1", Ct)).Should().BeFalse();
         (await node1Store.GetAsync("s-multi", touch: false, Ct)).Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task Touch_on_another_node_does_not_clobber_active_refresh_lease()
+    {
+        var sharedProtection = new EphemeralDataProtectionProvider();
+        var settings = Options.Create(new GeneralSettings { SessionTimeoutInMinute = 10, SessionAbsoluteTimeoutInMinute = 60 });
+        var node1Store = new DistributedServerTokenStore(cache, sharedProtection, settings, time);
+        var node2Store = new DistributedServerTokenStore(cache, sharedProtection, settings, time);
+
+        await node1Store.SetAsync("s-lease", Tokens(), Ct);
+        time.Advance(TimeSpan.FromSeconds(45)); // Past the 30s TouchThrottle
+
+        var acquiredByNode1 = await node1Store.TryAcquireRefreshLeaseAsync("s-lease", RefreshToken, "node-1", TimeSpan.FromSeconds(15), Ct);
+        acquiredByNode1.Should().BeTrue();
+
+        // Node 2 touches the session while Node 1 holds the refresh lease.
+        var touchedTokens = await node2Store.GetAsync("s-lease", touch: true, Ct);
+        touchedTokens.Should().NotBeNull();
+
+        // Node 2 still cannot steal the lease because Node 1's lease was preserved.
+        var stolenByNode2 = await node2Store.TryAcquireRefreshLeaseAsync("s-lease", RefreshToken, "node-2", TimeSpan.FromSeconds(15), Ct);
+        stolenByNode2.Should().BeFalse();
+    }
 }
 
 public sealed class ServerSessionStateTests
