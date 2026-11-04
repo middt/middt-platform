@@ -23,7 +23,30 @@ internal sealed partial class UiStartup(IServiceScopeFactory scopeFactory, IHost
         var db = scope.ServiceProvider.GetRequiredService<UiDbContext>();
         var provider = db.Database.ProviderName ?? string.Empty;
         var lockKey = $"middt_ui_startup_{options.Value.Schema ?? "ui"}";
-        var lockAcquired = await AcquireStartupLockAsync(db, provider, lockKey, cancellationToken);
+        var lockAcquired = false;
+        if (options.Value.AutoCreateSchema)
+        {
+            var creator = db.GetService<IRelationalDatabaseCreator>();
+            if (!await creator.ExistsAsync(cancellationToken))
+            {
+                try
+                {
+                    await creator.CreateAsync(cancellationToken);
+                }
+                catch
+                {
+                    if (!await creator.ExistsAsync(cancellationToken))
+                    {
+                        throw;
+                    }
+                }
+            }
+        }
+
+        if (options.Value.AutoCreateSchema || seeds.Count > 0)
+        {
+            lockAcquired = await AcquireStartupLockAsync(db, provider, lockKey, cancellationToken);
+        }
 
         try
         {
@@ -118,11 +141,6 @@ internal sealed partial class UiStartup(IServiceScopeFactory scopeFactory, IHost
     private async Task EnsureTablesAsync(UiDbContext db, CancellationToken cancellationToken)
     {
         var creator = db.GetService<IRelationalDatabaseCreator>();
-        if (!await creator.ExistsAsync(cancellationToken))
-        {
-            await creator.CreateAsync(cancellationToken);
-        }
-
         var provider = db.Database.ProviderName ?? string.Empty;
         bool exists;
         if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))

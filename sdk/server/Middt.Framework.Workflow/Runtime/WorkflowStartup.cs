@@ -30,6 +30,22 @@ internal sealed class WorkflowStartup(
         var lockAcquired = false;
         if (options.Value.AutoCreateSchema)
         {
+            var creator = db.GetService<IRelationalDatabaseCreator>();
+            if (!await creator.ExistsAsync(cancellationToken))
+            {
+                try
+                {
+                    await creator.CreateAsync(cancellationToken);
+                }
+                catch
+                {
+                    if (!await creator.ExistsAsync(cancellationToken))
+                    {
+                        throw;
+                    }
+                }
+            }
+
             lockAcquired = await AcquireStartupLockAsync(db, provider, lockKey, cancellationToken);
         }
 
@@ -38,11 +54,6 @@ internal sealed class WorkflowStartup(
             if (options.Value.AutoCreateSchema)
             {
                 var creator = db.GetService<IRelationalDatabaseCreator>();
-
-                if (!await creator.ExistsAsync(cancellationToken))
-                {
-                    await creator.CreateAsync(cancellationToken);
-                }
 
                 if (!await TablesExistAsync(db, cancellationToken))
                 {
