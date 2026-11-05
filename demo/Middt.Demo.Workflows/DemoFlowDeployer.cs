@@ -293,18 +293,15 @@ public sealed class DemoFlowDeployer(
 
             foreach (var group in grouped)
             {
-                if (group.All(e => string.IsNullOrWhiteSpace(e.Key)))
+                using var listResponse = await http.GetAsync($"{runtimeUrl}/api/workflows/{group.Key}/instances?pageSize=1", ct);
+                if (listResponse.IsSuccessStatusCode)
                 {
-                    using var listResponse = await http.GetAsync($"{runtimeUrl}/api/workflows/{group.Key}/instances?pageSize=1", ct);
-                    if (listResponse.IsSuccessStatusCode)
+                    var envelope = await listResponse.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: ct);
+                    var existingCount = envelope?["count"]?.GetValue<int>() ?? 0;
+                    if (existingCount >= group.Count())
                     {
-                        var envelope = await listResponse.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: ct);
-                        var existingCount = envelope?["count"]?.GetValue<int>() ?? 0;
-                        if (existingCount >= group.Count())
-                        {
-                            logger.LogInformation("Initial instances for '{Workflow}' already exist ({Count}); skipping seed.", group.Key, existingCount);
-                            continue;
-                        }
+                        logger.LogInformation("Initial instances for '{Workflow}' already exist ({Count}); skipping seed.", group.Key, existingCount);
+                        continue;
                     }
                 }
 

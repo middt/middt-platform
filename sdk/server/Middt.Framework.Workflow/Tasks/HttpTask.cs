@@ -126,13 +126,13 @@ public sealed class HttpTask : IWorkflowTask
                     _ => value.ToJsonString()
                 };
 
-                request.Headers.TryAddWithoutValidation(name, headerStr);
+                request.Headers.TryAddWithoutValidation(name, SanitizeHeaderValue(headerStr));
             }
         }
 
         if (!string.IsNullOrEmpty(context.IdempotencyKey) && !request.Headers.Contains("Idempotency-Key"))
         {
-            request.Headers.TryAddWithoutValidation("Idempotency-Key", context.IdempotencyKey);
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", SanitizeHeaderValue(context.IdempotencyKey));
         }
 
         // Apply request body (body, payload, or input)
@@ -478,5 +478,43 @@ public sealed class HttpTask : IWorkflowTask
         var rendered = ExpressionEvaluator.PlaceholderRegex().Replace(template, m =>
             Uri.EscapeDataString(Convert.ToString(context.Expressions.Evaluate(m.Groups[1].Value, context.Scope), CultureInfo.InvariantCulture) ?? string.Empty));
         return new Uri(rendered, UriKind.Absolute);
+    }
+
+    private static string SanitizeHeaderValue(string value)
+    {
+        if (Ascii.IsValid(value))
+        {
+            return value;
+        }
+
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            if (char.IsAscii(ch))
+            {
+                sb.Append(ch);
+                continue;
+            }
+
+            var mapped = ch switch
+            {
+                'ğ' => "g",
+                'Ğ' => "G",
+                'ü' => "u",
+                'Ü' => "U",
+                'ş' => "s",
+                'Ş' => "S",
+                'ı' => "i",
+                'İ' => "I",
+                'ö' => "o",
+                'Ö' => "O",
+                'ç' => "c",
+                'Ç' => "C",
+                _ => Uri.EscapeDataString(ch.ToString()),
+            };
+            sb.Append(mapped);
+        }
+
+        return sb.ToString();
     }
 }

@@ -191,5 +191,46 @@
       "revisionType": "Ek Limit Artırımı",
       "justification": "Artan ihracat ve lojistik hacmi doğrultusunda ticari kredi limit artışı talebi."
     }
+  },
+  {
+    "workflow": "credit-allocation",
+    "data": {
+      "customerKey": "CUST-12345678901",
+      "amount": 350000,
+      "termMonths": 24,
+      "collateralType": "Gayrimenkul İpoteği",
+      "collateralAmount": 500000,
+      "appraisalReportNo": "EKS-2026-1042",
+      "iban": "TR330006100519786457841326",
+      "requireUnderwriting": false
+    }
+  },
+  {
+    "workflow": "order-payment-orchestration",
+    "data": {
+      "orderCode": "ORD-2026-1001",
+      "customerName": "Ahmet Yılmaz",
+      "amount": 18500,
+      "paymentMethod": "Kredi Kartı"
+    }
+  },
+  {
+    "workflow": "order-payment-orchestration",
+    "data": {
+      "orderCode": "ORD-2026-1002",
+      "customerName": "Anadolu Lojistik A.Ş.",
+      "amount": 145000,
+      "paymentMethod": "Kurumsal Açık Hesap"
+    }
+  },
+  {
+    "workflow": "sla-escalation",
+    "data": {
+      "ticketTitle": "Kurumsal Ödeme Geçidi Gecikmesi",
+      "customerName": "Anadolu Lojistik A.Ş.",
+      "amount": 45000,
+      "severity": "Yüksek",
+      "slaDuration": "00:30:00"
+    }
   }
 ]
