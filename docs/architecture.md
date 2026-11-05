@@ -38,8 +38,8 @@ backend-for-frontend blocks (`sdk/client/Middt.Framework.Bff`), so no frontend e
 ## What is the contract between backend and frontends?
 
 1. **REST + JSON** – every API returns `BaseResponseDataModel<T>` (`result`, `messageList`, `count`, `data`); errors are
-   RFC 9457 ProblemDetails. Workflow data queries: `api/v{version}/{entity}/getitems|getall|getbyid|insert|update|delete`; workflows:
-   `api/workflows/...`; layouts: `api/ui/...` (incl. `GET api/ui/widgets`, `GET api/ui/schema`).
+   RFC 9457 ProblemDetails. Workflow data queries (`WorkflowInstanceDataQuery`): `api/v{version}/{entity}/getitems|getall|getbyid` (and `insert|update|delete` on custom `BaseController` CRUD endpoints); workflows:
+   `api/workflows/...`; AI agents: `api/agents/...`; layouts: `api/ui/...` (incl. `GET api/ui/widgets`, `GET api/ui/schema`).
 2. **Layouts** – JSON documents validated against `spec/ui-layout.schema.json` (generated from the widget catalog)
    and the server validator. A layout names widgets; every frontend has its own implementation of each widget name.
 3. **Portable expressions** – `visibleWhen`, `requiredWhen`, `disabledWhen`, `{{ }}` templates, list sources and filters use a small sandboxed language

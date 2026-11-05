@@ -17,9 +17,9 @@ All 8 runtime workflow & AI agent tables in PostgreSQL are partitioned by `LIST 
 | `WorkflowJobs` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `("Id", "WorkflowKey")` |
 | `WorkflowHistory` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
 | `WorkflowIncidents` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
-| `WorkflowAgentSessions` | `"WorkflowKey"` | `("InstanceId", "SessionKey", "WorkflowKey")` | `("InstanceId", "SessionKey", "WorkflowKey")` |
-| `WorkflowAgentRuns` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
-| `WorkflowAgentToolCalls` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `"Id"` (rowid autoincrement) |
+| `WorkflowAgentSessions` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `("Id", "WorkflowKey")` |
+| `WorkflowAgentRuns` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `("Id", "WorkflowKey")` |
+| `WorkflowAgentToolCalls` | `"WorkflowKey"` | `("Id", "WorkflowKey")` | `("Id", "WorkflowKey")` |
 
 ### Partition-wise joins
 Because `WorkflowInstances` and `WorkflowInstanceData` share the exact same partition key (`WorkflowKey`) and composite key `(Id, WorkflowKey)`, PostgreSQL automatically enables **Partition-Wise Joins**:

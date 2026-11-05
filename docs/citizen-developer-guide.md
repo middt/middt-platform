@@ -774,15 +774,14 @@ Bu geçişe gönderilebilecek RFC 6902 JSON Patch örnekleri (`path` her zaman `
   {
     "widget": "list",
     "source": "data.billingContact.emails",
-    "emptyText": "Kayıtlı e-posta adresi yok.",
+    "empty": "Kayıtlı e-posta adresi yok.",
     "rowTransitions": [
       {
-        "transition": "patch-billing-emails",
-        "title": "Sil",
+        "key": "patch-billing-emails",
+        "text": "Sil",
         "icon": "delete",
         "style": "danger",
-        "confirm": "{{ row.email }} adresini silmek istediğinize emin misiniz?",
-        "body": {
+        "input": {
           "patch": [
             { "op": "test", "path": "/{{ row.rowNumber - 1 }}/email", "value": "{{ row.email }}" },
             { "op": "remove", "path": "/{{ row.rowNumber - 1 }}" }
@@ -1774,8 +1773,8 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 
 | Widget | Kategori | Amacı | Temel Özellikler |
 |---|---|---|---|
-| `heading` | Görsel & Metin | Başlık (H1–H4) | `text`, `level` (`1`–`4`), `visibleWhen` |
-| `text` | Görsel & Metin | Paragraf / satır içi metin | `text`, `style` (`body` \| `lead` \| `muted` \| `small` \| `code`), `visibleWhen` |
+| `heading` | Görsel & Metin | Başlık (H1–H6) | `text`, `level` (`1`–`6`), `visibleWhen` |
+| `text` | Görsel & Metin | Paragraf / satır içi metin | `text`, `style` (`normal` \| `lead` \| `muted` \| `small` \| `code`), `visibleWhen` |
 | `stat` | Görsel & KPI | **KPI / Metrik Kartı** (büyük biçimlendirilmiş değer, alt açıklama, renk vurgu ve ikon) | `label`, `value` (`{{ }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `subtitle` (`{{ }}`), `icon`, `color` (`primary` \| `secondary` \| `success` \| `warning` \| `danger` \| `info`), `visibleWhen` |
 | `alert` | Görsel & Metin | Bilgi / Uyarı / Hata kutusu | `severity` (`info` \| `success` \| `warning` \| `danger`), `text`, `visibleWhen` |
 | `badge` | Görsel & Metin | Renkli durum rozeti | `color` (`primary` \| `secondary` \| `success` \| `warning` \| `danger` \| `info`), `text`, `visibleWhen` |
@@ -1783,13 +1782,13 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 | `link` | Görsel & Metin | Güvenli yönlendirme bağlantısı / butonu | `text`, `href` (`/` ile başlayan yerel veya güvenli URL), `style` (`link` \| `button`), `visibleWhen` |
 | `fields` | Veri Gösterimi | Etiket–Değer (`dt`/`dd`) özet listesi | `items`: `[{ "label": "...", "value": "{{ ... }}", "format": "N2", "visibleWhen": "..." }]`, `visibleWhen` |
 | `timeline` | Veri & Süreç | **Süreç / Aktivite Zaman Çizelgesi** (statik `items` veya dinamik `source` dizisi) | `source` (dizi ifadesi) + `title`, `subtitle`, `time`, `color`, `empty` veya statik `items` (`[{ title, subtitle, time, color, visibleWhen }]`), `visibleWhen` |
-| `section` | Kapsayıcı | Başlıklı kart / bölüm kutusu | `title`, `subtitle`, `visibleWhen`, `children` |
+| `section` | Kapsayıcı | Başlıklı kart / bölüm kutusu | `title`, `visibleWhen`, `children` |
 | `columns` | Kapsayıcı | Yan yana duyarlı sütun yerleşimi | `widths` (ör. `["2", "1"]` veya `["1", "1", "1"]`), `visibleWhen`, `children` |
 | `tabs` | Kapsayıcı | **Etkileşimli Sekmeli Panel** (her alt düğümü sekme olarak gösterir) | `titles` (isteğe bağlı sekme başlıkları dizisi), `children` (her çocuk bileşenin `title` alanı sekme başlığı olarak kullanılır), `visibleWhen` |
-| `list` | Kapsayıcı | Dizi (`JsonArray`) öğelerini tekrarlayarak listeleme ve satır aksiyonu tetikleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `emptyText`, `rowTransition` / `rowTransitions`, `children` (her öğe `row` ve 1 tabanlı `rowNumber` değişkeniyle okunur) |
+| `list` | Kapsayıcı | Dizi (`JsonArray`) öğelerini tekrarlayarak listeleme ve satır aksiyonu tetikleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `empty`, `rowTransition` / `rowTransitions` (`[{ key, text, icon, style, input }]`), `children` (her öğe `row` ve 1 tabanlı `rowNumber` değişkeniyle okunur) |
 | `layout` | Kapsayıcı / Ortak | Başka bir `kind: "view"` ekranı alt bileşen olarak gömme | `key` (ör. `"workflow-footer"`), `data` (isteğe bağlı alt nesne ifadesi), `title`, `visibleWhen` |
 | `grid` | Etkileşimli CRUD | Sunucu sayfalamalı, sıralamalı, aramalı veri tablosu | `entity`, `pageSize`, `filter`, `columns`, `search` (`visibleWhen`, `disabledWhen`), `create`, `edit`, `delete`, `form` (`visibleWhen`, `requiredWhen`, `disabledWhen`), `rowActions` |
-| `record` | Etkileşimli | Tekil kayıt (`getbyid`) yükleyici kapsayıcı | `entity`, `recordId` (`"{{ query.id }}"`), `emptyText`, `children` (yüklenen kayıt `record` değişkeniyle okunur) |
+| `record` | Etkileşimli | Tekil kayıt (`getbyid`) yükleyici kapsayıcı | `entity`, `recordId` (`"{{ query.id }}"`), `notFound`, `children` (yüklenen kayıt `record` değişkeniyle okunur) |
 
 ---
 
@@ -1987,9 +1986,9 @@ Sol menüdeki **Ekran Tasarımı** (`/ui-admin`) sayfası, Citizen Developer'lar
    - **`{ } JSON Kodu`**: Görsel tuvalle çift yönlü senkronize tam JSON editörü.
 3. **Sağ Bağlama Duyarlı Özellikler Denetçisi (`middt-ui-editor-inspector`)**:
    - Seçili bileşenin `id`, `visibleWhen` ve tipe özel tüm ayarlarını form kontrolleriyle düzenler:
-     - **`stat` (`KPI / İstatistik Kartı`)**: `label`, `value` (`{{ data.* }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `delta`, `trend` (`up` / `down` / `neutral`), `variant` (`neutral` / `info` / `success` / `warning` / `danger`), `icon` ve `subtitle` alanları.
-     - **`tabs` (`Sekmeli Panel`)**: İçine eklenen her alt bileşenin (`section` vb.) `title` özelliğini sekme başlığı olarak otomatik bağlar.
-     - **`timeline` (`Zaman Çizelgesi`)**: Dinamik dizi ifadesi (`source`, `titleTemplate`, `subtitleTemplate`, `timestampTemplate`, `statusTemplate`, `badgeTemplate`, `emptyText`) veya statik `items` JSON dizisi düzenleyicisi.
+     - **`stat` (`KPI / İstatistik Kartı`)**: `label`, `value` (`{{ data.* }}`), `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `color` (`primary` / `secondary` / `success` / `warning` / `danger` / `info`), `subtitle` ve `icon` alanları.
+     - **`tabs` (`Sekmeli Panel`)**: İsteğe bağlı `titles` dizisi ve içine eklenen her alt bileşenin (`section` vb.) `title` özelliğini sekme başlığı olarak otomatik bağlar.
+     - **`timeline` (`Zaman Çizelgesi`)**: Dinamik dizi ifadesi (`source`, `title`, `subtitle`, `time`, `color`, `empty`) veya statik `items` (`[{ title, subtitle, time, color, visibleWhen }]`) dizisi düzenleyicisi.
      - **`fields` (`Etiket–Değer Listesi`)**: Satır ekleme/silme/sıralama, `label`, `value` (`{{ data.* }}`), `format` ve `visibleWhen` görsel tablosu.
      - **`grid` (`Veri Tablosu`)**: `entity` (iş akışı seçimi), `pageSize`, görsel **Sütunlar (`columns`)** editörü, **Arama Filtreleri (`search`)** editörü ve **Form Alanları (`form`)** editörü.
      - **`columns` (`Yan Yana Sütunlar`)**: Sütun oranları (`widths`, ör. `2, 1`) ve otomatik sütun senkronizasyonu.

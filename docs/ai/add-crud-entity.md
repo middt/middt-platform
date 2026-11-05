@@ -6,7 +6,7 @@ Middt Framework uses a **100% backend-driven JSON** pattern for server-paged `gr
 
 ## Workflow JSON-Backed Screen (Zero C# Code)
 
-In `demo/Middt.Demo.Workflows`, domain records live as JSON documents inside PostgreSQL-partitioned workflow instances (`WorkflowInstances` + `WorkflowInstanceData`). `WorkflowInstanceDataQuery` dynamically exposes `/api/v1/{workflowKey}/getitems`, `/api/v1/{workflowKey}/getall`, `/api/v1/{workflowKey}/getbyid`, `/api/v1/{workflowKey}/insert`, `/api/v1/{workflowKey}/update`, and `/api/v1/{workflowKey}/delete` for every registered workflow definition—no C# entity, repository, or controller is needed.
+In `demo/Middt.Demo.Workflows`, domain records live as JSON documents inside PostgreSQL-partitioned workflow instances (`WorkflowInstances` + `WorkflowInstanceData`). `WorkflowInstanceDataQuery` (`WorkflowDataController`) dynamically exposes `/api/v1/{workflowKey}/getitems`, `/api/v1/{workflowKey}/getall`, and `/api/v1/{workflowKey}/getbyid` for every registered workflow definition (while mutations run through workflow start/transition endpoints `/api/workflows/{workflow}/instances` and `/transitions/{transition}`)—no C# entity, repository, or custom controller is needed.
 
 ### 1. Workflow definition (`Workflows/<key>.json`)
 1. Define or reuse a workflow in `demo/Middt.Demo.Workflows/Workflows/` (e.g., `customer-onboarding.json`, `credit-allocation.json`, `order-payment-orchestration.json`).

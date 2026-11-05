@@ -293,15 +293,18 @@ public sealed class DemoFlowDeployer(
 
             foreach (var group in grouped)
             {
-                using var listResponse = await http.GetAsync($"{runtimeUrl}/api/workflows/{group.Key}/instances?pageSize=1", ct);
-                if (listResponse.IsSuccessStatusCode)
+                if (group.All(e => string.IsNullOrWhiteSpace(e.Key)))
                 {
-                    var envelope = await listResponse.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: ct);
-                    var existingCount = envelope?["count"]?.GetValue<int>() ?? 0;
-                    if (existingCount >= group.Count())
+                    using var listResponse = await http.GetAsync($"{runtimeUrl}/api/workflows/{group.Key}/instances?pageSize=1", ct);
+                    if (listResponse.IsSuccessStatusCode)
                     {
-                        logger.LogInformation("Initial instances for '{Workflow}' already exist ({Count}); skipping seed.", group.Key, existingCount);
-                        continue;
+                        var envelope = await listResponse.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: ct);
+                        var existingCount = envelope?["count"]?.GetValue<int>() ?? 0;
+                        if (existingCount >= group.Count())
+                        {
+                            logger.LogInformation("Initial instances for '{Workflow}' already exist ({Count}); skipping seed.", group.Key, existingCount);
+                            continue;
+                        }
                     }
                 }
 
@@ -321,13 +324,20 @@ public sealed class DemoFlowDeployer(
 
                     using var content = new StringContent(reqObj.ToJsonString(), Encoding.UTF8, "application/json");
                     using var startRes = await http.PostAsync($"{runtimeUrl}/api/workflows/{entry.Workflow}/instances", content, ct);
-                    if (startRes.IsSuccessStatusCode)
+                    if (startRes.StatusCode == System.Net.HttpStatusCode.Created)
                     {
                         seededCount++;
                     }
                 }
 
-                logger.LogInformation("Seeded {Count} initial '{Workflow}' workflow instances.", seededCount, group.Key);
+                if (seededCount > 0)
+                {
+                    logger.LogInformation("Seeded {Count} initial '{Workflow}' workflow instances.", seededCount, group.Key);
+                }
+                else
+                {
+                    logger.LogInformation("Initial instances for '{Workflow}' already exist; skipping seed.", group.Key);
+                }
             }
         }
     }

@@ -15,9 +15,9 @@ Middt Framework'te iş akışı motoru 8 bölümlenmiş (partitioned) çalışma
 | **`WorkflowHistory`** | Her geçişin audit kaydı. `history: full` modunda geçiş anındaki JSON snapshot (`Data`), `delta` modunda çoğunlukla yalnızca değişiklik (`Patch`, JSON Patch) ve arada snapshot'lar; `none` modunda satır yazılmaz | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Çok Hızlı (En büyük tablo) |
 | **`WorkflowJobs`** | Zamanlanmış geçişler, asenkron geçişler, zaman aşımları, bekletilen mesajlar (`Message`) ve arka plan görevleri (`Task`); PostgreSQL'de `FOR UPDATE SKIP LOCKED` ile alınır | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` / Queue | Dinamik (Geçici kuyruk) |
 | **`WorkflowIncidents`** | Akış sırasında oluşan hatalar, retry denemeleri ve incident kayıtları | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Düşük/Orta |
-| **`WorkflowAgentSessions`** | `agent` / `aiAgent` görevlerinin çok turlu konuşma oturumu durumları (`State` column `jsonb`) | `(InstanceId, SessionKey, WorkflowKey)` | `LIST (WorkflowKey)` | Orta |
+| **`WorkflowAgentSessions`** | `agent` / `aiAgent` görevlerinin çok turlu konuşma oturumu durumları (`SessionData` column `jsonb`, `TurnCount`) | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Orta |
 | **`WorkflowAgentRuns`** | Her AI ajan çalıştırmasının denetim kaydı (token kullanımı, süre, model, seçilen geçiş) | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Orta/Hızlı |
-| **`WorkflowAgentToolCalls`** | AI ajanların çağırdığı araçların (`expression`, `task`, `http`, `mcp`) girdi, sonuç ve süre kayıtları | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Hızlı |
+| **`WorkflowAgentToolCalls`** | AI ajanların çağırdığı araçların (`expression`, `task`, `http`, `mcp`) girdi, sonuç ve sıra kayıtları | `(Id, WorkflowKey)` | `LIST (WorkflowKey)` | Hızlı |
 
 ### Neden Tüm Tablolarda Bileşik Anahtar: `(..., WorkflowKey)`?
 PostgreSQL kuralları gereği, bir tablo bölümlendiğinde (partitioned table):
@@ -26,13 +26,13 @@ PostgreSQL kuralları gereği, bir tablo bölümlendiğinde (partitioned table):
 
 Bu mimari sayesinde PostgreSQL:
 - **Partition-Wise Join:** `WorkflowInstances` ile `WorkflowInstanceData` veya `WorkflowHistory` tablolarını birleştirirken (join), her iki tablonun da aynı flow partition'larını doğrudan eşleştirir. Diğer flow'ların verilerine hiç dokunmaz.
-- **Partition Pruning:** Bir sorgu `WHERE "WorkflowKey" = 'order-payment-orchestration'` içerdiğinde, PostgreSQL 5 tablonun tamamında yalnızca sipariş akışının partition'larını tarar.
+- **Partition Pruning:** Bir sorgu `WHERE "WorkflowKey" = 'order-payment-orchestration'` içerdiğinde, PostgreSQL 8 tablonun tamamında yalnızca sipariş akışının partition'larını tarar.
 
 ---
 
 ## 2. PostgreSQL DDL Şablonu (Tüm Tablolar)
 
-Aşağıdaki SQL şablonu, 5 tablonun tamamını root partitioned tablo ve `DEFAULT` güvenlik ağı partition'larıyla birlikte tanımlar:
+Aşağıdaki SQL şablonu, 8 çalışma zamanı tablosunun tamamını root partitioned tablo ve `DEFAULT` güvenlik ağı partition'larıyla birlikte tanımlar:
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS wf;
@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS wf."WorkflowInstances" (
     "CompletedAt" timestamptz,
     "BackgroundTaskId" uuid,       -- beklenen arka plan görevinin job id'si
     "HistoryPatchCount" int,       -- history: delta – son snapshot'tan beri yazılan patch sayısı
+    "AssignedTo" varchar(256),     -- insan görevi üstlenen/atanan kullanıcı(lar) veya rol
+    "AssignedAt" timestamptz,      -- görevin üstlenildiği/atandığı zaman
     CONSTRAINT "PK_WorkflowInstances" PRIMARY KEY ("Id", "WorkflowKey")
 ) PARTITION BY LIST ("WorkflowKey");
 
@@ -186,38 +188,122 @@ CREATE TABLE IF NOT EXISTS wf."WorkflowIncidents_Default"
 
 CREATE INDEX IF NOT EXISTS "IX_WorkflowIncidents_WorkflowKey_InstanceId" 
     ON wf."WorkflowIncidents" ("WorkflowKey", "InstanceId");
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 6. WorkflowAgentSessions (AI Ajan Oturum Durumları)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentSessions" (
+    "Id" uuid NOT NULL,
+    "InstanceId" uuid NOT NULL,
+    "WorkflowKey" varchar(128) NOT NULL,
+    "AgentName" varchar(128) NOT NULL,
+    "TaskKey" varchar(128) NOT NULL,
+    "SessionData" jsonb NOT NULL,
+    "TurnCount" int NOT NULL DEFAULT 1,
+    "CreatedAt" timestamptz NOT NULL,
+    "UpdatedAt" timestamptz NOT NULL,
+    CONSTRAINT "PK_WorkflowAgentSessions" PRIMARY KEY ("Id", "WorkflowKey")
+) PARTITION BY LIST ("WorkflowKey");
+
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentSessions_Default"
+    PARTITION OF wf."WorkflowAgentSessions" DEFAULT;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 7. WorkflowAgentRuns (AI Ajan Çalıştırma Denetim İzleri)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentRuns" (
+    "Id" uuid NOT NULL,
+    "InstanceId" uuid NOT NULL,
+    "WorkflowKey" varchar(128) NOT NULL,
+    "State" varchar(128) NOT NULL,
+    "TransitionKey" varchar(128),
+    "TaskKey" varchar(128) NOT NULL,
+    "AgentName" varchar(128) NOT NULL,
+    "Mode" varchar(32) NOT NULL,
+    "SelectedTransition" varchar(128),
+    "AllowedTransitions" jsonb,
+    "ResponseId" varchar(128),
+    "FinishReason" varchar(64),
+    "InputTokens" bigint,
+    "OutputTokens" bigint,
+    "TotalTokens" bigint,
+    "ToolCallCount" int NOT NULL DEFAULT 0,
+    "Output" jsonb,
+    "CreatedAt" timestamptz NOT NULL,
+    CONSTRAINT "PK_WorkflowAgentRuns" PRIMARY KEY ("Id", "WorkflowKey")
+) PARTITION BY LIST ("WorkflowKey");
+
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentRuns_Default"
+    PARTITION OF wf."WorkflowAgentRuns" DEFAULT;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 8. WorkflowAgentToolCalls (AI Araç Çağrıları)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentToolCalls" (
+    "Id" uuid NOT NULL,
+    "RunId" uuid NOT NULL,
+    "InstanceId" uuid NOT NULL,
+    "WorkflowKey" varchar(128) NOT NULL,
+    "AgentName" varchar(128) NOT NULL,
+    "TaskKey" varchar(128) NOT NULL,
+    "CallId" varchar(128) NOT NULL,
+    "ToolName" varchar(128) NOT NULL,
+    "Arguments" jsonb,
+    "Result" jsonb,
+    "Order" int NOT NULL DEFAULT 1,
+    "CreatedAt" timestamptz NOT NULL,
+    CONSTRAINT "PK_WorkflowAgentToolCalls" PRIMARY KEY ("Id", "WorkflowKey")
+) PARTITION BY LIST ("WorkflowKey");
+
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentToolCalls_Default"
+    PARTITION OF wf."WorkflowAgentToolCalls" DEFAULT;
 ```
 
 ---
 
 ## 3. Dedicated Partition Ekleme (Örnek Akış)
 
-Yeni ve yüksek hacimli bir akış (örneğin `order-payment-orchestration`) devreye alındığında, 5 tablo için dedicated partition'lar oluşturulur:
+Yeni ve yüksek hacimli bir akış (örneğin `order-payment-orchestration`) devreye alındığında, 8 tablo için dedicated partition'lar oluşturulur (`WorkflowPartitionManager` bunu akış tanımlandığında otomatik olarak yapar):
 
 ```sql
 -- 1. Instances
-CREATE TABLE IF NOT EXISTS wf."WorkflowInstances_OrderPayment" 
+CREATE TABLE IF NOT EXISTS wf."WorkflowInstances_OrderPaymentOrchestration" 
     PARTITION OF wf."WorkflowInstances" 
     FOR VALUES IN ('order-payment-orchestration');
 
 -- 2. Data
-CREATE TABLE IF NOT EXISTS wf."WorkflowInstanceData_OrderPayment" 
+CREATE TABLE IF NOT EXISTS wf."WorkflowInstanceData_OrderPaymentOrchestration" 
     PARTITION OF wf."WorkflowInstanceData" 
     FOR VALUES IN ('order-payment-orchestration');
 
 -- 3. History
-CREATE TABLE IF NOT EXISTS wf."WorkflowHistory_OrderPayment" 
+CREATE TABLE IF NOT EXISTS wf."WorkflowHistory_OrderPaymentOrchestration" 
     PARTITION OF wf."WorkflowHistory" 
     FOR VALUES IN ('order-payment-orchestration');
 
 -- 4. Jobs
-CREATE TABLE IF NOT EXISTS wf."WorkflowJobs_OrderPayment" 
+CREATE TABLE IF NOT EXISTS wf."WorkflowJobs_OrderPaymentOrchestration" 
     PARTITION OF wf."WorkflowJobs" 
     FOR VALUES IN ('order-payment-orchestration');
 
 -- 5. Incidents
-CREATE TABLE IF NOT EXISTS wf."WorkflowIncidents_OrderPayment" 
+CREATE TABLE IF NOT EXISTS wf."WorkflowIncidents_OrderPaymentOrchestration" 
     PARTITION OF wf."WorkflowIncidents" 
+    FOR VALUES IN ('order-payment-orchestration');
+
+-- 6. Agent Sessions
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentSessions_OrderPaymentOrchestration" 
+    PARTITION OF wf."WorkflowAgentSessions" 
+    FOR VALUES IN ('order-payment-orchestration');
+
+-- 7. Agent Runs
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentRuns_OrderPaymentOrchestration" 
+    PARTITION OF wf."WorkflowAgentRuns" 
+    FOR VALUES IN ('order-payment-orchestration');
+
+-- 8. Agent Tool Calls
+CREATE TABLE IF NOT EXISTS wf."WorkflowAgentToolCalls_OrderPaymentOrchestration" 
+    PARTITION OF wf."WorkflowAgentToolCalls" 
     FOR VALUES IN ('order-payment-orchestration');
 ```
 
