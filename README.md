@@ -594,6 +594,8 @@ collection [06](postman/06-Invoice-Collection.postman_collection.json) runs all 
 
 **Citizen Developer Guide (Zero-Code / Declarative JSON):** [`docs/citizen-developer-guide.md`](docs/citizen-developer-guide.md) — end-to-end Turkish guide explaining how to build workflows, data schemas, tasks, AI agents/tools, Mockoon HTTP integrations, and Server-Driven UI layouts without writing C# or TypeScript code.
 
+**AI agent usage scenarios:** [`docs/ai-agent-scenarios.md`](docs/ai-agent-scenarios.md) — every agent / MCP call in the demo workflows (`ai-dispute-resolution`, `risk-limit-eval`, `invoice-collection`) with inputs, routing decisions and outcomes per scenario.
+
 **AI-assisted development:** [`AGENTS.md`](AGENTS.md) (map, commands, conventions, definition of done) plus nested
 `AGENTS.md` files per area and task playbooks in [`docs/ai/`](docs/ai/README.md). Tool entry points: `CLAUDE.md`
 (Claude Code, slash commands `/verify`, `/add-entity`, `/add-widget`, `/add-workflow`), `.github/copilot-instructions.md`,
