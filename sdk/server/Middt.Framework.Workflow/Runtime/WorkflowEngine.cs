@@ -477,6 +477,8 @@ public sealed partial class WorkflowEngine(
         }
 
         var actor = new WorkflowUser { Name = job.RequestedBy ?? "system", IsSystem = true };
+        // RunClaimedAsync mutates the snapshot (Status = Busy) before running the body, so remember the status we read.
+        var statusBeforeClaim = instance.Status;
         try
         {
             switch (job.Kind)
@@ -529,7 +531,7 @@ public sealed partial class WorkflowEngine(
                     return JobOutcome.Done;
             }
         }
-        catch (WorkflowConflictException) when (instance.Status == WorkflowInstanceStatus.Busy || job.Kind != WorkflowJobKind.Transition)
+        catch (WorkflowConflictException) when (statusBeforeClaim == WorkflowInstanceStatus.Busy || job.Kind != WorkflowJobKind.Transition)
         {
             return JobOutcome.RetrySoon; // busy right now – try again shortly
         }
