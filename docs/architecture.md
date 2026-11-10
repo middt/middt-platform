@@ -38,7 +38,7 @@ backend-for-frontend blocks (`sdk/client/Middt.Framework.Bff`), so no frontend e
 ## What is the contract between backend and frontends?
 
 1. **REST + JSON** – every API returns `BaseResponseDataModel<T>` (`result`, `messageList`, `count`, `data`); errors are
-   RFC 9457 ProblemDetails. Workflow data queries (`WorkflowInstanceDataQuery`): `api/v{version}/{entity}/getitems|getall|getbyid` (and `insert|update|delete` on custom `BaseController` CRUD endpoints); workflows:
+   RFC 9457 ProblemDetails. Workflow data queries (`WorkflowInstanceDataQuery`): `GET api/v{version}/{entity}/getall|getbyid` and `POST …/getitems` – read-only, served by the runtime's `WorkflowDataController` (not mapped by `MapMiddtWorkflows()`; an app hosting the engine itself adds that controller); workflows:
    `api/workflows/...`; AI agents: `api/agents/...`; layouts: `api/ui/...` (incl. `GET api/ui/widgets`, `GET api/ui/schema`).
 2. **Layouts** – JSON documents validated against `spec/ui-layout.schema.json` (generated from the widget catalog)
    and the server validator. A layout names widgets; every frontend has its own implementation of each widget name.
@@ -87,10 +87,10 @@ For a third frontend (e.g. React) repeat 1–4: reuse `@middt/ui-core` and a BFF
 ## Workflow execution and recovery
 
 Workflow JSON uses the framework's general task types (`set`, `setKey`, `log`, `http`, `publish`, `rabbitmq`, `startWorkflow`,
-`loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `fanOut`, `cache`, `agent`, `mcp`). The `operation` task delegates named domain actions to an
+`loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `fanOut`, `cache`, `agent`, `mcp`; `rebus` from `Middt.Framework.Rebus`). The `operation` task delegates named domain actions to an
 explicitly registered `IWorkflowOperationDispatcher`; identity allowlists its password, MFA and OIDC operations there.
 The demo's flows store and query all domain data as JSON inside PostgreSQL-partitioned workflow tables (`WorkflowInstances` +
-`WorkflowInstanceData`) and expose dynamic CRUD query endpoints via `WorkflowInstanceDataQuery` (pushing scalar filters and numeric/text sorting with a deterministic `id` tie-breaker down to SQL before pagination, clamped to `getitems` ≤ 100 and `getall` ≤ 200). Task definitions remain independent of
+`WorkflowInstanceData`) and expose read-only query endpoints (`getall` / `getitems` / `getbyid`, the runtime's `WorkflowDataController`) via `WorkflowInstanceDataQuery` (pushing scalar filters and numeric/text sorting with a deterministic `id` tie-breaker down to SQL before pagination, clamped to `getitems` ≤ 100 and `getall` ≤ 200). Task definitions remain independent of
 application-specific `IWorkflowTask` implementations.
 
 The engine claims an instance with a conditional `Active`/`Faulted` → `Busy` update and, for transition commands, stores
@@ -103,9 +103,13 @@ data changes (a JSON Patch) when they finish.
 
 Scheduled and asynchronous transitions, child cancellation, parent resumption and event delivery use the workflow
 database's `WorkflowJobs` table, as do buffered messages for event transitions and background tasks. Workers claim due
-jobs with leases that a running job renews; on PostgreSQL the claim is `FOR UPDATE SKIP LOCKED`, so nodes never wait for
-or race over the same row, and a node that writes jobs sends `NOTIFY` so the `WorkflowJobListener` of every other node
-wakes its processor immediately instead of after `JobPollingInterval`. Child cancellation waits while the child is Busy;
+jobs with leases that a running job renews; on PostgreSQL the claim is `FOR UPDATE SKIP LOCKED`, on SQL Server
+`WITH (UPDLOCK, READPAST, ROWLOCK)` and elsewhere a conditional `ExecuteUpdateAsync` on `LockedUntil`, so nodes never wait for
+or race over the same row. On PostgreSQL a node that writes jobs sends `NOTIFY` so the `WorkflowJobListener` of every other node
+wakes its processor immediately instead of after `JobPollingInterval`; other providers rely on polling unless the host
+registers an `IWorkflowClusterBus` (no implementation ships). Job queries filter by `WorkflowKey` (partition pruning) and use
+`IX_WorkflowJobs_LockedUntil_DueAt`; with `AutoCreateSchema` the startup creates a missing database and serialises schema creation
+across pods with `pg_advisory_lock` / `sp_getapplock` / `GET_LOCK`. Child cancellation waits while the child is Busy;
 event handlers may receive duplicates and must be idempotent. A failed job is retried with backoff and, after 20
 attempts, atomically removed and recorded as a `WorkflowIncident` in a single database transaction. Task data is copied for each in-process attempt; external side effects
 need an idempotency key. The built-in HTTP task sends `WorkflowTaskContext.IdempotencyKey` as `Idempotency-Key` unless
@@ -128,9 +132,9 @@ In addition to core instance execution, `Middt.Framework.Workflow` exposes enter
 - **Running Instance Version Migration (`POST /api/workflows/{workflow}/migrate`)**: migrates `Active` / `Faulted` instances from an older definition version to a target version with optional `stateMap` (`oldState -> newState`) and `dryRun` preview, recording `$migrate` (`Trigger = "Migration"`) in `WorkflowHistory`.
 - **Operations Center & Batch Retry (`GET /api/workflows/operations`, `POST /api/workflows/operations/retry-batch`)**: surfaces faulted instances, unresolved incidents, and pending jobs, and supports batch retry with per-item input overrides.
 - **Dry-Run Simulator (`POST /api/workflows/{workflow}/simulate`)**: executes a workflow definition (or an inline candidate definition) through a sequence of transitions on an isolated in-memory clone without writing to the database or calling external HTTP/message brokers.
-- **Real-Time Workflow SSE (`GET /api/workflows/events`, `GET /api/workflows/{workflow}/instances/{id}/events`) & Multi-Pod Cluster Synchronization**: `WorkflowEventStreamHub` broadcasts every committed transition, start, retry, background task completion, and event message delivery as a `text/event-stream` (`event: workflow-event`) after checking `EnsureCanAccess`, so open Blazor and Angular detail views refresh immediately. Across multiple runtime pods, `WorkflowJobNotifier` and `WorkflowJobListener` propagate background job wakeups, SSE events, and runtime catalog invalidations (`WorkflowRegistry`, `MiddtAgentRegistry`, `UiLayoutStore`) via PostgreSQL `LISTEN`/`NOTIFY` or any `IWorkflowClusterBus` implementation, while `WorkflowJobProcessor` immediately releases its lease (`LockedUntil = null`, `Attempts - 1`) on graceful pod shutdown (`SIGTERM`).
+- **Real-Time Workflow SSE (`GET /api/workflows/events`, `GET /api/workflows/{workflow}/instances/{id}/events`) & Multi-Pod Cluster Synchronization**: `WorkflowEventStreamHub` broadcasts every committed transition, start, retry, background task completion, and event message delivery as a `text/event-stream` (`event: workflow-event`) after checking `EnsureCanAccess`, so open Blazor and Angular detail views refresh immediately. Across multiple runtime pods, `WorkflowJobNotifier` and `WorkflowJobListener` propagate background job wakeups, SSE events, and runtime catalog invalidations (`WorkflowRegistry`, `MiddtAgentRegistry`, `UiLayoutStore`) via PostgreSQL `LISTEN`/`NOTIFY` or any `IWorkflowClusterBus` implementation (the listener is hosted only when `MiddtWorkflowOptions.EnableJobProcessor` is `true`, so an API-only pod with `EnableJobProcessor = false` receives neither cross-pod SSE events nor catalog invalidations), while `WorkflowJobProcessor` immediately releases its lease (`LockedUntil = null`, `Attempts - 1`) on graceful pod shutdown (`SIGTERM`).
 - **Database-Agnostic SQL Pushdown (PostgreSQL, SQL Server, MySQL, Oracle, SQLite)**: `WorkflowInstanceDataQuery` and `WorkflowPartitionManager` push JSON `Data` filtering and sorting down to SQL across PostgreSQL (`jsonb`), SQL Server (`JSON_VALUE`), MySQL (`JSON_EXTRACT`), Oracle (`JSON_VALUE` / `NCLOB`), and SQLite (`json_extract`), with an automatic in-memory fallback for any other EF Core provider.
-- **Portable Bundle Export/Import (`GET /api/workflows/bundle`, `POST /api/workflows/bundle/import`), Runtime Deployment (`POST /api/agents/catalog`, `POST /api/workflows/definitions`, `POST /api/ui/layouts/seed`), & Retention Purge (`POST /api/workflows/maintenance/purge`)**: deploys AI agent catalogs, workflow definitions, and UI layouts to the standalone runtime over HTTP, exports and imports complete bundles with SHA-256 integrity verification and `dryRun` support for CI/CD promotion, and purges terminal (`Completed`, `Cancelled`, `Faulted`) instances older than a retention threshold in bounded batches.
+- **Portable Bundle Export/Import (`GET /api/workflows/bundle`, `POST /api/workflows/bundle/import`), Runtime Deployment (`POST /api/agents/catalog`, `POST /api/workflows/definitions`, `POST /api/ui/layouts/seed`), & Retention Purge (`POST /api/workflows/maintenance/purge`)**: deploys AI agent catalogs, workflow definitions, and UI layouts to the standalone runtime over HTTP, exports and imports workflow-definition bundles (layouts and agents are not included) with per-item and bundle SHA-256 checksums and `dryRun` support for CI/CD promotion, and purges (`ui-admin`) `Completed` and `Cancelled` instances – never `Faulted` – finished before `retentionDays` (default 90, optional `workflow` filter) together with their history, incidents, jobs, agent runs, sessions and tool calls in one transaction (`dryRun` only counts).
 
 ## Project map
 
@@ -141,13 +145,13 @@ Folders follow the layers: `sdk/shared` (contracts), `sdk/server` (backend), `sd
 | Middt.Framework.Model | contracts | DTOs, settings |
 | Middt.Framework.Expressions | contracts | portable language + DynamicExpresso evaluator (workflows) |
 | Middt.Framework.Ui.Abstractions | contracts | layout model, specs, validator, formats, schema generator |
-| Middt.Framework.Common | backend / host helpers | security headers, forwarded headers, local URL check |
+| Middt.Framework.Common | backend / host helpers | security headers, forwarded headers, local URL check, `AddMiddtOpenTelemetry()` / `MiddtTelemetryOptions` |
 | Middt.Framework.Api | backend | hosting, controllers, JWT, ProblemDetails, OpenAPI |
 | Middt.Framework.Workflow | backend | engine, endpoints, `IWorkflowViewRenderer`, `WorkflowInstanceDataQuery` |
 | Middt.Framework.Ui.Server | backend | layout store, endpoints, `UiHtmlRenderer` |
 | Middt.Framework.Rebus | backend | messaging on Rebus (RabbitMQ / in-memory), `publish` workflow task |
 | Middt.Framework.Agents | backend | Microsoft Agent Framework (`Microsoft.Agents.AI` + `Microsoft.Extensions.AI`), `agent` & `mcp` workflow tasks, declarative tools bridged to `IWorkflowTask`, AI-driven routing, runtime CRUD/validate/test endpoints (`MapMiddtAgents()`) |
-| Middt.Workflow.Runtime | standalone runtime | generic container image (`runtime/Middt.Workflow.Runtime`) hosting the workflow engine, JSON UI server, AI agents/MCP runtime, Rebus/RabbitMQ, and dynamic CRUD controller with zero domain flows/layouts |
+| Middt.Workflow.Runtime | standalone runtime | generic container image (`runtime/Middt.Workflow.Runtime`) hosting the workflow engine, JSON UI server, AI agents/MCP runtime, Rebus/RabbitMQ, and the read-only `WorkflowDataController` (`api/v1/{entity}/getall\|getitems\|getbyid`) with zero domain flows/layouts; PostgreSQL only (`UseNpgsql`) |
 | Middt.Demo.Workflows | demo deployer | domain `Agents/`, `Layouts/`, `Workflows/`, and `Seeds/initial-instances.json` deployed over HTTP to `Middt.Workflow.Runtime` |
 | Middt.Framework.Client | client SDK | typed API clients (`WorkflowApiClient` incl. SSE, `UiApiClient`, `UiDataClient`, `AgentApiClient`), token refresh |
 | Middt.Framework.Bff | frontends | cookie session, token store + refresh, login pages, `/bff/user`, `/api` proxy (YARP) |

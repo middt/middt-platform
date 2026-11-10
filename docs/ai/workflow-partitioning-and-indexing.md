@@ -49,13 +49,14 @@ When the runtime starts up or when definitions are deployed via `POST /api/workf
      *(e.g., `order-approval` $\to$ `OrderApproval`, `bike-repair_v2` $\to$ `BikeRepairV2`)*
    - Automatically executes `CREATE TABLE IF NOT EXISTS {schema}."{Table}_{Suffix}" PARTITION OF {schema}."{Table}" FOR VALUES IN ('{workflowKey}');` for all 8 partitioned tables.
    - Creates a catch-all fallback `{Table}_Default` for untracked or dynamic definitions.
-4. **Inspects `dataSchema.properties` and `start.input.schema.properties`** from the JSON definition:
-   - For every declared property, creates a dedicated, typed B-Tree functional index on that workflow's partition:
-     - `integer` / `number`: `((((data->>'field')::numeric)))`
-     - `boolean`: `((((data->>'field')::boolean)))`
-     - `string`: `(((data->>'field')::text))`
-5. Creates global `jsonb_path_ops` GIN indexes on `Data` for arbitrary JSON containment queries (`@>`).
-6. On **SQLite** (used in unit tests and local dev without Docker), creates partial expression indexes:
+4. **Inspects `dataSchema.properties` only** (`WorkflowPartitionManager.ExtractIndexedProperties`; `start.input.schema` is *not* read) and creates a typed B-Tree functional index `IX_Part_{Suffix}_{prop}` on the workflow's `WorkflowInstanceData` partition **only** for properties that are:
+   - `"x-index": true`, **or**
+   - `x-search` (`true` or a mode string) **and** `enum` / `number` / `integer` / `boolean` (SQL-pushable equality or range filters).
+   - Never for properties with `x-mask` (masked fields are not filterable) or `"x-index": false`; a plain `string` + `x-search` text filter (`STRPOS`) gets no index.
+   - Index expressions (note the quoted `"Data"` column): `integer` / `number` → `((("Data"->>'field')::numeric))`, `boolean` → `((("Data"->>'field')::boolean))`, `string` / `enum` → `(("Data"->>'field')::text)`. On an unpartitioned PostgreSQL table the index is partial (`WHERE "WorkflowKey" = '{key}'`).
+   - **Stale index cleanup**: after creating the computed set, every existing index named `IX_Part_{Suffix}_*` that is not in that set is **dropped** (`DropStaleFlowIndexesAsync`) – this prefix is reserved for the manager.
+5. Creates global `jsonb_path_ops` GIN indexes `IX_WorkflowInstanceData_Data_GIN` and `IX_WorkflowHistory_Data_GIN` on `"Data"` for arbitrary JSON containment queries (`@>`). There is no trigram (`pg_trgm`) index.
+6. On **SQLite** (used in unit tests and local dev without Docker), the same property set gets partial expression indexes:
    `CREATE INDEX IF NOT EXISTS "IX_Part_{Suffix}_{prop}" ON "WorkflowInstanceData" (json_extract("Data", '$.{prop}')) WHERE "WorkflowKey" = '{key}';`
 7. **Multi-Database SQL Pushdown & Universal Fallback (`WorkflowPartitionManager` & `WorkflowInstanceDataQuery`)**:
    - `BuildSqlDataFilterQuery` and `BuildOrderBySqlDataQuery` generate native SQL JSON filter & sort queries across:
@@ -72,8 +73,8 @@ When the runtime starts up or when definitions are deployed via `POST /api/workf
 
 When creating a new workflow JSON file (e.g. `invoice-processing.v1.json`):
 
-### Step 1: Provide explicit property types in `dataSchema`
-Always define the properties you anticipate querying, filtering, sorting, or joining on in `dataSchema.properties`.
+### Step 1: Provide explicit property types and `x-index` / `x-search` in `dataSchema`
+Define the properties you anticipate querying, filtering, sorting, or joining on in `dataSchema.properties` **and mark them**: `"x-index": true` for an index without a UI filter, or `"x-search": true` on an `enum` / `number` / `integer` / `boolean` property (which also adds the list filter). A typed property alone creates no index.
 
 ```jsonc
 {
@@ -83,11 +84,13 @@ Always define the properties you anticipate querying, filtering, sorting, or joi
   "dataSchema": {
     "type": "object",
     "properties": {
-      "invoiceNumber": { "type": "string" },
-      "vendorId": { "type": "integer" },
-      "totalAmount": { "type": "number" },
-      "isPriority": { "type": "boolean" },
-      "dueDate": { "type": "string", "format": "date-time" }
+      "invoiceNumber": { "type": "string", "x-index": true },
+      "vendorId": { "type": "integer", "x-search": true },
+      "totalAmount": { "type": "number", "x-search": true },
+      "isPriority": { "type": "boolean", "x-search": true },
+      "status": { "type": "string", "enum": ["open", "paid"], "x-search": true },
+      "dueDate": { "type": "string", "format": "date-time" },
+      "iban": { "type": "string", "x-mask": { "pattern": "last4", "exceptRoles": ["auditor"] } }
     }
   },
   "start": { ... },
@@ -105,10 +108,12 @@ At next boot or deployment, the framework will create:
 - `wf."WorkflowAgentSessions_InvoiceProcessing"`
 - `wf."WorkflowAgentRuns_InvoiceProcessing"`
 - `wf."WorkflowAgentToolCalls_InvoiceProcessing"`
-- Index `IX_Part_InvoiceProcessing_invoiceNumber` on `((data->>'invoiceNumber')::text)`
-- Index `IX_Part_InvoiceProcessing_vendorId` on `(((data->>'vendorId')::numeric))`
-- Index `IX_Part_InvoiceProcessing_totalAmount` on `(((data->>'totalAmount')::numeric))`
-- Index `IX_Part_InvoiceProcessing_isPriority` on `(((data->>'isPriority')::boolean))`
+- Index `IX_Part_InvoiceProcessing_invoiceNumber` on `(("Data"->>'invoiceNumber')::text)` (`x-index: true`)
+- Index `IX_Part_InvoiceProcessing_vendorId` on `((("Data"->>'vendorId')::numeric))` (`x-search` + integer)
+- Index `IX_Part_InvoiceProcessing_totalAmount` on `((("Data"->>'totalAmount')::numeric))` (`x-search` + number)
+- Index `IX_Part_InvoiceProcessing_isPriority` on `((("Data"->>'isPriority')::boolean))` (`x-search` + boolean)
+- Index `IX_Part_InvoiceProcessing_status` on `(("Data"->>'status')::text)` (`x-search` + enum)
+- **No** index for `dueDate` (typed only) or `iban` (`x-mask`).
 
 ### Step 2: Querying indexed workflow fields
 When querying workflow instance data in custom endpoints, repositories, or `WorkflowInstanceDataQuery`:
@@ -121,7 +126,7 @@ When querying workflow instance data in custom endpoints, repositories, or `Work
 - With typed B-Tree functional index in place, PostgreSQL can perform index range scans on numbers:
   ```sql
   SELECT * FROM wf."WorkflowInstanceData_InvoiceProcessing"
-  WHERE ((data->>'totalAmount')::numeric) > 50000;
+  WHERE (("Data"->>'totalAmount')::numeric) > 50000;
   ```
 
 ---
@@ -129,14 +134,15 @@ When querying workflow instance data in custom endpoints, repositories, or `Work
 ## 4. Advanced: custom composite indexes or special requirements
 
 If a workflow requires compound indexes (e.g. `(vendorId, dueDate)` together):
-1. In development, you can add an idempotent SQL statement in a custom hosted service or EF Core migration targeting the specific partition:
+1. Add an idempotent SQL statement in a custom hosted service or EF Core migration targeting the specific partition. The column is `"Data"` (quoted, case-sensitive) and the name must **not** start with `IX_Part_{Suffix}_` – indexes with that prefix that the manager did not compute are dropped on every startup/deploy:
    ```sql
-   CREATE INDEX IF NOT EXISTS "IX_InvoiceProcessing_Vendor_DueDate"
+   CREATE INDEX IF NOT EXISTS "IX_Custom_InvoiceProcessing_Vendor_DueDate"
    ON wf."WorkflowInstanceData_InvoiceProcessing" (
-       (((data->>'vendorId')::numeric)),
-       (((data->>'dueDate')::text))
+       ((("Data"->>'vendorId')::numeric)),
+       ((("Data"->>'dueDate')::text))
    );
    ```
+   The global GIN indexes (`IX_WorkflowInstanceData_Data_GIN`, `IX_WorkflowHistory_Data_GIN`, `jsonb_path_ops`) already serve containment queries (`"Data" @> '{"vendorId": 42}'`) on every partition.
 2. Or declare a custom PostgreSQL SQL view over the partition tables:
    ```sql
    CREATE OR REPLACE VIEW wf."v_InvoiceProcessing" AS
@@ -177,7 +183,7 @@ No WAL bloat, no table rewrite, zero impact on other workflows.
 
 When adding or altering a workflow:
 1. Ensure the JSON file has `"key"` matching lowercase kebab-case (e.g. `"crm-lead"`).
-2. Ensure properties intended for filtering or sorting are declared with `"type"` in `dataSchema.properties`.
+2. Ensure properties intended for filtering or sorting are declared with `"type"` in `dataSchema.properties` **and** carry `"x-index": true` or `x-search` with an `enum` / numeric / boolean type – otherwise no index is created. Never rely on `start.input.schema` for indexing and never name hand-written indexes `IX_Part_*`.
 3. Run tests:
    ```bash
    dotnet test --project tests/Middt.Framework.Tests -- --filter-class "*Workflow*"

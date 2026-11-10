@@ -9,15 +9,22 @@ place that must change and verifies the result.
 | Citizen Developer Rehberi (Zero-Code JSON İş Akışı, AI Ajanı ve Ekran Geliştirme) | [../citizen-developer-guide.md](../citizen-developer-guide.md) |
 | AI agent usage scenarios in the demo workflows (dispute, underwriting, invoice audit) | [../ai-agent-scenarios.md](../ai-agent-scenarios.md) |
 | 100% Backend-driven JSON screens, workflows & reusable `"widget": "layout"` | [backend-driven-json-ui.md](backend-driven-json-ui.md) |
-| New CRUD / directory screen or entity (JSON-backed or EF Core) | [add-crud-entity.md](add-crud-entity.md) |
+| New CRUD / directory screen (JSON layout over a workflow's `dataSchema`) | [add-crud-entity.md](add-crud-entity.md) |
 | New layout widget (spec → .NET → Blazor → Angular → static HTML) | [add-layout-widget.md](add-layout-widget.md) |
 | New or changed workflow (definition, `dataSchema`, `view.layout`) | [add-workflow.md](add-workflow.md) |
-| Workflow partitioning & flow-specific JSON indexing | [workflow-partitioning-and-indexing.md](workflow-partitioning-and-indexing.md) |
+| New AI agent, declarative tool or MCP server (`Agents/**/*.json`) | [add-agent.md](add-agent.md) |
+| Workflow partitioning & flow-specific JSON indexing | [workflow-partitioning-and-indexing.md](workflow-partitioning-and-indexing.md) (Turkish, with the full DDL: [../workflow-indexing-and-partitioning.md](../workflow-indexing-and-partitioning.md)) |
 | Change the portable expression language | [change-expression-language.md](change-expression-language.md) |
 | Security review checklist for every change | [security-checklist.md](security-checklist.md) |
 | Row-level security & branch authorization best practices | [../row-level-security-best-practices.md](../row-level-security-best-practices.md) |
 | How to test and verify (unit, spec, builds, E2E) | [testing.md](testing.md) |
 | Known pitfalls and how they showed up | [gotchas.md](gotchas.md) |
+| Architecture overview | [../architecture.md](../architecture.md) |
+| Identity service (OAuth 2.0 / OIDC, journeys, admin) | [../identity.md](../identity.md) |
+| Postman collections for the demo workflows | [../../postman/README.md](../../postman/README.md) |
+
+Claude Code slash commands (`.claude/commands/`): `/verify` (full definition-of-done check), `/add-entity`, `/add-widget`,
+`/add-workflow` – each one points at the matching playbook above.
 
 ## How to work with an assistant on this repo
 

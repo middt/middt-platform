@@ -2,9 +2,15 @@
 
 Answer these before finishing a change (add tests for anything security relevant):
 
-- **AuthN/AuthZ**: is every new endpoint authenticated? Role checks? Record level (`AuthorizeAsync`) / row level
-  (`ApplyAccessFilter`) / workflow `instanceAccess` where data belongs to users? For workflow lists, are `roles` and
-  `instanceAccess` checked against each instance's stored definition version before counting and paging?
+- **AuthN/AuthZ**: is every new endpoint authenticated? Role checks? Row level: workflow `roles` + `instanceAccess`
+  (`{ "mode": "owner", "supervisorRoles": [...] }`, enforced by `WorkflowEngine.EnsureCanAccess` and `WorkflowInstanceDataQuery`)
+  where data belongs to users; field level: `x-roles` / `x-mask` applied by `JsonSchemaValidator.ProjectData` / `ProjectSchema`
+  (a new read path must project through them). For workflow lists, are `roles` and `instanceAccess` checked against each
+  instance's stored definition version before counting and paging?
+- **HTTP envelope**: `WorkflowHttpInput` puts every request header (including `Authorization` and `Cookie`) and query parameter
+  into expression scope as `input.header.*` / `input.query.*`. Does any `set`, `log`, `http` or AI tool template copy them into
+  `data.*`, history, logs or outbound requests? Are header/query values treated as untrusted client input (never as a
+  row-level filter – take the branch/tenant from `user` claims)?
 - **Input**: request bodies validated and size-bounded? Page sizes clamped? No dynamic SQL/LINQ strings with user input
   (values as parameters)? Regex with timeouts?
 - **Output**: data HTML-encoded (Razor/Angular do it – never `MarkupString`/`bypassSecurityTrust*`/`Raw()` with data)?

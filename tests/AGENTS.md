@@ -8,7 +8,7 @@ dotnet test --project tests/Middt.Framework.Tests -- --filter-class "*SpaBffHard
 ```
 
 - Folders mirror the code: Agents, Api, Workflow, Ui, Bff, Blazor, Client, Identity, Security, Messaging, Expressions,
-  Architecture (layering), Infrastructure.
+  Architecture (layering), Observability (`OpenObserveObservabilityTests` – OTLP endpoint resolution), Infrastructure (shared helpers).
 - Use the existing hosts instead of inventing new ones: `TestApiHost`, `WorkflowTestHost`, `UiTestHost`,
   `SpaBffTestHost`, `BlazorTestHost`, `IdentityTestHost`; SQLite in-memory (keep the connection open), `FakeTimeProvider`,
   `TestContext.Current.CancellationToken`.

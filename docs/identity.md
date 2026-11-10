@@ -36,10 +36,12 @@ secrets there). The default seed config lives in `identity/Middt.Identity/Seeds/
 | `Identity:Password:*` | password policy (`PasswordOptions`: `RequiredLength`, `RequireDigit` …) |
 | `Identity:JourneyDirectory` | optional directory with journey JSON files overriding the defaults by key |
 | `Identity:*` | the options below |
+| `ForwardedHeaders:{KnownProxies,KnownNetworks,ForwardLimit}` | trusted reverse proxies (`AddMiddtForwardedHeaders` in Common; `ForwardLimit` default `1`, loopback always trusted). Behind a TLS-terminating proxy the service sees plain `http` requests: without the proxy's address here `X-Forwarded-Proto`/`-Host` are ignored, so `RequireHttps` rejects requests outside Development and, when `Issuer` is not set, discovery and redirects advertise `http://<internal host>`. Client IPs also drive lockout/rate limiting and audit logs – list only proxies, never networks clients can reach directly. |
 
 | Option (`Identity:*`) | Default | |
 |---|---|---|
 | `Issuer` | request host | public URL (`iss`); discovery then advertises every endpoint under it, also when a relying party fetches discovery over an internal address (container network) |
+| `Schema` | `idp` | reserved, currently unused – no code reads it (users, roles and OAuth2 entities live in the workflow tables under `WorkflowSchema`) |
 | `WorkflowSchema` | `wf_idp` | workflow tables (`WorkflowInstances`, `WorkflowInstanceData`, `WorkflowHistory`, `WorkflowJobs`, `WorkflowIncidents`) partitioned by workflow key for journeys, users (`idp-user`), roles (`idp-role`), and OAuth2 entities (`oauth-application`, `oauth-scope`, `oauth-authorization`, `oauth-token`); ignored by SQLite |
 | `AutoCreateSchema` | `false` | creates database, schemas and tables at startup (use migrations in production) |
 | `RequireHttps` | on outside Development | OpenIddict transport security |
@@ -67,11 +69,11 @@ updated (redirect URIs, permissions, consent type, display name) – **an existi
   "SigningCertificate": { "Path": "certs/idp.pfx", "Password": "…" },          // or "Thumbprint"; optional Encryption* variants
   "Seed": {
     "Roles": [ "manager", "ui-admin" ],
-    "Scopes": [ { "Name": "api", "DisplayName": "Demo API", "Resources": [ "middt-api" ] } ],
+    "Scopes": [ { "Name": "api", "DisplayName": "Demo API", "Description": "Demo API access", "Resources": [ "middt-api" ] } ],   // Description optional (shown on the consent page)
     "Clients": [ {
       "ClientId": "middt-blazor", "ClientSecret": "…", "DisplayName": "Blazor demo",
-      "Type": "confidential",                // or "public" (no secret)
-      "ConsentType": "implicit",             // explicit | external | systematic (treated as explicit)
+      "Type": "confidential",                // default; or "public" (no secret)
+      "ConsentType": "implicit",             // default; explicit | external | systematic (treated as explicit)
       "RedirectUris": [ "http://localhost:8080/signin-oidc" ],
       "PostLogoutRedirectUris": [ "http://localhost:8080/signout-callback-oidc" ],
       "GrantTypes": [ "authorization_code", "refresh_token" ],   // default; also "client_credentials", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:token-exchange", "password"
@@ -146,12 +148,12 @@ the identity database under schema `wf_idp`.
 
 | Journey | States (view) | Actions |
 |---|---|---|
-| `auth-login` | `credentials` (credentials) → `mfa` (totp) → `consent` (consent) → `authenticated` (Final/Success); `denied` (Final/Success, `consentDenied`); `failed` (Final/Error); `to-register` / `to-forgot-password` (Final/Cancelled, `data.redirect`) | `submit-credentials {userName, password*}`, `submit-totp {code*}`, `approve`/`deny`, `register`, `forgot-password` |
+| `auth-login` | `credentials` (credentials) → `mfa` (totp) → `consent` (consent) → `authenticated` (Finish/Success); `denied` (Finish/Success, `consentDenied`); `failed` (Finish/Error); `to-register` / `to-forgot-password` (Finish/Cancelled, `data.redirect`) | `submit-credentials {userName, password*}`, `submit-totp {code*}`, `approve`/`deny`, `register`, `forgot-password` |
 | `auth-register` | `details` (register) → `verify-email` (email-code) → `registered` (Success); `disabled` (Error, registration closed); `failed` | `submit-details {userName, email, displayName, password*}`, `submit-code {code*}`, `resend-code` |
 | `auth-reset-password` | `request` (reset-request) → `verify` (email-code) → `new-password` (new-password) → `done` (Success); `failed` | `submit-email {email}`, `submit-code {code*}`, `resend-code`, `submit-password {password*}` |
 | `auth-enroll-totp` | `setup` (totp-setup, shows key + otpauth URI/QR) → `enabled` (Success); `failed` | `confirm {code*}` |
 
-`*` = sensitive. Every journey also has `expired` (Final/Timeout, `PT15M`). Routing states without a view (`begin`,
+`*` = sensitive. State types are `Initial` / `Intermediate` / `Finish` (there is no `Final`). Every journey also has `expired` (Finish/Timeout, `PT15M`). Routing states without a view (`begin`,
 `check-credentials`, `check-mfa`, `check-consent`, `check-details`, `check-code`, `check-password`) hold the automatic
 transitions: a task never throws for a wrong password/code – it sets flags and `data.error`, and the routing state sends
 the journey back to the step (wrong passwords/TOTP codes still count for the account lockout via `AccessFailedAsync`);
@@ -221,10 +223,18 @@ production – a warning is logged when the development mailbox is active outsid
   component deriving from `JourneyViewBase`, registered in `Program.cs` with
   `AddMiddtIdentityUi(o => o.AddJourneyView<MyView>("terms"))`.
 - Admin (interactive server, Radzen, policy `MiddtIdentityUi.AdminPolicy` = role `MiddtIdentityOptions.AdminRole`,
-  default `idp-admin`; signed-in users without it are sent to `/account/denied`): users (search, create, roles,
-  lock/unlock, reset MFA, set password), clients (OpenIddict applications: type, secret shown once, redirect URIs,
-  permissions, consent type), scopes, sessions (authorizations/tokens, revoke), journeys (instances + history). Every
-  operation uses its own DI scope; queries are materialized before per-row lookups on the same connection.
+  default `idp-admin`; signed-in users without it are sent to `/account/denied`): `/admin` dashboard (counts of users,
+  locked-out users, roles, applications, scopes, authorizations and tokens, each linking to its page), `/admin/users`
+  (search, create, edit, roles, lock/unlock, reset MFA, set password, delete), `/admin/roles` (create, rename, delete),
+  `/admin/clients` (OpenIddict applications: type, secret shown once, "Yeni secret üret" rotation, redirect URIs,
+  permissions, consent type), `/admin/scopes`, `/admin/sessions` (authorizations/tokens: revoke one, "Kullanıcının tümünü
+  iptal et" bulk revoke per user, "Süresi dolanları temizle" cleanup of expired entries), `/admin/journeys` (instances +
+  history). Every operation uses its own DI scope; queries are materialized before per-row lookups on the same connection.
+- `MiddtIdentityUiOptions` (`services.AddMiddtIdentityUi(o => …)`): `ProductName` (header and page titles, default
+  `"Middt Kimlik"`), `AdminTheme` (Radzen theme of the admin pages, default `"material"`; free themes `material`,
+  `standard`, `default`, `humanistic`, `software`), `AdditionalAssemblies` (host assemblies with routable components,
+  added to the router and endpoint mapping), `AdminJourneyWorkflows` (workflow keys listed on the admin "Akışlar" page –
+  add custom journeys here), `AddJourneyView<T>(name)` (see above).
 - `/dev/mailbox` in Development: messages of the development `IIdentityMessageSender`.
 - Security headers – `frame-ancestors 'none'` + `X-Frame-Options: DENY` (login
   and consent cannot be framed), same-origin scripts. `form-action` is deliberately not set: browsers apply it to the

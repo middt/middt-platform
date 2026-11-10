@@ -18,12 +18,12 @@ Kurumsal uygulamalarda güvenlik tek bir noktaya (yalnızca UI veya yalnızca co
 │    - Transition kuralları: roles + rule                 │
 │    - Şube müdürü yetki doğrulaması                      │
 ├────────────────────────────────────────────────────────┤
-│ 3. API & Controller (REST Endpoint'leri)               │
-│    - ApplyAccessFilter (Grid ve liste sorguları)       │
-│    - AuthorizeAsync (Tekil kayıt / IDOR koruması)       │
-│    - Mass-assignment koruması ([Editable(false)])       │
+│ 3. API & Veri Sorgusu (WorkflowInstanceDataQuery)       │
+│    - instanceAccess: owner + supervisorRoles (satır)    │
+│    - x-roles / x-mask projeksiyonu (alan)               │
+│    - Yetkisiz getbyid → kayıt yok gibi davranır         │
 ├────────────────────────────────────────────────────────┤
-│ 4. Veritabanı & EF Core (Global Query Filters)         │
+│ 4. Veritabanı & EF Core (kendi tablolarınız için)       │
 │    - HasQueryFilter (SQL seviyesinde otomatik WHERE)    │
 │    - İstemci veya geliştirici unutsun, veri sızamaz     │
 └────────────────────────────────────────────────────────┘
@@ -90,73 +90,60 @@ public class BankingDbContext(
 
 ---
 
-## 4. Katman 2: API & Controller Seviyesi
+## 4. Katman 2: API & Veri Sorgusu Seviyesi
 
-Middt Framework'ün [`BaseController`](../sdk/server/Middt.Framework.Api/Controllers/BaseController.cs) ve [`WorkflowInstanceDataQuery`](../sdk/server/Middt.Framework.Workflow/Runtime/WorkflowInstanceDataQuery.cs) katmanlarında satır bazlı güvenlik aşağıdaki desenlerle uygulanır:
+Middt'te iş verisi ilişkisel tablolarda değil, iş akışı örneklerinin JSON `Data` belgelerinde yaşar; framework'te genel amaçlı CRUD controller'ı (`ApplyAccessFilter` / `AuthorizeAsync` kancaları) **yoktur**. Satır ve alan bazlı güvenlik iş akışı tanımında bildirilir ve motor tarafından uygulanır:
 
-### A. Liste Sorguları Filtresi: `ApplyAccessFilter`
-`getall` ve `getitems` (sayfalama, sıralama, arama) endpoint'lerinde çalıştırılan IQueryable zincirine otomatik eklenir:
+### A. Satır Bazlı Erişim: `instanceAccess` (`owner` + `supervisorRoles`)
 
-```csharp
-[Authorize]
-public class CustomerController(
-    CustomerRepository repository,
-    ICurrentBranchContext branchContext)
-    : BaseCrudControllerWithAuth<Customer, CustomerRepository>(repository)
+```jsonc
 {
-    protected override IQueryable<Customer> ApplyAccessFilter(IQueryable<Customer> query)
-    {
-        if (branchContext.IsHeadquarters)
-            return query;
-
-        return query.Where(c => c.BranchId == branchContext.BranchId);
-    }
+  "key": "customer-onboarding",
+  "roles": [ "branch-user", "branch-manager" ],              // tanıma kim erişebilir
+  "instanceAccess": { "mode": "owner", "supervisorRoles": [ "branch-manager", "Headquarters" ] },
+  "dataSchema": { ... }
 }
 ```
 
-### B. Tekil Kayıt Yetkilendirmesi (IDOR Koruması): `AuthorizeAsync`
-Bir kullanıcı URL'e rastgele bir müşteri ID'si yazıp çağırdığında (`/api/v1/customer/getbyid?id=9876`):
+- `mode: "owner"`: Bir kullanıcı yalnızca **kendi başlattığı** (`StartedBy`) örnekleri görür ve sürer; `supervisorRoles` içindeki bir role sahip olanlar (ve sistem) tümünü görür. Varsayılan `mode: "all"` tanım `roles` kontrolünden geçen herkese tüm örnekleri açar.
+- Kural `WorkflowEngine.EnsureCanAccess` (detay, geçiş, SSE, inbox) ve [`WorkflowInstanceDataQuery`](../sdk/server/Middt.Framework.Workflow/Runtime/WorkflowInstanceDataQuery.cs) (`getall` / `getitems` / `getbyid`, `x-lookup` kaynakları) tarafından **sayfalama ve `count` öncesinde** uygulanır; her örnek için o örneğin saklı tanım sürümündeki kural kullanılır.
+- `getbyid` ile başka kullanıcının örneği istendiğinde kayıt bulunamamış gibi davranılır (ID enumeration'a bilgi sızdırmaz). Cross-workflow görevler (`loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`) kullanıcı bağlamında çalışırken hedef akışın `roles` + `instanceAccess` kuralına tabidir; `access: "system"` bunu bilinçli olarak atlar.
+- Şube gibi `StartedBy` dışı bir ölçüte göre satır filtresi istiyorsanız motor bunu sağlamaz (bkz. §7-B); kaynağın sunucuda doğrulanmış claim olması gerekir.
 
-```csharp
-protected override Task<bool> AuthorizeAsync(Customer customer, CrudOperation operation, CancellationToken ct)
-{
-    if (branchContext.IsHeadquarters)
-        return Task.FromResult(true);
+### B. Alan Bazlı Erişim: `x-roles` ve `x-mask` (`JsonSchemaValidator.ProjectData` / `ProjectSchema`)
 
-    // Başka şubenin müşterisi ise false döner
-    return Task.FromResult(customer.BranchId == branchContext.BranchId);
+```jsonc
+"dataSchema": {
+  "type": "object",
+  "properties": {
+    "identityNumber": { "type": "string", "x-mask": { "pattern": "last4", "exceptRoles": [ "branch-manager", "auditor" ] } },
+    "email":          { "type": "string", "x-mask": { "pattern": "email" } },
+    "internalNote":   { "type": "string", "x-roles": [ "branch-manager" ] }
+  }
 }
 ```
 
-> **Altın Kural (404 vs 403):** 
-> Framework, yetkisiz `GetById`, `Update` ve `Delete` isteklerinde kasıtlı olarak **`404 Not Found`** döner. Saldırgan `403 Forbidden` aldığında "Demek ki 9876 ID'li müşteri var ama yetkim yok" diyerek müşteri ID'lerini tarayabilir (ID Enumeration). `404` döndüğünde kaydın var olup olmadığını bilemez.
+- `x-roles`: Rolü olmayan çağıran için alan hem veriden (`ProjectData`) hem de istemciye giden şemadan (`ProjectSchema`, kolon/form üretimi) çıkarılır.
+- `x-mask`: Yalnızca nesne biçimi geçerlidir – `pattern` `"last4"` | `"email"` | `"***"`, isteğe bağlı `exceptRoles`. Dize biçimi (`"x-mask": "middle"`) doğrulayıcı tarafından reddedilir. Maskeli alanlar indekslenmez ve SQL'e itilen filtre olarak kullanılamaz.
+- Projeksiyon motorun tüm okuma yollarında (örnek detayı, liste, inbox, `WorkflowInstanceDataQuery`, `loadWorkflow`, statik HTML görünümü) uygulanır. **`WorkflowInstanceData` tablosunu doğrudan okuyan özel bir endpoint bu projeksiyonu atlar**; özel okuma yolları `WorkflowEngine` / `WorkflowInstanceDataQuery` üzerinden geçmeli ya da `JsonSchemaValidator.ProjectData(data, definition.DataSchema, user)` çağırmalıdır.
+- UI tarafında ek kayıt gerekmez: `AddMiddtUi` (Ui.Server) yalnızca layout mağazası ve uç noktaları kurar; maskeleme sunucuda, iş akışı `dataSchema`'sından yapılır.
 
 ### C. Kütle Atama (Mass-Assignment) Koruması
-Yeni müşteri oluştururken veya güncellerken istemcinin sahte bir `BranchId` göndermesini engellemek:
 
-```csharp
-public class Customer
-{
-    public int CustomerId { get; set; }
+İstemciden gelen gövde yalnızca `input.schema` ile bildirilen alanları taşıyabilir (`additionalProperties: false` tutun); şube gibi yetki belirleyen alanlar formdan değil, geçiş üzerindeki `set` ile sunucu bağlamından yazılır:
 
-    [Editable(false)] // İstemciden gelen payload bu alanı asla ezemez
-    public int BranchId { get; set; }
+```jsonc
+"start": {
+  "key": "start",
+  "target": "draft",
+  "input": {
+    "schema": { "type": "object", "additionalProperties": false, "properties": { "fullName": { "type": "string" } } },
+    "set": { "branchId": "user.Id" }   // ya da sunucuda doğrulanmış bir claim'den türetilen değer
+  }
 }
 ```
 
-Controller'da zorlama:
-```csharp
-public override async Task<ActionResult<BaseResponseDataModel<Customer>>> Insert(
-    [FromBody] Customer model, CancellationToken cancellationToken)
-{
-    if (!branchContext.IsHeadquarters)
-    {
-        model.BranchId = branchContext.BranchId ?? throw new UnauthorizedAccessException();
-    }
-
-    return await base.Insert(model, cancellationToken);
-}
-```
+`user` ifade kapsamında `Id`, `Name`, `Roles`, `IsInRole(r)` bulunur; özel claim'ler (ör. `branch_id`) için kimlik sağlayıcıda claim'i bir role ya da kullanıcı kimliğine bağlayın veya kendi `WorkflowUser` dönüşümünüzü kullanın. İstemciden gelen `input.header.*` / `input.query.*` değerleri (tüm başlıklar ve sorgu parametreleri otomatik olarak kapsama girer) **yetki ölçütü olarak asla** kullanılmamalıdır.
 
 ---
 
@@ -445,7 +432,7 @@ Form şemasında `x-lookup` kullanıldığında:
   }
 }
 ```
-Önyüz otomatik olarak `/api/v1/Staff/getall` çağrısı yapar. `StaffController` üzerindeki `ApplyAccessFilter` zaten kullanıcının şubesini bildiği için dönen liste **doğal olarak sadece o şubenin personellerini** içerir.
+Önyüz otomatik olarak `/api/v1/Staff/getall` (ya da sayfalı `getitems`) çağrısı yapar. Bu uç noktalar `WorkflowInstanceDataQuery` üzerinden `staff` iş akışının örneklerini döndürür; liste, akışın `roles` + `instanceAccess` kuralıyla (ör. `owner` modunda yalnızca kullanıcının başlattığı kayıtlar) ve `x-roles` / `x-mask` projeksiyonuyla sınırlanır. Şube bazlı bir daraltma için ya `instanceAccess` ile ifade edilebilen bir sahiplik modeli kurun ya da lookup'ı §5'teki `queryWorkflow` / SubFlow deseniyle sunucuda doldurun; istemci tarafı `filter` değerleri güvenlik sınırı değildir.
 
 ---
 
@@ -505,7 +492,7 @@ Limit aşımlarında Genel Müdürlük ya da Şube Müdürü ayrımı otomatik a
 
 ### A. Birleşik Görev Kutusu (`GET /api/workflows/inbox`)
 
-`WorkflowEngine.ListInboxAsync` (`GET /api/workflows/inbox`) tüm iş akışlarındaki aktif ve `subType: "Human"` durumundaki kayıtları tarar; her kaydın kendi tanım sürümündeki (`WorkflowVersion`) `roles` ve `instanceAccess` kurallarını ve durumdaki manuel geçişlerin `CanExecute` koşullarını (`roles`, `denyRoles`, `$previousUser` 4-göz ilkesi ve geçiş `rule` ifadesi) değerlendirir. Yalnızca çağrıyı yapan kullanıcının o anda tetikleyebileceği en az bir manuel geçişi bulunan kayıtlar (`AvailableTransitions`) ve kullanıcının rolüne göre maskelenmiş (`ApplySchemaReadAccess`) veri özeti döndürülür.
+`WorkflowEngine.ListInboxAsync` (`GET /api/workflows/inbox`) tüm iş akışlarındaki aktif ve `subType: "Human"` durumundaki kayıtları tarar; her kaydın kendi tanım sürümündeki (`WorkflowVersion`) `roles` ve `instanceAccess` kurallarını ve durumdaki manuel geçişlerin `CanExecute` koşullarını (`roles`, `denyRoles`, `$previousUser` 4-göz ilkesi ve geçiş `rule` ifadesi) değerlendirir. Yalnızca çağrıyı yapan kullanıcının o anda tetikleyebileceği en az bir manuel geçişi bulunan kayıtlar (`AvailableTransitions`) ve kullanıcının rolüne göre projeksiyonlanmış (`JsonSchemaValidator.ProjectData`: `x-roles`, `x-mask`) veri özeti döndürülür.
 
 ### B. Liste Sorgularında SQL Seviyesinde Şube Filtreleme
 
@@ -528,9 +515,9 @@ kullanmayın.
 Yeni bir ekran veya iş akışı geliştirirken bu adımları mutlaka doğrulayın:
 
 - [ ] **Şube Bilgisi Token'da Var mı?** Kullanıcının `branch_id` bilgisi login anında JWT/Identity claims içerisine yazıldı mı?
-- [ ] **EF Core Seviyesinde Global Filtre Var mı?** Yeni eklenen entity `HasQueryFilter` ile şubeye bağlandı mı?
-- [ ] **Controller'da `ApplyAccessFilter` Override Edildi mi?** Liste endpoint'leri kullanıcı şubesi ile filtreleniyor mu?
-- [ ] **IDOR Koruması Sağlandı mı?** `AuthorizeAsync` yetkisiz isteklerde `404 Not Found` dönüyor mu?
-- [ ] **İstemci Sahte Şube Kodu Gönderebilir mi?** Şube kolonları `[Editable(false)]` ile korunup, insert sırasında oturumdaki şubeyle eziliyor mu?
+- [ ] **EF Core Seviyesinde Global Filtre Var mı?** Kendi ilişkisel tablolarınız varsa entity `HasQueryFilter` ile şubeye bağlandı mı?
+- [ ] **`instanceAccess` Tanımlandı mı?** Kullanıcıya ait kayıtlar taşıyan akışlarda `{ "mode": "owner", "supervisorRoles": [...] }` ve tanım `roles` yazıldı mı; eski ve yeni tanım sürümlerinde liste/detay davranışı kontrol edildi mi?
+- [ ] **Alan Projeksiyonu Yapıldı mı?** Hassas alanlar `x-mask` (nesne biçimi) / `x-roles` ile işaretlendi mi; özel okuma yolları `WorkflowEngine` / `WorkflowInstanceDataQuery` üzerinden ya da `JsonSchemaValidator.ProjectData` ile geçiyor mu?
+- [ ] **İstemci Sahte Şube Kodu Gönderebilir mi?** `input.schema` `additionalProperties: false` mı; yetki belirleyen alanlar `input`, `input.header` veya `input.query` yerine `set` ile sunucu bağlamından (`user`) yazılıyor mu?
 - [ ] **İş Akışında Şube Kuralı Var mı?** Şube onay geçişlerinde `user.branchId == data.branchId` kontrolü yazıldı mı?
 - [ ] **Lookuplar İzolasyona Uygun mu?** Personel/hesap seçim kutuları sadece ilgili şubenin kayıtlarını çekiyor mu?

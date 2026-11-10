@@ -101,6 +101,7 @@ CREATE INDEX IF NOT EXISTS "IX_WorkflowInstanceData_WorkflowKey_UpdatedAt"
     ON wf."WorkflowInstanceData" ("WorkflowKey", "UpdatedAt" DESC);
 CREATE INDEX IF NOT EXISTS "IX_WorkflowInstanceData_Data_GIN" 
     ON wf."WorkflowInstanceData" USING gin ("Data" jsonb_path_ops);
+-- (Aynı jsonb_path_ops GIN indeksi WorkflowHistory."Data" üzerinde de oluşturulur: IX_WorkflowHistory_Data_GIN)
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. WorkflowHistory (Geçiş & Denetim İzleri)
@@ -314,34 +315,76 @@ CREATE TABLE IF NOT EXISTS wf."WorkflowAgentToolCalls_OrderPaymentOrchestration"
 
 ## 4. Akışa Özel JSONB İndeksleri
 
-Dedicated partition açıldıktan sonra, `WorkflowInstanceData_OrderPayment` üzerinde doğrudan B-Tree fonksiyonel indeksleri tanımlanır:
+### 4.1 Otomatik indeksleme kuralları (`WorkflowPartitionManager.ExtractIndexedProperties`)
+
+Dedicated partition açıldıktan sonra `WorkflowPartitionManager`, tanımın **yalnızca `dataSchema.properties`** bölümünü okur (`start.input.schema` okunmaz) ve `WorkflowInstanceData_{Suffix}` üzerinde `"Data"` kolonuna tipli B-Tree fonksiyonel indeks (`IX_Part_{Suffix}_{alan}`) oluşturur. Her tipli alan için **değil**, yalnızca şu alanlar için:
+
+- `"x-index": true` olan alanlar, **veya**
+- `x-search` (`true` ya da mod metni) olup tipi `enum` / `number` / `integer` / `boolean` olan alanlar (SQL'e itilebilen eşitlik / aralık filtreleri).
+- `x-mask` taşıyan alanlar (maskeli alan filtrelenemez) ve `"x-index": false` alanlar **asla** indekslenmez; `x-search` verilmiş düz `string` alan (metin araması, `STRPOS`) da indeks almaz.
+
+İndeks ifadeleri (kolon adı tırnaklı `"Data"`): `integer` / `number` → `((("Data"->>'alan')::numeric))`, `boolean` → `((("Data"->>'alan')::boolean))`, `string` / `enum` → `(("Data"->>'alan')::text)`. SQLite'ta aynı küme `json_extract("Data", '$.alan')` üzerinde `WHERE "WorkflowKey" = '…'` kısmi indeks olarak açılır.
+
+> [!WARNING]
+> **Eski indeks temizliği:** Hesaplanan küme oluşturulduktan sonra `IX_Part_{Suffix}_*` ön ekine sahip olup kümede bulunmayan **tüm** indeksler her startup / deploy'da silinir (`DropStaleFlowIndexesAsync`). Bu ön ek yöneticiye ayrılmıştır; elle yazılan indekslere farklı bir ad verin (ör. `IX_Custom_…`).
+
+Örnek – `order-payment-orchestration` için:
+
+```jsonc
+"dataSchema": {
+  "type": "object",
+  "properties": {
+    "customerId": { "type": "string", "x-index": true },                        // indeks (x-index)
+    "total":      { "type": "number", "x-search": true },                       // indeks (x-search + number)
+    "statusCode": { "type": "string", "enum": ["NEW", "PAID"], "x-search": true }, // indeks (x-search + enum)
+    "note":       { "type": "string", "x-search": true },                       // indeks YOK (düz metin araması)
+    "cardNumber": { "type": "string", "x-mask": { "pattern": "last4", "exceptRoles": ["manager"] } } // indeks YOK
+  }
+}
+```
+
+Bu tanım için yönetici şu SQL'in eşdeğerini çalıştırır (suffix `OrderPaymentOrchestration`):
 
 ```sql
--- Müşteri ID araması
-CREATE INDEX IF NOT EXISTS "IX_Part_Order_CustomerId" 
-ON wf."WorkflowInstanceData_OrderPayment" (((data->>'customerId')::text));
+-- Müşteri ID araması (x-index: true)
+CREATE INDEX IF NOT EXISTS "IX_Part_OrderPaymentOrchestration_customerId" 
+ON wf."WorkflowInstanceData_OrderPaymentOrchestration" ((("Data"->>'customerId')::text));
 
--- Tutar sıralaması ve aralık sorguları
-CREATE INDEX IF NOT EXISTS "IX_Part_Order_Total" 
-ON wf."WorkflowInstanceData_OrderPayment" ((((data->>'total')::numeric)));
+-- Tutar sıralaması ve aralık sorguları (x-search + number)
+CREATE INDEX IF NOT EXISTS "IX_Part_OrderPaymentOrchestration_total" 
+ON wf."WorkflowInstanceData_OrderPaymentOrchestration" (((("Data"->>'total')::numeric)));
 
--- Sipariş durum kodu
-CREATE INDEX IF NOT EXISTS "IX_Part_Order_StatusCode" 
-ON wf."WorkflowInstanceData_OrderPayment" (((data->>'statusCode')::text));
+-- Sipariş durum kodu (x-search + enum)
+CREATE INDEX IF NOT EXISTS "IX_Part_OrderPaymentOrchestration_statusCode" 
+ON wf."WorkflowInstanceData_OrderPaymentOrchestration" ((("Data"->>'statusCode')::text));
 ```
+
+### 4.2 Elle eklenen bileşik indeksler
+
+Bileşik veya özel indeksler (ör. `(customerId, total)`) EF migration'ı ya da hosted service ile idempotent olarak eklenir. Kolon `"Data"` (tırnaklı) olmalı ve ad `IX_Part_` ile **başlamamalıdır**:
+
+```sql
+CREATE INDEX IF NOT EXISTS "IX_Custom_OrderPaymentOrchestration_Customer_Total"
+ON wf."WorkflowInstanceData_OrderPaymentOrchestration" (
+    ((("Data"->>'customerId')::text)),
+    ((("Data"->>'total')::numeric))
+);
+```
+
+Keyfi JSON kapsama sorguları (`"Data" @> '{"statusCode": "PAID"}'`) için `WorkflowInstanceData` ve `WorkflowHistory` üzerindeki global `jsonb_path_ops` GIN indeksleri (`IX_WorkflowInstanceData_Data_GIN`, `IX_WorkflowHistory_Data_GIN`) zaten tüm partition'larda geçerlidir; trigram (`pg_trgm`) indeksi yoktur.
 
 ---
 
 ## 5. Operasyonel Avantajlar ve Yaşam Döngüsü Yönetimi
 
 1. **Partition-Wise Join Performansı:**
-   `WorkflowInstances` ile `WorkflowInstanceData` join edildiğinde PostgreSQL yalnızca `WorkflowInstances_OrderPayment` ile `WorkflowInstanceData_OrderPayment` tablolarını birleştirir; veri eşleştirmesi doğrudan CPU önbelleğinde tamamlanır.
+   `WorkflowInstances` ile `WorkflowInstanceData` join edildiğinde PostgreSQL yalnızca `WorkflowInstances_OrderPaymentOrchestration` ile `WorkflowInstanceData_OrderPaymentOrchestration` tablolarını birleştirir; veri eşleştirmesi doğrudan CPU önbelleğinde tamamlanır.
 2. **Sıfır Kesintiyle Arşivleme:**
    Eski sipariş geçmişini arşivlemek için devasa tablolarda milyonlarca satırı `DELETE` edip diski kilitlemek yerine:
    ```sql
-   ALTER TABLE wf."WorkflowHistory" DETACH PARTITION wf."WorkflowHistory_OrderPayment_2024";
+   ALTER TABLE wf."WorkflowHistory" DETACH PARTITION wf."WorkflowHistory_OrderPaymentOrchestration";
    ```
-   komutuyla eski yılın partition'ı bir milisaniyede ana tablodan ayrılır ve soğuk depoya taşınır.
+   komutuyla emekliye ayrılan akışın partition'ı bir milisaniyede ana tablodan ayrılır ve soğuk depoya taşınır (yöneticinin oluşturduğu partition'lar akış anahtarı başına tektir; yıl bazlı alt bölümleme elle yapılır).
 3. **İzole Bakım:**
    `VACUUM (ANALYZE)` veya `REINDEX` işlemleri yoğun çalışan partition'lara ayrı ayrı uygulanabilir.
 

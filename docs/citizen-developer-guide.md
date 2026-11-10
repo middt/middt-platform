@@ -27,11 +27,13 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
      - [6. `fanOut` — Dizi Üzerinde Paralel Görev Çalıştırma](#6-fanout--dizi-üzerinde-paralel-görev-çalıştırma)
      - [7. `cache` — Önbellekleme (Cache-Aside)](#7-cache--önbellekleme-cache-aside)
      - [8. `publish` & `rabbitmq` — Mesaj Kuyruğuna Olay Yayınlama](#8-publish--rabbitmq--mesaj-kuyruğuna-olay-yayınlama)
-     - [9. `operation` — Kayıtlı İş Operasyonu (`IWorkflowOperation`) Çalıştırma](#9-operation--kayıtlı-iş-operasyonu-iworkflowoperation-çalıştırma)
+     - [8b. `rebus` — Rebus Mesajlaşma (`publish` / `send` / `defer` / `subscribe`)](#8b-rebus--rebus-mesajlaşma-publish--send--defer--subscribe)
+     - [9. `operation` — Kayıtlı İş Operasyonu (`IWorkflowOperationDispatcher`) Çalıştırma](#9-operation--kayıtlı-iş-operasyonu-iworkflowoperationdispatcher-çalıştırma)
      - [10. `agent` / `aiAgent` — Yapay Zeka Ajanı Çalıştırma](#10-agent--aiagent--yapay-zeka-ajanı-çalıştırma)
      - [11. `mcp` — Model Context Protocol Sunucusu Çağrısı](#11-mcp--model-context-protocol-sunucusu-çağrısı)
      - [12. `log` — Yapılandırılmış Log Yazma](#12-log--yapılandırılmış-log-yazma)
 4. [Bölüm 2: Yapay Zeka Ajanları (AI Agents), Araçlar (Tools), MCP ve Görsel Stüdyo (`/agent-admin`)](#4-bölüm-2-yapay-zeka-ajanları-ai-agents-araçlar-tools-ve-mcp)
+   - [4.0. LLM Sağlayıcı Yapılandırması (`AgentSettings`)](#40-llm-sağlayıcı-yapılandırması-agentsettings)
    - [4.1. AI Ajanı Tanımlama (`Agents/*.json`)](#41-ai-ajanı-tanımlama-agentsjson)
    - [4.2. Kodsuz AI Araçları (`Agents/Tools/*.json`) — Expression, Task (`http`, `set`, `cache`) ve MCP](#42-kodsuz-ai-araçları-agentstoolsjson--expression-task-http-set-cache-ve-mcp)
    - [4.3. Akış İçinde Ajan Çağırma ve Otomatik Geçiş Kararı (`selectedTransition`)](#43-akış-içinde-ajan-çağırma-ve-otomatik-geçiş-kararı-selectedtransition)
@@ -46,7 +48,8 @@ Bu rehber, **Middt Platform** üzerinde C# veya TypeScript/HTML kodu yazmadan; y
      - [6.1.3. `timeline` — Süreç ve Aktivite Zaman Çizelgesi Detaylı Kullanımı](#613-timeline--süreç-ve-aktivite-zaman-çizelgesi-detaylı-kullanımı)
    - [6.2. Görsel Sürükle-Bırak Ekran Tasarımcısı (`/ui-admin`)](#62-görsel-sürükle-bırak-ekran-tasarımcısı-ui-admin-ve-akış-bağlantısı)
    - [6.3. Görsel İş Akışı ve Görev Tasarımcısı (`/workflow-admin`)](#63-görsel-iş-akışı-ve-görev-tasarımcısı-workflow-admin)
-   - [6.4. Sürüm Geçmişi, Simülasyon (Dry-Run), Görev Kutusu (`/inbox`), Operasyon Merkezi ve Paket Taşıma](#64-sürüm-geçmişi-simülasyon-dry-run-görev-kutusu-inbox-operasyon-merkezi-ve-paket-taşıma)
+   - [6.4. Sürüm Geçmişi, Simülasyon (Dry-Run), Görev Kutusu (Inbox), Operasyon Uçları ve Paket Taşıma (REST API)](#64-sürüm-geçmişi-simülasyon-dry-run-görev-kutusu-inbox-operasyon-uçları-ve-paket-taşıma-rest-api)
+     - [6.4.1. Kayıt (Instance) REST API Özeti](#641-kayıt-instance-rest-api-özeti)
    - [6.5. Gerçek Zamanlı İş Akışı Güncellemeleri (Canlı SSE — Server-Sent Events)](#65-gerçek-zamanlı-iş-akışı-güncellemeleri-canlı-sse--server-sent-events)
 7. [Bölüm 5: Dış Servis Simülasyonu (Mockoon) ve Başlangıç Verileri (Seeds)](#7-bölüm-5-dış-servis-simülasyonu-mockoon-ve-başlangıç-verileri-seeds)
 8. [Bölüm 6: Uçtan Uca Örnek Proje — "Tedarikçi Satınalma Talebi" Modülü](#8-bölüm-6-uçtan-uca-örnek-proje--tedarikçi-satınalma-talebi-modülü)
@@ -221,8 +224,6 @@ Kullanıcı **"Yeni Başlat"** butonuna bastığında açılan form `start.input
   "key": "start",
   "target": "scoring",
   "input": {
-    "rule": "input.collateralAmount >= input.amount * 0.5m",
-    "ruleMessage": "Teminat tutarı kredi tutarının en az %50'si olmalıdır.",
     "schema": {
       "type": "object",
       "additionalProperties": false,
@@ -305,7 +306,10 @@ Kullanıcı **"Yeni Başlat"** butonuna bastığında açılan form `start.input
       "style": "button"
     }
     ```
-- **`input.rule` & `input.ruleMessage`**: Form gönderildiğinde sunucu tarafında çalışan iş kuralı. Sağlanmazsa `409 Conflict` ile reddedilir ve kullanıcıya `ruleMessage` gösterilir.
+- **`input.rule`**: Geçiş çalıştırılırken (veya bir `Event` mesajı teslim edilirken) sunucuda değerlendirilen iş kuralı (`input`, `data`, `instance`, `user`, `now` kapsamı; ör. `"input.amount <= data.remainingAmount"`). Kural `false` dönerse çağrı `409 Conflict` ve `"Transition '<key>' is not available for the current data."` mesajıyla reddedilir; özel hata mesajı alanı (`ruleMessage` vb.) **yoktur** — tanımda bilinmeyen bir anahtar, tanımın hiç yüklenmemesine yol açar (`UnmappedMemberHandling = Disallow`).
+  - `"format": "jsonPatch"` geçişlerinde `input.rule` **atlanır** (yalnızca patch doğrulaması ve şema çalışır).
+  - `start.input.rule` yeni kayıt başlatılırken (`POST …/instances`) **değerlendirilmez**; başlangıçta yalnızca `schema` doğrulaması yapılır (kural, hatalı kalan bir başlangıç `retry` edildiğinde kontrol edilir). Başlangıç verisini kısıtlamak için şema anahtar kelimelerini (`minimum`, `pattern`, `requiredWhen` …) kullanın.
+- **Desteklenen JSON Schema alt kümesi (`JsonSchemaValidator`)**: `type`, `properties`, `required`, `additionalProperties`, `enum`, `const`, `minimum` / `maximum`, `minLength` / `maxLength`, `pattern`, `format` (`date-time`, `email` doğrulanır; diğerleri yalnızca UI ipucu), `items`, `minItems` / `maxItems`, `default`, `title`, `description`, `$schema` ve tüm `x-*` uzantıları. Bu listenin dışındaki anahtar kelimeler (`oneOf`, `$ref`, `dependencies` …) tanım doğrulamasında hata verir.
 - **`input.sensitive`**: `["cardPin", "cvv"]` gibi tanımlanan üst düzey alanlar yalnızca geçişin görevleri ve ifadeleri çalışırken bellekte (`input.cardPin`) görünür; `instance.data`, `WorkflowHistory` ve `PendingInput` (retry) kayıtlarına **asla** yazılmaz.
 - **Otomatik HTTP Üst Bilgi Zenginleştirmesi (`input.header`)**: `/instances`, `/transitions` veya `/messages` uçlarına gelen her HTTP çağrısında motor `input.header` nesnesini otomatik olarak doldurur:
   - `input.header.correlationId` (`X-Correlation-ID`), `input.header.traceId`, `input.header.spanId`, `input.header.clientIp`, `input.header.userAgent`. Bu değerleri `set` veya `log` görevlerinde denetim izi olarak kullanabilirsiniz.
@@ -398,6 +402,7 @@ Hem iş akışı başlangıç/geçiş formlarında (`input.schema.properties`) h
 ```
 
 - **`type`**:
+  - `"Initial"`: Başlangıç durumu (isteğe bağlı işaret; `start.target` ile gelinen ilk durum için kullanılır).
   - `"Intermediate"`: Ara durum.
   - `"SubFlow"`: Alt iş akışı (`subFlow.workflow`) tamamlanana kadar bekleyen durum.
   - `"Finish"`: Bitiş durumu (akış tamamlanır veya iptal olur).
@@ -406,6 +411,8 @@ Hem iş akışı başlangıç/geçiş formlarında (`input.schema.properties`) h
   - `"Success"` / `"Error"` / `"Cancelled"` / `"Timeout"`: Bitiş durumunun rengini ve statüsünü belirler.
 - **`step`**: `1, 2, 3...` verildiğinde ekranın üst kısmında otomatik olarak **Sihirbaz (Wizard) Adım Çubuğu** gösterilir.
 - **`view.layout`**: Bu durumda hangi JSON ekran tasarımının (`Layouts/<key>.json`) gösterileceğini belirler.
+- **`view.component`**: JSON ekran yerine uygulamada kayıtlı bir görünüm bileşeninin adı (ör. Identity servisindeki `credentials`, `totp` journey görünümleri). Geçişlerde `view.inline` ile birlikte kullanılabilir; boş bırakılırsa şemadan üretilen form gösterilir.
+- **`x-layout`** (akış kökünde): Görsel tasarımcının (`/workflow-admin`) durum kartı koordinatlarını sakladığı nesne; motor tarafından yorumlanmaz, elle yazmanız gerekmez.
 
 #### Alt İş Akışı Durumları (`type: "SubFlow"` ve `subFlow` Ayarları)
 Bir durum `"type": "SubFlow"` olarak işaretlendiğinde, duruma girildiği anda `subFlow.workflow` ile belirtilen alt iş akışı otomatik başlatılır ve üst akış alt akış tamamlanana (`Finish`) kadar bekler:
@@ -462,7 +469,7 @@ Bir durumdan diğerine (veya `"$self"` ile aynı durumun kendisine) geçişler 4
 | `trigger` | Açıklama | Önemli Alanlar |
 |---|---|---|
 | `"Manual"` (Varsayılan) | Kullanıcının ekranda gördüğü aksiyon butonlarıdır. | `title`, `description`, `style` (`primary`, `success`, `warning`, `danger`, `secondary`, `light`), `icon`, `roles`, `denyRoles`, `toolbar` (`false` ise üst araç çubuğunda gizlenir, yalnızca `list` satır aksiyonlarından tetiklenir), `view.inline` (`true` ise popup yerine sayfa içinde sihirbaz formu açar), `rule` (butonun görünme koşulu). |
-| `"Automatic"` | `onEntry` görevleri biter bitmez motor tarafından otomatik değerlendirilir. | `rule` (koşul ifadesi; ör. `"data.amount <= 5000"` veya `"instance.agents.aiUnderwriter.selectedTransition == \"to-approved\""`), `default: true` (hiçbir kural tutmazsa seçilecek geçiş). |
+| `"Automatic"` | `onEntry` görevleri biter bitmez motor tarafından otomatik değerlendirilir. | `rule` (koşul ifadesi; ör. `"data.amount <= 5000"`), `default: true` (hiçbir kural tutmazsa seçilecek geçiş). Durumda bir `agent` görevi geçiş seçtiyse (`nextTransition`) bu seçim **kurallardan önce** uygulanır (bkz. 4.3). |
 | `"Scheduled"` | Belirtilen süre sonunda (`after`) veya belirli bir tarih/saatte (`at`) arka plan zamanlayıcısı ile tetiklenir (SLA / Hatırlatma). | `after`: `"00:15:00"`, `"PT15M"` veya dinamik `"{{ data.slaDuration }}"`<br>`at`: `"2026-12-31T23:59:59Z"` veya dinamik `"{{ data.dueDate }}"` (ISO 8601 UTC zaman damgası). |
 | `"Event"` | Dış sistemden veya başka akıştan mesaj geldiğinde tetiklenir. | `event`: `"payment.received"`, `rule`: `"input.amount > 0"`. |
 
@@ -502,7 +509,7 @@ Bir önceki adımı onaylayan kişinin ikinci adımı onaylayamaması için `"de
 ```
 
 **Aynı Durumda Veri Güncelleme (`target: "$self"`)**:
-Durumu değiştirmeden not eklemek, SLA uzatmak veya AI ajanını yeniden çalıştırmak için `"target": "$self"` kullanılır. `"reenter": true` verilirse durumun `onEntry` görevleri ve zamanlayıcıları yeniden çalıştırılır.
+Durumu değiştirmeden not eklemek, SLA uzatmak veya AI ajanını yeniden çalıştırmak için `"target": "$self"` kullanılır. `"reenter": true` verilirse durumdan çıkılıp yeniden girilmiş gibi davranılır: `onExit` ve `onEntry` görevleri yeniden çalışır, durum zamanlayıcıları sıfırlanır.
 
 ### 3.5.1. Kurumsal BPM Yönetişimi: Görev Üstlenme (`claim`), Çoklu Kişi / Rol Atama (`assign`) ve Çalışan Sürüm Göçü (`migrate`)
 
@@ -814,7 +821,7 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
 
 | Ayar | Tip | Alabileceği Değerler / Açıklama |
 |---|---|---|
-| `task` | `string` | Çalıştırılacak görevin adı (`set`, `setKey`, `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `http`, `startWorkflow`, `fanOut`, `cache`, `publish`, `rabbitmq`, `operation`, `agent`, `mcp`, `log`). |
+| `task` | `string` | Çalıştırılacak görevin adı (`set`, `setKey`, `loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`, `http`, `startWorkflow`, `fanOut`, `cache`, `publish`, `rabbitmq`, `operation`, `agent`, `mcp`, `log`; `AddMiddtRebus` kullanılan uygulamalarda ayrıca `rebus`). |
 | `key` | `string` | Görevin benzersiz adım anahtarı. Tarihçede (`History`), hata kayıtlarında (`Incidents`) ve AI ajan çıktılarında (`instance.agents.<key>`) bu anahtar görünür. Belirtilmezse `task` adı kullanılır. |
 | `when` | `string` | C# mantıksal koşul ifadesi (`"data.amount >= 100000"`). Koşul `false` dönerse görev **atlanır (skip)**. |
 | `background` | `boolean` | `false` (varsayılan) \| `true`. Yalnızca durumların `onEntry` dizisinde kullanılır (`Finish` veya `SubFlow` durumlarında ve `setKey` görevinde kullanılamaz). `true` olduğunda durum geçişi hemen kaydedilir, görev arka planda (`WorkflowJobProcessor`) asenkron çalıştırılır. |
@@ -826,6 +833,17 @@ Görevler `start.onExecute`, `state.onEntry`, `state.onExit` veya `transition.on
 | `onError.maxDelay` | `string` | Üstel bekleme süresinin çıkabileceği üst sınır (`"00:00:30"`). |
 | `onError.useJitter` | `boolean` | `false` (varsayılan) \| `true`. Aynı anda hata alan yüzlerce akışın dış servisi aynı saniyede tekrar vurmasını (thundering herd) önlemek için bekleme süresine `±%20` rastgele sapma ekler. |
 | `onError.retryOnStatusCodes` | `string[]` | Yalnızca belirtilen HTTP durum kodlarında tekrar deneme yapar. Tam kod (`"408"`, `"429"`), grup (`"5xx"`) veya hariç tutma (`"!400"`) destekler. |
+
+**`onError` varsayılan zinciri (görev → durum → akış)**: `onError` yalnızca görevde değil, durum (`state.onError`) ve akış kökünde (`"onError": { … }`) de tanımlanabilir. Motor sırasıyla `task.onError ?? state.onError ?? workflow.onError ?? { action: "Fault", maxAttempts: 1 }` kullanır; böylece tüm `http` görevleri için tek bir tekrar deneme politikasını akış kökünde yazabilirsiniz.
+
+**Platform sınırları (`MiddtWorkflowOptions`, uygulama kodunda ayarlanır)**:
+
+| Sınır | Varsayılan | Açıklama |
+|---|---|---|
+| `MaxRetryDelay` | `30 s` | `onError.delay` × `backoffMultiplier` ile hesaplanan ve `onError.maxDelay` ile sınırlanan bekleme bu tavanı **asla aşamaz** (daha büyük `maxDelay` sessizce 30 s'ye kırpılır). |
+| `AllowedHttpHosts` | boş (= tüm hostlar) | Doluysa `http` görevleri ve `kind: "http"` AI araçları yalnızca listedeki host'lara çağrı yapabilir; diğerleri `host '…' is not in MiddtWorkflowOptions.AllowedHttpHosts` hatası verir. |
+| `MaxAutomaticChainLength` | `32` | Bir komutta art arda çalışabilecek `Automatic` geçiş sayısı; aşılırsa kayıt `Faulted` olur (`… exceeded 32 steps (loop?)`). |
+| `http.client` | `"middt-workflow"` | `http` görevinin kullandığı adlandırılmış `HttpClient` (`IHttpClientFactory`); `"client": "<ad>"` ile uygulamada kayıtlı başka bir istemci (ör. mTLS sertifikalı) seçilebilir. |
 
 **Ortak Ayarlar (`when`, `background`, `onError`) JSON Örnekleri:**
 
@@ -991,11 +1009,15 @@ Başka bir akışın (veya aynı akışın geçmiş kayıtlarının) birden fazl
 | `excludeSelf` *(veya `excludeCurrent`)* | `boolean` | `false` (varsayılan) \| `true`. Aynı akış (`workflow == instance.workflow`) sorgulanırken, şu an çalışmakta olan kaydın kendisini sonuçlardan ve toplamalardan (`sum`/`count`) hariç tutar. |
 | `orderBy` | `string` | Sıralama alanı: `"createdAt"` (varsayılan), `"updatedAt"`, `"key"`, `"state"`, `"status"` veya hedef kaydın `data` içindeki herhangi bir alanı (ör. `"amount"`). |
 | `descending` | `boolean` | `true` (varsayılan: azalan / en yeniden eskiye) \| `false` (artan). |
-| `take` *(veya `limit`)* | `number` | Getirilecek maksimum kayıt sayısı (`1` ile `500` arası, varsayılan `50`). |
+| `take` | `number` | Getirilecek maksimum kayıt sayısı (`1` ile `500` arası, varsayılan `50`). |
 | `first` | `boolean` | `false` (varsayılan) \| `true`. `true` verilirse `into` alanına liste özeti yerine doğrudan **eşleşen ilk kaydın nesnesi** (bulunamazsa `{ "found": false }`) yazılır. |
 | `select` | `string[]` veya `object` | Her bir kayıt için hangi alanların seçileceğini veya dönüştürüleceğini belirler. |
 | `aggregate` | `object` | Eşleşen kayıtlar üzerinde toplama hesaplar. İki yazım biçimini destekler:<br>1. Nesne: `{ "op": "sum", "field": "amount" }`<br>2. Kısa metin: `"sum:amount"`, `"avg:amount"`, `"min:amount"`, `"max:amount"`, `"count"`<br>**Desteklenen `op` değerleri**:<br>• **`"count"`**: Kayıt adedi (veya `field` verilirse o alanı dolu olanların adedi)<br>• **`"sum"`**: Sayısal alanın toplamı<br>• **`"avg"`**: Sayısal alanın ortalaması<br>• **`"min"`**: En küçük değer<br>• **`"max"`**: En büyük değer |
 | `into` | `string` | *(Zorunlu)* Sonucun yazılacağı alan. İçerisine `{ count, exists, items, first, aggregates, <toplamaAlanlari> }` nesnesi yazılır. |
+
+> [!NOTE]
+> **Hedef kayıtlara erişim (`loadWorkflow`, `queryWorkflow`, `updateWorkflow`, `triggerWorkflow`)**: Bu görevler hedef akışın kayıtlarını, görevi çalıştıran kullanıcının erişimine göre süzer — hedef akış `instanceAccess.mode: "owner"` ise yalnızca kullanıcının kendi başlattığı (veya `supervisorRoles` ile görebildiği) kayıtlar eşleşir. Arka plan işleri ve sistem kullanıcısı tüm kayıtları görür; bir kullanıcı geçişinden tüm kayıtlara ulaşmak için `"access": "system"` ekleyin.
+> **`where` nesne biçimi**: İfade dizesi yerine `{ "customerNumber": "{{ data.customerNumber }}", "status": "Active" }` biçiminde eşitlik filtresi de verilebilir; bu biçim doğrudan SQL'e itilir (`x-index` / `x-search` alanlarında indeks kullanır).
 
 ##### 3c. `updateWorkflow` (veya `patchWorkflow` / `setWorkflowData`) — Başka Bir Akışın Verisini Güncelleme
 Mevcut akış içerisinden başka bir akış kaydını (veya `"all": true` ile eşleşen tüm kayıtları) `key`, `id` ya da **`where`** (instance data koşulu) ile bulup `values` ifadeleriyle, `merge` şablonuyla veya RFC 6902 `patch` dizisiyle güvenli biçimde günceller ve versiyonunu (`DataVersion`) artırır:
@@ -1320,15 +1342,46 @@ Bir dizi (`items`) içindeki her eleman için `subTask` görevini izole bir kopy
 |---|---|---|
 | `publish.type` | `string` | *(Zorunlu)* `IWorkflowMessagePublisher` (Rebus) üzerinden yayınlanacak olay tipi. Diğer akışlardaki `"trigger": "Event"` geçişlerini tetiklemek için kullanılır. |
 | `publish.payload` | `object` | Olay gövdesi (`workflow` ve `instanceId` alanları otomatik eklenir). |
-| `rabbitmq.routingKey` *(veya `queue` / `topic`)* | `string` | *(Zorunlu)* Mesajın yönlendirileceği RabbitMQ kuyruk veya routing anahtarı (`{{ }}` şablonu destekler). |
+| `rabbitmq.routingKey` *(veya `queue`)* | `string` | *(Zorunlu)* Mesajın yönlendirileceği RabbitMQ kuyruk veya routing anahtarı (`{{ }}` şablonu destekler). |
 | `rabbitmq.exchange` | `string` | RabbitMQ exchange adı (varsayılan `"middt.workflow.events"`). |
 | `rabbitmq.headers` | `object` | Mesaj üst bilgileri (`x-workflow`, `x-instance-id`, `x-routing-key` otomatik eklenir). |
-| `rabbitmq.payload` *(veya `body` / `message`)* | `any` | Gönderilecek JSON mesaj gövdesi. |
+| `rabbitmq.payload` *(veya `message` / `body` / `input` / `data`)* | `any` | Gönderilecek JSON mesaj gövdesi. |
+| `rabbitmq.contentType` | `string` | Mesajın `content-type` özelliği (varsayılan `"application/json"`). |
+| `rabbitmq.persistent` | `boolean` | `true` *(varsayılan)*: mesaj kalıcı (`delivery mode 2`) yayınlanır; `false` ise broker yeniden başlayınca kaybolabilir. |
 | `rabbitmq.into` | `string` | Yayınlama onay bilgisinin (`{ published: true, exchange, routingKey, publishedAt }`) yazılacağı alan. |
 
 ---
 
-#### 9. `operation` — Kayıtlı İş Operasyonu (`IWorkflowOperation`) Çalıştırma
+#### 8b. `rebus` — Rebus Mesajlaşma (`publish` / `send` / `defer` / `subscribe`)
+Uygulama `AddMiddtRebus(...)` ile kurulduğunda (`Middt.Framework.Rebus`) `rebus` görevi ve kısa adları (`rebus-publish`, `rebusSend`, `rebus-defer-local` …) otomatik kaydedilir; `IWorkflowMessagePublisher` (`publish` görevi) ve `IWorkflowRabbitMqPublisher` da Rebus üzerinden çalışır. Rebus'u kendiniz yapılandırıyorsanız görevleri `MiddtWorkflowOptions.AddRebusTasks()` ile ekleyin. Görev `GET /api/workflows/tasks` kataloğunda yalnızca bu kayıt yapıldıysa görünür.
+```json
+{
+  "key": "send-create-invoice",
+  "task": "rebus",
+  "config": {
+    "action": "send",
+    "queue": "billing",
+    "type": "CreateInvoice",
+    "payload": { "orderId": "{{ data.orderId }}", "total": "{{ data.total }}" },
+    "headers": { "correlationId": "{{ instance.id }}" },
+    "into": "msgResult"
+  }
+}
+```
+| `rebus` Ayarı | Tip | Alabileceği Değerler / Açıklama |
+|---|---|---|
+| `action` *(veya `op`)* | `string` | `"publish"` *(varsayılan)*: olayı tüm abonelere / `topic`'e yayınlar · `"send"`: komutu `queue` / `destination` kuyruğuna (veya tip yönlendirmesiyle) gönderir · `"sendLocal"`: servisin kendi giriş kuyruğuna gönderir · `"defer"` / `"deferLocal"`: `delay` sonra teslim edilmek üzere zamanlar · `"subscribe"` / `"unsubscribe"`: `type` veya `topic` aboneliğini çalışma zamanında açar/kapatır. Görev adı olarak `rebus-send`, `rebusDeferLocal` vb. kullanıldığında `action` otomatik çıkarılır. |
+| `queue` *(veya `destination`)* | `string` | `send` / `defer` için hedef kuyruk adı (boşsa Rebus tip yönlendirmesi kullanılır). |
+| `topic` | `string` | `publish` / `subscribe` / `unsubscribe` için konu adı. |
+| `type` *(veya `messageType`)* | `string` | Mesaj tipi adı (`subscribe` / `unsubscribe` için `topic` yoksa zorunludur). |
+| `payload` *(veya `message` / `body`)* | `any` | Mesaj gövdesi (`{{ }}` şablonu destekler; `publish` / `send` / `defer` için zorunludur). |
+| `headers` | `object` | Mesaj üst bilgileri; `correlationId` verilirse Rebus `rbs2-corr-id` başlığına kopyalanır, verilmezse kayıt `id`'si kullanılır. |
+| `delay` *(veya `deferSeconds` / `delaySeconds` / `delayMinutes`)* | `string` / `number` | `defer` / `deferLocal` için gecikme (`"PT5M"`, `"00:05:00"` veya saniye/dakika sayısı); zorunludur. |
+| `into` | `string` | Gönderim sonucunun (`action`, hedef, zaman) yazılacağı `data` alanı. |
+
+---
+
+#### 9. `operation` — Kayıtlı İş Operasyonu (`IWorkflowOperationDispatcher`) Çalıştırma
 ```json
 {
   "key": "run-ledger-operation",
@@ -1345,9 +1398,10 @@ Bir dizi (`items`) içindeki her eleman için `subTask` görevini izole bir kopy
 ```
 | `operation` Ayarı | Tip | Alabileceği Değerler / Açıklama |
 |---|---|---|
-| `operation` *(veya `name`)* | `string` | *(Zorunlu)* DI konteynerine kaydedilmiş `IWorkflowOperation` sınıfının adı. |
-| `input` *(veya `params`)* | `object` | Operasyona geçirilecek girdi parametreleri (`{{ }}` şablonu destekler). |
-| `into` | `string` | Operasyonun döndürdüğü JSON çıktısının `data` içinde yazılacağı alan. |
+| `operation` | `string` | *(Zorunlu; takma adı yoktur)* Operasyon adı. Uygulama, `IWorkflowOperationDispatcher` arabirimini uygulayan bir sınıf kaydeder; `CanHandle(name)` ile kendi beyaz listesindeki adları kabul eder, bilinmeyen ad `No dispatcher is registered for operation '…'` hatası verir (Identity servisinin `idp-*` operasyonları bu mekanizmayla çalışır). |
+| `input` *(veya `args` / `payload` / `data`)* | `object` | Operasyona geçirilecek girdi parametreleri (`{{ }}` şablonu destekler); verilmezse geçişin `input` nesnesi aktarılır. |
+| `into` | `string` | Operasyonun döndürdüğü (`context.Result`) JSON çıktısının `data` içinde yazılacağı alan. |
+| `select` / `output` | `string[]` / `object` | Dönen sonuçtan yalnızca seçilen alanları veya `result.*` ifadeleriyle dönüştürülmüş alanları yazar (ortak sözleşme). |
 
 ---
 
@@ -1386,17 +1440,26 @@ Bir dizi (`items`) içindeki her eleman için `subTask` görevini izole bir kopy
 | `agent` Ayarı | Tip | Alabileceği Değerler / Açıklama |
 |---|---|---|
 | `mode` | `string` | Ajan orkestrasyon çalışma modu:<br>• **`"single"`** *(varsayılan)*: Tek bir AI ajanını (`agent` / `name`) çalıştırır.<br>• **`"sequential"`**: `agents` dizisindeki ajanları sırayla (boru hattı / pipeline olarak, birinin çıktısını diğerine aktararak) çalıştırır.<br>• **`"concurrent"`** *(veya `"parallel"`)*: `agents` dizisindeki ajanları aynı anda paralel çalıştırır ve tüm görüşleri birleştirir.<br>• **`"handoff"`**: `agents` dizisindeki ajanlar arasında dinamik görev devri (triage -> uzman ajan devri) yapar. |
+| *(görev adı)* | | `agent`, `aiAgent`, `ai-agent`, `ai`, `llm` birbirinin takma adıdır. |
 | `agent` *(veya `name`)* | `string` | `mode: "single"` iken çalıştırılacak kayıtlı ajan adı (`Agents/*.json`) veya satır içi ajan adı. |
 | `agents` | `array` | `mode: "sequential" \| "concurrent" \| "handoff"` iken çalıştırılacak ajan adları dizisi (`["fraud-agent", "credit-agent"]`) veya ajan nesneleri dizisi. |
-| `prompt` *(veya `input` / `message`)* | `string` | Ajana gönderilecek kullanıcı istemi (`{{ }}` şablonu destekler). Çok turlu mesaj dizisi için `messages` kullanılabilir. |
+| `inlineAgent` | `object` | Katalogda kayıtlı olmayan, yalnızca bu göreve özel ajan tanımı (4.1'deki ajan alanları: `instructions`, `tools`, `outputSchema` …). |
+| `prompt` *(veya `input` / `message`)* | `string` | Ajana gönderilecek kullanıcı istemi (`{{ }}` şablonu destekler). `prompt`, `input`, `message` veya `messages`'tan en az biri zorunludur. |
+| `messages` | `array` | Çok turlu mesaj dizisi (`[{ "role": "user" \| "assistant" \| "system", "content": "…" }]`, `{{ }}` destekler). |
+| `context` | `object` | İsteme ek olarak ajana yapılandırılmış bağlam verisi (`{ "customerKey": "{{ data.customerKey }}" }`); şablonlar çözümlenip isteme eklenir. |
 | `instructions` *(veya `system`)* | `string` | Kayıtlı ajanın sistem talimatlarını (`instructions`) bu görev özelinde ezmek veya satır içi ajan tanımlamak için kullanılır. |
 | `tools` | `string[]` | Ajana tanımlı araçlara ek olarak bu adımda açılacak araç (`Tools/*.json`) listesi. |
 | `mcpServers` | `string[]` | Ajana bu adımda bağlanacak MCP sunucu adları listesi. |
 | **Otomatik Geçiş Yönlendirme (Auto-Routing)** | | Ajanın bulunduğu durumdaki (`state`) `Automatic` geçişler motor tarafından **otomatik olarak keşfedilir** ve ajanın JSON çıktı şemasına (`outputSchema`) enum olarak enjekte edilir. Ajanın seçtiği geçiş `instance.agents.<key>.selectedTransition` üzerinden akışı yönlendirir: |
 | `allowedTransitions` | `string[]` | Ajanın seçmesine izin verilen geçiş anahtarlarının açık listesi (ör. `["auto-approve", "auto-reject"]`). Belirtilmezse durumdaki uygun tüm geçişler otomatik verilir. |
-| `transitionProperty` | `string` | Ajanın JSON yanıtındaki hangi alanın geçiş kararı olarak okunacağını belirler (varsayılan **`"selectedTransition"`**). |
+| `transitionProperty` | `string` | Ajanın JSON yanıtındaki hangi alanın geçiş kararı olarak okunacağını belirler (varsayılan **`"nextTransition"`**; motor bu alanı `outputSchema`'ya enum olarak enjekte eder). Seçim `instance.agents.<key>.selectedTransition` olarak kaydedilir. |
 | `transitionInto` | `string` | Ajanın seçtiği geçiş anahtarının ayrıca `instance.data` içinde yazılacağı alan yolu (ör. `"aiSelectedRoute"`). |
-| `sessionKey` | `string` | Çok turlu (multi-turn) konuşma geçmişi anahtarı (varsayılan: görev `key` değeri). Aynı `sessionKey` kullanılan adımlar önceki konuşma geçmişini hatırlar. |
+| `sessionKey` | `string` | Çok turlu (multi-turn) konuşma geçmişi anahtarı (varsayılan: ajan adı; oturumlar kayıt + görev `key` bazında saklanır). Aynı `sessionKey` kullanılan adımlar önceki konuşma geçmişini hatırlar. |
+| `session` *(veya `thread`)* | `string` | Önceki bir çalışmanın `data` içine yazılmış oturum nesnesinin yolu (ör. `"aiReview.session"`); bulunursa konuşma bu oturumdan devam eder. |
+| `sessionInto` *(veya `threadInto`)* | `string` | Oturum nesnesinin `data` içinde yazılacağı alan (`into` verildiğinde otomatik olarak `data.<into>.session`). |
+| `parseJson` | `boolean` | `true` *(varsayılan)*: ajan yanıtı JSON olarak ayrıştırılıp `output` nesnesine çevrilir; `false` ise ham metin saklanır. |
+| `toolCallsInto` | `string` | Çağrılan araçların girdi/çıktı listesinin `data` içinde yazılacağı alan (varsayılan olarak yalnızca `instance.toolCalls`). |
+| `metaInto` | `string` | Çalışma meta verisinin (`model`, `usage`, `durationMs`, `provider`) `data` içinde yazılacağı alan. |
 | `model` *(veya `modelId`)* | `string` | Varsayılan LLM modelini bu görev için değiştirir. |
 | `temperature` | `number` | Yaratıcılık/deterministiklik katsayısı (ör. `0.1`). |
 | `maxOutputTokens` | `number` | Maksimum yanıt token sınırı. |
@@ -1494,6 +1557,26 @@ Middt Platform, **Microsoft Agent Framework** (`Microsoft.Agents.AI`) üzerinde 
 > [!NOTE]
 > Ajan çıktı verileri, çok turlu konuşma geçmişi (Session) ve araç çağrıları (Tool Calls) iş akışının `instance.data` nesnesini kirletmez; PostgreSQL'de ayrı bölümlenmiş tablolarda (`wf."WorkflowAgentSessions"`, `wf."WorkflowAgentRuns"`, `wf."WorkflowAgentToolCalls"`) saklanır ve `instance.agents.<taskKey>`, `instance.agentRuns`, `instance.toolCalls` üzerinden okunur.
 
+> [!TIP]
+> Demo akışlarındaki dört ajanın (`dispute-orchestrator`, `dispute-specialist-copilot`, `invoice-risk-auditor`, `risk-limit-underwriter`) ve yedi deklaratif aracın uçtan uca kullanım senaryoları için [`docs/ai-agent-scenarios.md`](ai-agent-scenarios.md) dosyasına bakın.
+
+### 4.0. LLM Sağlayıcı Yapılandırması (`AgentSettings`)
+
+Sağlayıcı ajan başına değil, **uygulama genelinde** `appsettings.json` → `"AgentSettings"` bölümünden (veya `AgentSettings__ApiKey` gibi ortam değişkenlerinden) seçilir; stüdyo bunu salt-okunur rozet olarak gösterir:
+
+| Ayar | Varsayılan | Açıklama |
+|---|---|---|
+| `Provider` | boş (= `Local`) | `OpenAI`, `DeepSeek`, `Ollama`, `Local` veya OpenAI uyumlu herhangi bir sağlayıcı. |
+| `Endpoint` | — | OpenAI uyumlu uç adresi (`https://api.deepseek.com/v1`, `http://ollama:11434/v1` …). |
+| `ApiKey` | — | Sağlayıcı anahtarı; `appsettings.Local.json` veya ortam değişkeninde tutun, depoya yazmayın. |
+| `ModelId` | — | Ajan veya görev model belirtmediğinde kullanılan varsayılan model. |
+| `UseJsonSchemaResponseFormat` | `true` | `response_format: json_schema` ile yapılandırılmış çıktı ister; desteklemeyen sağlayıcılarda `false` yapın (`json_object` + talimat kullanılır). |
+| `UseLocalFallback` | `true` | Dış anahtar yoksa deterministik yerel `IChatClient` (`LocalAgentChatClient`) kullanılır; demo ve CI bu modda çalışır. |
+| `EnableFunctionInvocation` | `true` | Araç (`AIFunction`) çağrılarının otomatik yürütülmesi. |
+| `EnableOpenTelemetry` | `true` | `gen_ai.*` izleri (OpenTelemetry). |
+| `DefaultTemperature` / `DefaultMaxOutputTokens` / `DefaultMaxToolCalls` / `DefaultMaxTotalTokens` | — | Ajan veya görevde belirtilmediğinde geçerli bütçeler. |
+| `Agents` / `Tools` / `McpServers` | `{}` | `Agents/**/*.json` dosyalarına alternatif olarak doğrudan yapılandırmadan tanımlanan sözlükler (ad → tanım). |
+
 ### 4.1. AI Ajanı Tanımlama (`Agents/*.json`)
 
 `demo/Middt.Demo.Workflows/Agents/risk-limit-underwriter.json` örneği:
@@ -1525,6 +1608,18 @@ Middt Platform, **Microsoft Agent Framework** (`Microsoft.Agents.AI`) üzerinde 
   }
 }
 ```
+
+| Ajan Alanı | Tip | Açıklama |
+|---|---|---|
+| `name` | `string` | *(Zorunlu)* Benzersiz ajan adı; `agent` görevinde `"agent": "<name>"` ile çağrılır. |
+| `description` | `string` | Stüdyo listesinde ve `handoff` modunda devredilecek ajanı seçerken kullanılan açıklama. |
+| `instructions` | `string` | *(Zorunlu)* Sistem talimatı (rol, iş kuralları, çıktı beklentisi). |
+| `modelId` / `temperature` / `maxOutputTokens` | `string` / `number` / `number` | `AgentSettings` varsayılanlarını bu ajan için ezer. |
+| `maxToolCalls` / `maxTotalTokens` | `number` | Tek çalışmada araç çağrısı ve toplam (girdi + çıktı) token bütçesi; aşılırsa görev hata verir. |
+| `tools` | `string[]` | Ajana açılan deklaratif araç adları (`Agents/Tools/*.json` veya `AddTool(...)` ile kayıtlı). |
+| `mcpServers` | `string[]` | Bağlanacak MCP sunucu adları; sunucunun tüm araçları ajana sunulur. |
+| `outputSchema` | `object` | Yapılandırılmış yanıt JSON Schema'sı; akış içinde çalışırken `nextTransition` enum'u otomatik eklenir. |
+| `allowedTransitions` | `string[]` | Ajanın seçebileceği geçiş anahtarlarının beyaz listesi (boşsa durumdaki tüm uygun `Automatic` geçişler). |
 
 ### 4.2. Kodsuz AI Araçları (`Agents/Tools/*.json`) — Expression, Task (`http`, `set`, `cache`), MCP ve Rol Bazlı Yetki (`roles`)
 
@@ -1586,12 +1681,49 @@ Bir AI ajanının kullanabileceği araçlar `Agents/Tools/*.json` altında C# ko
 > [!TIP]
 > `"kind": "task"` ile sadece `http` değil; `"task": "loadWorkflow"`, `"task": "set"`, `"task": "cache"`, `"task": "publish"` gibi **tüm** iş akışı görevlerini AI ajanına araç olarak verebilirsiniz. `"writeToWorkflowData": true` eklerseniz aracın ürettiği alanlar doğrudan iş akışının `data` nesnesine de yazılır.
 
+| Araç Alanı | Tip | Açıklama |
+|---|---|---|
+| `name` | `string` | *(Zorunlu)* Modele sunulan fonksiyon adı (`snake_case` önerilir). |
+| `kind` | `string` | `"expression"` *(varsayılan; `task` yoksa)*, `"task"`, `"http"`, `"mcp"`. |
+| `description` | `string` | Modelin aracı ne zaman çağıracağını anlatan açıklama. |
+| `parameters` | `object` | Araç girdilerinin JSON Schema'sı; değerler `args.*` olarak okunur. |
+| `expression` / `output` | `string` / `object` | `expression`: tek bir ifade (`args.amount * 1.25`) ya da `{{ }}` şablonlu JSON çıktı nesnesi. |
+| `task` + `config` | `string` + `object` | `task`: kayıtlı iş akışı görevi (`http`, `set`, `cache`, `loadWorkflow` …); `config`: o görevin ayarları (`{{ args.* }}`, `{{ data.* }}` destekler). |
+| `into` | `string` | `task` türünde modele döndürülecek sonucun `Data` içindeki yolu (varsayılan `config.into`, o da yoksa `__toolResult`). |
+| `writeToWorkflowData` | `boolean` | `true`: görevin yazdığı alanlar aktif iş akışı kaydının `data`'sına da kalıcı yazılır. |
+| `method`, `url`, `queryParams`, `headers`, `body` | | `http` türü için **üst düzey** alanlar (`config` içinde değil); `url` zorunlu ve tam URL, `method` varsayılanı `body` varsa `POST` yoksa `GET`. |
+| `mcpServer` + `mcpTool` | `string` | `mcp` türü için **ikisi de zorunlu**: kayıtlı MCP sunucu adı ve o sunucudaki araç adı. |
+| `roles` | `string[]` | Doluysa yalnızca bu rollerdeki (veya `ui-admin` / `system`) kullanıcılar için araç ajana sunulur. |
+
+#### Deklaratif MCP Sunucuları (`Agents/McpServers/*.json`)
+Bir MCP sunucusu tanımı `endpoint` verilmişse uzak JSON-RPC 2.0 sunucusuna bağlanır; **`endpoint` boşsa sunucu süreç içinde (in-process) çalışır** ve aşağıdaki `tools` / `resources` / `prompts` dizileri doğrudan sunulur (`demo/Middt.Demo.Workflows/Agents/McpServers/banking-mcp.json`):
+```json
+{
+  "name": "banking-mcp",
+  "description": "Çekirdek bankacılık politikaları ve müşteri verisi.",
+  "endpoint": null,
+  "headers": { "Authorization": "Bearer {{ env.MCP_TOKEN }}" },
+  "tools": [ { "name": "get_customer_exposure", "kind": "expression", "parameters": { "type": "object", "properties": { "customerKey": { "type": "string" } } }, "output": { "exposure": "{{ args.customerKey == \"CUST-101\" ? 1250000 : 0 }}" } } ],
+  "resources": [ { "uri": "banking://policies/credit-limits", "name": "Kredi Limit Politikası", "mimeType": "application/json", "content": { "maxAutoApprove": 500000 } } ],
+  "prompts": [ { "name": "summarize-risk", "description": "Risk özeti şablonu", "template": "{{ data.customerKey }} müşterisinin riskini özetle." } ]
+}
+```
+- `tools[]`: 4.2'deki araç alanlarıyla aynı yapı (yerel çalıştırılır).
+- `resources[]`: `uri` (zorunlu), `name`, `description`, `mimeType` (varsayılan `application/json`), `content` (JSON veya metin) — `mcp` görevinin `readResource` eylemiyle okunur.
+- `prompts[]`: `name`, `description`, `template` (`{{ }}` şablonu) — `getPrompt` eylemiyle alınır.
+- Uzak sunucuda (`endpoint` dolu) `tools` / `resources` / `prompts` boşsa liste sunucudan çekilir; doluysa yerel tanımlar öncelikli kullanılır (geri dönüş).
+
 ### 4.3. Akış İçinde Ajan Çağırma ve Otomatik Geçiş Kararı (`selectedTransition`)
 
-Bir durumun `onEntry` adımında `aiAgent` görevi çalıştırıldığında:
-1. Motor, o durumdan çıkabilecek `Automatic` geçişleri (`key`, `title`, `description`, `target`) otomatik olarak bulur ve ajana bildirir.
-2. Ajan araçlarını çalıştırır, `outputSchema` formatında raporunu üretir ve geçilecek hedefi `selectedTransition` olarak kaydeder.
-3. Durumun `transitions` listesinde bu karar okunarak akış yönlendirilir:
+Bir durumun `onEntry` adımında `agent` görevi çalıştırıldığında:
+1. Motor, o durumdan çıkabilecek `Automatic` geçişleri (`key`, `title`, `description`, `target`) otomatik olarak bulur, (`allowedTransitions` ile süzerek) ajanın `outputSchema`'sına `nextTransition` enum'u olarak enjekte eder.
+2. Ajan araçlarını çalıştırır, `outputSchema` formatında raporunu üretir ve geçilecek hedefi `nextTransition` olarak döndürür; motor bunu `instance.agents.<taskKey>.selectedTransition` olarak kaydeder ve geçişi doğrudan seçer.
+3. `onEntry` bittiğinde motor otomatik geçişi şu sırayla belirler (`FindAutomatic`):
+   1. Ajan bir geçiş seçtiyse **önce bu seçim uygulanır** — durumdaki geçişler arasında anahtarı eşleşen geçiş (önce `Automatic`, bulunamazsa durumdaki **herhangi bir** geçiş, `Manual` dahil) **`rule` değerlendirilmeden** alınır.
+   2. Ajan seçim yapmadıysa (veya anahtar durumda yoksa) `rule` tanımlı `Automatic` geçişler sırayla değerlendirilir; ilk `true` dönen alınır.
+   3. Hiçbiri tutmazsa `"default": true` olan geçiş alınır.
+
+Bu nedenle ajan yönlendirmesi için geçişlere `rule` yazmak **zorunlu değildir**; `title` ve `description` yeterlidir. `rule` yalnızca ajan seçim yapmadığında devreye giren bir yedek koşul veya ek güvenlik kontrolü (ör. tutar sınırı) olarak isteğe bağlı kullanılabilir — ajanın seçtiği geçişi engellemez. Ajanın yanlış bir geçişi seçmesini kısıtlamak için `allowedTransitions` kullanın.
 
 ```json
 {
@@ -1600,9 +1732,10 @@ Bir durumun `onEntry` adımında `aiAgent` görevi çalıştırıldığında:
   "onEntry": [
     {
       "key": "riskLimitUnderwriter",
-      "task": "aiAgent",
+      "task": "agent",
       "config": {
         "agent": "risk-limit-underwriter",
+        "allowedTransitions": ["to-rejected", "to-underwriting", "to-approved"],
         "prompt": "{{ data.customerKey }} müşterisi için {{ data.amount }} TL tutarlı talebi analiz et ve uygun geçişi (nextTransition) seç.",
         "context": {
           "customerKey": "{{ data.customerKey }}",
@@ -1619,7 +1752,7 @@ Bir durumun `onEntry` adımında `aiAgent` görevi çalıştırıldığında:
       "description": "Talep edilen tutar 5.000.000 TL kurum üst limitini aşıyorsa doğrudan reddedilir.",
       "target": "rejected",
       "trigger": "Automatic",
-      "rule": "instance.agents.riskLimitUnderwriter != null && instance.agents.riskLimitUnderwriter.selectedTransition == \"to-rejected\""
+      "rule": "data.amount > 5000000"
     },
     {
       "key": "to-underwriting",
@@ -1627,7 +1760,7 @@ Bir durumun `onEntry` adımında `aiAgent` görevi çalıştırıldığında:
       "description": "Talep tutarı 500.000 TL üzerindeyse tahsis uzmanı incelemesine yönlendirilir.",
       "target": "manual-underwriting",
       "trigger": "Automatic",
-      "rule": "instance.agents.riskLimitUnderwriter != null && instance.agents.riskLimitUnderwriter.selectedTransition == \"to-underwriting\""
+      "rule": "data.amount > 500000"
     },
     {
       "key": "to-approved",
@@ -1642,7 +1775,7 @@ Bir durumun `onEntry` adımında `aiAgent` görevi çalıştırıldığında:
 ```
 
 > [!IMPORTANT]
-> Otomatik geçişlerde `title` ve `description` alanlarını açıkça yazın. AI ajanı hangi geçişi seçeceğine karar verirken geçişlerin `key`, `title` ve `description` bilgilerini birlikte değerlendirir.
+> Otomatik geçişlerde `title` ve `description` alanlarını açıkça yazın. AI ajanı hangi geçişi seçeceğine karar verirken geçişlerin `key`, `title` ve `description` bilgilerini birlikte değerlendirir. Yukarıdaki `rule` ifadeleri yalnızca ajan seçim yapmadığında (ör. yerel yedekleme, `parseJson: false`, araç bütçesi aşımı) çalışan deterministik yedeklerdir; ajanın seçimi her zaman önceliklidir. Seçimi ifadeyle de okumak isterseniz `instance.agents.riskLimitUnderwriter.selectedTransition` kullanılabilir (isteğe bağlı).
 
 ### 4.4. Görsel AI Ajan, Araç ve MCP Stüdyosu (`/agent-admin`) ve Canlı Test Playground
 
@@ -1653,8 +1786,8 @@ flowchart LR
     subgraph Studio["AI Agent & MCP Stüdyosu (/agent-admin)"]
         T1["🤖 Ajanlar Sekmesi\n(Talimat, Model, Bütçe, Araç Seçimi, OutputSchema)"]
         T2["🛠️ Araçlar (Tools) Sekmesi\n(expression, task, http, mcp)"]
-        T3["🔌 MCP Sunucuları Sekmesi\n(http/sse, stdio, izinli araçlar)"]
-        PG["🧪 Canlı Test Playground\n(Örnek Prompt + Örnek Data + Geçişler -> Anlık Dry-Run)"]
+        T3["🔌 MCP Sunucuları Sekmesi\n(endpoint, headers, tools, resources, prompts)"]
+        PG["🧪 Canlı Test Playground\n(Hazır Senaryo + Prompt + Örnek Data -> Anlık Dry-Run)"]
     end
     T2 --> T1
     T3 --> T1
@@ -1662,11 +1795,12 @@ flowchart LR
 ```
 
 #### 1. 🤖 Ajanlar (Agents) Sekmesi
-- Sol listedeki **"+ Yeni"** butonuna tıklayarak yeni bir ajan başlatabilir veya mevcut bir ajanı (`dispute-orchestrator`, `risk-limit-underwriter`, `invoice-collection-advisor` vb.) seçebilirsiniz.
+- Sol listedeki **"+ Yeni"** butonuna tıklayarak yeni bir ajan başlatabilir veya mevcut bir ajanı (`dispute-orchestrator`, `dispute-specialist-copilot`, `invoice-risk-auditor`, `risk-limit-underwriter`) seçebilirsiniz.
+- Üst barda **Sağlayıcı rozeti** (`🟢 Sağlayıcı: DeepSeek (deepseek-chat · Canlı API)` veya `🟡 Sağlayıcı: Local (Deterministik Yerel Yedekleme)`) salt-okunurdur: sağlayıcı ajan başına seçilmez, uygulama genelinde `AgentSettings` (bkz. 4.0) ile belirlenir.
 - **Görsel Form Editörü**:
   - **Ajan Adı (`name`)** ve **Açıklama (`description`)**
-  - **Sağlayıcı (`provider`)**: `DeepSeek`, `OpenAI`, `Ollama` veya boş bırakıldığında sistem varsayılanı
   - **Model ID (`modelId`)**, **Temperature (`temperature`)**, **Maks. Araç Çağrısı (`maxToolCalls`)** ve **Maks. Toplam Token (`maxTotalTokens`)** bütçeleri
+  - **İzin Verilen İş Akışı Geçişleri (`allowedTransitions`)**: Virgülle ayrılmış geçiş anahtarları (isteğe bağlı)
   - **Sistem Talimatları (`instructions`)**: Ajanın rolünü, iş kurallarını ve çıktı beklentilerini anlatan doğal dil yönergesi
   - **Kullanılabilir Araçlar (`tools`)**: Sistemde kayıtlı tüm deklaratif araçlar onay kutusu (checkbox) listesi olarak gelir; ajanın kullanmasını istediğiniz araçları tek tıkla işaretleyebilirsiniz.
   - **MCP Sunucuları (`mcpServers`)**: Kayıtlı MCP sunucularını onay kutusuyla ajana bağlayabilirsiniz.
@@ -1683,20 +1817,21 @@ Sol üstten **Araçlar (Tools)** sekmesine geçip **"+ Yeni"** butonuna tıklaya
    - Örneğin `"task": "loadWorkflow"` veya `"task": "queryWorkflow"` seçerek ajanın başka bir iş akışındaki müşteri/fatura/sipariş kayıtlarını sorgulamasını sağlayabilirsiniz.
    - **`writeToWorkflowData: true`** işaretlenirse aracın ürettiği veri doğrudan aktif iş akışı kaydının `data` nesnesine de kalıcı olarak yazılır.
 3. **`kind: "http"` (Doğrudan REST API Aracı)**:
-   - `config` içinde `url` (`http://...` tam URL), `method` (`GET`/`POST`) ve `body` şablonu tanımlayarak dış servisleri ajana araç olarak açar.
+   - Araç tanımının **üst düzeyinde** `url` (`http://...` tam URL, zorunlu), `method` (`GET`/`POST`), `queryParams`, `headers` ve `body` şablonu tanımlayarak dış servisleri ajana araç olarak açar (`config` nesnesi kullanılmaz; `HttpTask` hattından geçer, `AllowedHttpHosts` uygulanır).
 4. **`kind: "mcp"` (MCP Köprü Aracı)**:
-   - Kayıtlı bir MCP sunucusundaki (`mcpServer`) belirli bir aracı (`mcpTool`) RBAC rol kontrolüyle (`roles`) sarmalar.
+   - Kayıtlı bir MCP sunucusundaki (`mcpServer`, zorunlu) belirli bir aracı (`mcpTool`, zorunlu) RBAC rol kontrolüyle (`roles`) sarmalar.
 
 #### 3. 🔌 MCP Sunucuları (MCP Servers) Sekmesi
-- **Taşıma Tipi (`transport`)**: Uzak HTTP JSON-RPC 2.0 sunucuları için `http` / `sse` (`endpoint`: `https://...` ve `headers`), yerel süreçler için `stdio` (`command` ve `arguments`) seçilir.
-- **İzin Verilen Araçlar (`allowedTools`)**: Sunucudaki araçlardan yalnızca izin verilenlerin ajana açılmasını sağlayan beyaz liste.
+- **Sunucu Adı (`name`)** ve **Açıklama (`description`)**.
+- **Uzak JSON-RPC Endpoint (`endpoint`)** ve **`headers`**: Doluysa uzak MCP sunucusuna HTTP JSON-RPC 2.0 ile bağlanılır; **boş bırakılırsa sunucu süreç içinde (in-process) çalışır** (liste "Yerel (In-Process)" gösterir).
+- **MCP Araçları (`tools` JSON dizisi)**, **MCP Kaynakları (`resources` JSON dizisi)** ve **MCP İstem Şablonları (`prompts` JSON dizisi)**: 4.2'deki deklaratif MCP sunucu dosyasıyla aynı yapı. Ayrı bir `transport` / `command` / `allowedTools` alanı yoktur; ajana açılacak araçlar ajanın `tools` listesi ve araç `roles` alanıyla sınırlanır.
 
 #### 4. 🧪 Canlı Test Playground (Dry-Run Test Paneli)
 Ajanlar sekmesinde sağ tarafta yer alan **Canlı Test Playground** paneli, tasarladığınız ajanı herhangi bir iş akışı başlatmadan ve veritabanını kirletmeden (`WriteToWorkflowData` kapalı izole modda) saniyeler içinde test etmenizi sağlar:
-1. **Test Prompt (`prompt`)**: Ajana gönderilecek örnek kullanıcı mesajını yazın.
-2. **İzin Verilen Geçişler (`allowedTransitions`)**: Virgülle ayrılmış örnek geçiş anahtarları girin (ör. `to-approved, to-underwriting, to-rejected`).
-3. **Örnek İş Akışı Verisi (`data` JSON)**: Ajanın ve araçlarının `data.*` üzerinden okuyacağı örnek JSON verisini girin (ör. `{ "customerKey": "CUST-101", "amount": 350000 }`).
-4. **"▶️ Testi Çalıştır"** (`POST /api/agents/test`) butonuna tıkladığınızda:
+1. **Hazır Test Senaryosu (`preset`)**: Açılır kutudan 5 hazır senaryodan birini seçerek prompt ve örnek veriyi tek tıkla doldurun: **İtiraz Analizi — Düşük Tutar (Otomatik İade)**, **İtiraz Analizi — Yetkisiz İşlem (Fraud Eskalasyonu)**, **İtiraz Uzman Copilot — Tazminat Hesaplama**, **Ticari Limit & Risk Değerlendirmesi**, **Fatura Ödeme & Mutabakat Denetimi**; ya da elle girin.
+2. **İstem Metni (`prompt`)**: Ajana gönderilecek örnek kullanıcı mesajı (zorunlu).
+3. **Örnek İş Akışı Verisi (`data` JSON)**: Ajanın ve araçlarının `data.*` üzerinden okuyacağı örnek JSON verisini girin (ör. `{ "customerKey": "CUST-101", "amount": 350000 }`). Geçiş beyaz listesi Playground'da ayrıca girilmez; ajan formundaki `allowedTransitions` kullanılır.
+4. **"▶️ Testi Çalıştır"** (`POST /api/agents/test`, `ui-admin` veya `idp-admin` rolü gerekir) butonuna tıkladığınızda:
    - Ajan gerçek LLM (`DeepSeek` / `OpenAI` / `Ollama`) veya `LocalAgentChatClient` üzerinde çalışır,
    - Gerekli araçları (`tools` / `mcpServers`) canlı olarak çağırır,
    - Sağ panelde **Seçilen Geçiş (`selectedTransition`)** rozeti, **Çalışma Süresi (`ms`)**, **Token Kullanımı (`prompt` + `completion`)**, **Üretilen Yapılandırılmış Çıktı (`output` JSON)** ve **Çağrılan Araçların (`toolCalls`)** girdi/çıktı detayları anında listelenir.
@@ -1706,13 +1841,13 @@ Ajanlar sekmesinde sağ tarafta yer alan **Canlı Test Playground** paneli, tasa
 
 | AI Agent & MCP Stüdyosu REST Ucu | Açıklama |
 |---|---|
-| `GET /api/agents` | Kayıtlı tüm ajanların, deklaratif araçların ve MCP sunucularının özet listesini döner. |
-| `GET /api/agents/catalog`<br>`POST /api/agents/catalog` | Tüm kataloğu (`agents`, `tools`, `mcpServers`) tek bir `AgentCatalogFile` olarak okur veya topluca yayımlar (`replace: true/false`). |
+| `GET /api/agents` | Yalnızca kayıtlı **ajanların** listesini döner (araç ve MCP sunucuları dahil değildir). |
+| `GET /api/agents/catalog`<br>`POST /api/agents/catalog` | Tüm kataloğu (`agents`, `tools`, `mcpServers`) tek bir `AgentCatalogFile` olarak okur veya topluca yayımlar (`replace: true/false`). `GET` yanıtı ayrıca `provider`, `defaultModelId`, `useLocalFallback` ve `hasExternalApiKey` alanlarını içerir (stüdyodaki sağlayıcı rozeti bunlardan beslenir). Okuma uçları yalnızca oturum açmış olmayı ister; tüm `POST` / `PUT` / `DELETE` uçları ve `/test` için `ui-admin` veya `idp-admin` rolü gerekir. |
 | `PUT /api/agents/{name}`<br>`DELETE /api/agents/{name}` | Tekil bir AI ajanını çalışma zamanında kaydeder/günceller veya siler (`wf."WorkflowDefinitions"` içindeki `__agents__` kaydına kalıcı yazar). |
 | `PUT /api/agents/tools/{name}`<br>`DELETE /api/agents/tools/{name}` | Tekil bir deklaratif aracı (`expression`, `task`, `http`, `mcp`) çalışma zamanında kaydeder veya siler. |
 | `PUT /api/agents/mcp-servers/{name}`<br>`DELETE /api/agents/mcp-servers/{name}` | Tekil bir MCP sunucu tanımını çalışma zamanında kaydeder veya siler. |
 | `POST /api/agents/validate` | Ajan, araç veya MCP sunucu tanımını kaydetmeden önce şema ve referans kurallarına göre doğrular. |
-| `POST /api/agents/test` | Seçilen (veya satır içi gönderilen) ajanı örnek `prompt`, `data` ve `allowedTransitions` ile izole ortamda çalıştırıp `output`, `selectedTransition`, `toolCalls` ve `usage` sonuçlarını döner. |
+| `POST /api/agents/test` | Seçilen (`agent`) veya satır içi gönderilen (`definition`) ajanı örnek `prompt` ve `data` ile izole ortamda çalıştırıp `output`, `selectedTransition`, `toolCalls`, `usage`, `provider` ve `usedLocalFallback` sonuçlarını döner. |
 
 ---
 
@@ -1723,7 +1858,7 @@ Middt Platform'da iki yerde ifade kullanılır:
 | Kapsam | Kullanıldığı Yerler | Erişilebilen Değişkenler | Örnek |
 |---|---|---|---|
 | **Taşınabilir UI İfadeleri** (.NET & TypeScript ortak) | `Layouts/*.json` (`{{ }}` şablonları, `visibleWhen`, `requiredWhen`, `disabledWhen`), `Workflows/*.json` form şeması alanları (`visibleWhen`, `requiredWhen`, `disabledWhen`), `Agents/Tools/*.json` (`output` şablonları) | `ui` (açık formdaki veya satır içi sihirbaz adımındaki **anlık bileşen değerleri**: `ui.segment`, `ui.amount`), `data` (kayıtlı akış verisi), `instance` (`id`, `key`, `state`, `stateTitle`, `workflow`, `status`, `assignedTo`, `assignedAt`, `agents`, `agentRuns`, `toolCalls`), `row` (liste/tablo satırı), `record`, `user` (`Name`, `Id`, `Roles`, `IsInRole("manager")`), `query`, `now`, `Math` | `"visibleWhen": "ui.segment != \"Bireysel\""`<br>`"requiredWhen": "ui.segment == \"Kurumsal\""`<br>`"disabledWhen": "ui.collateralType == \"Teminatsız\""` |
-| **Sunucu İş Akışı İfadeleri** | `Workflows/*.json` (`transition.rule`, `input.rule`, `set.values`, `http` URL/body şablonları) | `data`, `input`, `instance` (`id`, `key`, `state`, `workflow`, `version`, `assignedTo`, `assignedAt`, `agents`, `agentRuns`, `toolCalls`), `user` (`Id`, `Name`, `Roles`, `IsInRole("manager")`), `now`, `Math` | `"rule": "data.amount > 50000 && user.IsInRole(\"manager\")"` |
+| **Sunucu İş Akışı İfadeleri** | `Workflows/*.json` (`transition.rule`, `input.rule`, `set.values`, `http` URL/body şablonları), `Agents/Tools/*.json` (`expression`) | `data`, `input`, `instance` (`id`, `key`, `state`, `workflow`, `version`, `assignedTo`, `assignedAt`, `agents`, `agentRuns`, `toolCalls`), `user` (`Id`, `Name`, `Roles`, `IsInRole("manager")`), `now` (`DateTimeOffset`), `Math`, `TimeSpan`; bağlama göre `args` (AI aracı parametreleri; yoksa `input`), `result` (`http` / `operation` / `mcp` yanıtı — `select` / `output` içinde), `child` (`subFlow` / `startWorkflow` çıktısı: `child.data`, `child.subType`), `item` ve `index` (`fanOut` öğesi ve 0 tabanlı sırası), `target` (`loadWorkflow` / `queryWorkflow` / `updateWorkflow` / `triggerWorkflow` `where` ifadelerinde hedef kayıt; `fanOut` içinde `item` ile aynı) | `"rule": "data.amount > 50000 && user.IsInRole(\"manager\")"`<br>`"dueAt": "now.AddDays(3)"`, `"slaLeft": "(data.dueAt - now) > TimeSpan.FromHours(4)"` |
 
 **Sık Kullanılan İfade Örnekleri**:
 - Sayı formatlama (UI): `{"label": "Tutar", "value": "{{ data.amount }}", "format": "N2"}`
@@ -1787,7 +1922,7 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 | `tabs` | Kapsayıcı | **Etkileşimli Sekmeli Panel** (her alt düğümü sekme olarak gösterir) | `titles` (isteğe bağlı sekme başlıkları dizisi), `children` (her çocuk bileşenin `title` alanı sekme başlığı olarak kullanılır), `visibleWhen` |
 | `list` | Kapsayıcı | Dizi (`JsonArray`) öğelerini tekrarlayarak listeleme ve satır aksiyonu tetikleme | `source` (ör. `"instance.toolCalls"` veya `"data.partialPayment"`), `empty`, `rowTransition` / `rowTransitions` (`[{ key, text, icon, style, input }]`), `children` (her öğe `row` ve 1 tabanlı `rowNumber` değişkeniyle okunur) |
 | `layout` | Kapsayıcı / Ortak | Başka bir `kind: "view"` ekranı alt bileşen olarak gömme | `key` (ör. `"workflow-footer"`), `data` (isteğe bağlı alt nesne ifadesi), `title`, `visibleWhen` |
-| `grid` | Etkileşimli CRUD | Sunucu sayfalamalı, sıralamalı, aramalı veri tablosu | `entity`, `pageSize`, `filter`, `columns`, `search` (`visibleWhen`, `disabledWhen`), `create`, `edit`, `delete`, `form` (`visibleWhen`, `requiredWhen`, `disabledWhen`), `rowActions` |
+| `grid` | Etkileşimli CRUD | Sunucu sayfalamalı, sıralamalı, aramalı veri tablosu | `entity` (zorunlu), `title`, `pageSize` (`1`–`500`, varsayılan `10`), `autoLoad` (varsayılan `true`; `false` ise ilk arama kullanıcı tetikleyene kadar bekler), `filter` (`{ "categoryId": "{{ query.id }}" }`), `columns` (zorunlu; her kolon `field`, `title`, `format` (`N0`–`N6`, `F0`–`F6`, `d`, `D`, `g`, `t`), `width` (`"120px"`), `sortable` (varsayılan `true`), `template` (`{{ row.firstName + " " + row.lastName }}`)), `search` (alanlar; `visibleWhen`, `disabledWhen`), `create`, `edit`, `delete`, `form` (alanlar; `visibleWhen`, `requiredWhen`, `disabledWhen`), `formTitle`, `rowActions` (`[{ "text", "icon", "navigate": "/ui/…?id={{ row.id }}", "style": "primary" \| "secondary" \| "light" \| "danger" }]`). **Alan (`search` / `form`) özellikleri**: `field`, `label`, `type` (`text` *(varsayılan)*, `textarea`, `number`, `integer`, `date`, `datetime`, `checkbox`, `select`, `picker`), `required`, `min`, `max`, `maxLength`, `placeholder`, `options` (`select` için sabit liste: `["A", "B"]` veya `[{ "value", "text" }]`), `lookup` (`select` / `picker` için başka bir entity'den yükleme: `entity`, `valueField`, `textField`, `title`, `columns`, `search`). |
 | `record` | Etkileşimli | Tekil kayıt (`getbyid`) yükleyici kapsayıcı | `entity`, `recordId` (`"{{ query.id }}"`), `notFound`, `children` (yüklenen kayıt `record` değişkeniyle okunur) |
 
 ---
@@ -1975,7 +2110,7 @@ Middt Platform'da tüm ekranlar (`kind: "page"` ve `kind: "view"`) 16 yerleşik 
 
 Sol menüdeki **Ekran Tasarımı** (`/ui-admin`) sayfası, Citizen Developer'ların JSON kodu yazmadan hem bağımsız sayfaları (`kind: "page"`) hem de iş akışı durum ekranlarını (`kind: "view"`) **sürükle-bırak (drag-and-drop)** yöntemiyle tasarlayabildiği 3 sütunlu görsel stüdyodur:
 
-1. **Sol Sürükle-Bırak Bileşen Paleti (`middt-ui-editor-palette` — 16 Bileşen)**:
+1. **Sol Sürükle-Bırak Bileşen Paleti (`middt-wf-palette` — 16 Bileşen)**:
    - **Yerleşim & Kapsayıcılar**: `📦 Bölüm / Kart (section)`, `🏛️ Yan Yana Sütunlar (columns)`, `🗂️ Sekmeli Panel (tabs)`, `🔁 Tekrarlı Liste (list)`, `🧩 Gömülü Alt Ekran (layout)`.
    - **Veri & Etkileşimli Bileşenler**: `📋 Etiket–Değer Alanları (fields)`, `🕒 Zaman Çizelgesi (timeline)`, `📊 Veri Tablosu / CRUD (grid)`, `🗂️ Tekil Kayıt Yükleyici (record)`.
    - **Görsel, KPI & Metin Bileşenleri**: `📈 KPI / İstatistik Kartı (stat)`, `🔤 Başlık (heading)`, `📝 Metin / Paragraf (text)`, `⚠️ Uyarı / Bilgi Kutusu (alert)`, `🏷️ Durum Rozeti (badge)`, `➖ Ayırıcı Çizgi (divider)`, `🔗 Bağlantı / Buton (link)`.
@@ -2022,27 +2157,47 @@ Sol menüdeki **Akış Tasarımı** (`/workflow-admin`) sayfası, Citizen Develo
    - **Alt Akış (`SubFlow`) Rozeti ve Gezinme**: `SubFlow` tipindeki durum kartlarının üzerinde çağrılan hedef alt akışın anahtarı (`🔀 Alt Akış: risk-limit-eval ↗`) rozet olarak gösterilir; üzerine tıkladığınızda tasarımcıda doğrudan o alt akış açılır. Çalışma zamanında da `SubFlow` durumları kendi ekranı yerine otomatik olarak aktif alt akışın ekranını (`view.layout`) ve geçiş butonlarını gösterir.
    - **Otomatik Hizalama & Yakınlaştırma**: **"Otomatik Hizala"** (`Auto-Layout`) butonu tüm düğümleri topolojik katmanlarına göre otomatik dizer; `Zoom (+/-)` ile tuvali yakınlaştırıp uzaklaştırabilirsiniz.
 3. **Sağ Bağlama Duyarlı Özellikler Denetçisi (`middt-wf-inspector`)**:
-   - Tuvalde bir **Göreve** tıkladığınızda: Görevin ortak ayarları (`key`, `when`, `background`, `onError.action`, `maxRetries`, `delay`, `transition`), sıra değiştirme (`↑`/`↓`) ve `GET /api/workflows/tasks` kataloğundan gelen tipe özel parametre kontrolleri açılır.
+   - Tuvalde bir **Göreve** tıkladığınızda: Görevin ortak ayarları (`key`, `when`, `background`, `onError.action`, `maxAttempts`, `delay`, `transition`), sıra değiştirme (`↑`/`↓`) ve `GET /api/workflows/tasks` kataloğundan gelen tipe özel parametre kontrolleri açılır.
    - Bir **Geçişe (Transition)** tıkladığınızda: `key`, `title`, `target`, `trigger` (`Manual`, `Automatic`, `Scheduled`, `Event`), `rule`, `description`, buton stili/rolleri, `default`, `after`, `event` ve `onExecute` görev listesi açılır.
    - Bir **Duruma (State)** tıkladığınızda: `key` (değiştirildiğinde tüm geçiş referanslarını otomatik günceller), `title`, `type`, `subType`, `step` (ekranın üstündeki aşama çubuğunda `1 -> 2 -> 3` sırasını belirleyen **Aşama Sıra No**), `view.layout` (**"🎨 Ekranı Tasarla"** ve **"+ Yeni Ekran Oluştur & Tasarla"** kısayollarıyla) ve çıkan geçişler açılır.
 4. **Veri Şeması (`dataSchema`), Kalıcı Sürümleme ve Otomatik Sol Menü**:
    - **`🗂️ Veri Şeması (dataSchema)`** sekmesinden akış alanlarını (`string`, `number`, `integer`, `boolean`, `array`, `object`), maskeleme kuralını (`x-mask`), zorunluluğu (`required`), liste kolonunu (`x-list`) ve otomatik PostgreSQL indeks + arama filtresini (`x-search`) yönetebilirsiniz.
-   - **`{ } JSON Kodu`** sekmesi 2B tuvalle çift yönlü senkronizedir. **"Doğrula"** (`POST /api/workflows/validate`) tüm ifadeleri kontrol eder; **"Kaydet"** (`PUT /api/workflows/{workflow}/definition`) mevcut akışı ezmek yerine **yeni bir değişmez sürüm (`v2`, `v3`, …)** oluşturur (böylece çalışmakta olan eski kayıtlar kendi sürümlerinde güvenle devam eder, yeni kayıtlar yeni sürümle başlar), `Workflows/` klasörüne yazar, `WorkflowRegistry` + PostgreSQL bölüm/indekslerine canlı yükler ve sol menüdeki **İş Akışları** altına otomatik olarak ekler.
+   - **`{ } JSON Kodu`** sekmesi 2B tuvalle çift yönlü senkronizedir. **"Doğrula"** (`POST /api/workflows/validate`) tüm ifadeleri kontrol eder; **"Kaydet"** (`PUT /api/workflows/{workflow}/definition`, `ui-admin` rolü gerekir) mevcut akışı ezmek yerine **yeni bir değişmez sürüm (`v2`, `v3`, …)** oluşturur (böylece çalışmakta olan eski kayıtlar kendi sürümlerinde güvenle devam eder, yeni kayıtlar yeni sürümle başlar). Tanım **önce PostgreSQL `wf."WorkflowDefinitions"` tablosuna** yazılır (birincil depo), ardından `WorkflowRegistry` + bölüm/indekslere canlı yüklenir ve sol menüdeki **İş Akışları** altına otomatik eklenir; `Workflows/<key>.json` dosyası yalnızca `DefinitionsDirectory` mevcut ve yazılabilirse **best-effort** güncellenir (salt-okunur konteyner dosya sisteminde sessizce atlanır).
 
-### 6.4. Sürüm Geçmişi, Simülasyon (Dry-Run), Görev Kutusu (`/inbox`), Operasyon Merkezi ve Paket Taşıma
+### 6.4. Sürüm Geçmişi, Simülasyon (Dry-Run), Görev Kutusu (Inbox), Operasyon Uçları ve Paket Taşıma (REST API)
 
-Platform, tasarlanan iş akışlarının güvenli yayımlanması ve işletilmesi için yerleşik yönetişim uçları sunar:
+Platform, tasarlanan iş akışlarının güvenli yayımlanması ve işletilmesi için yerleşik yönetişim **REST uçları** sunar. Bunlar için demo arayüzlerinde ayrı bir sayfa (`/inbox`, "Operasyon Merkezi", "Simülasyon" ekranı) **yoktur**; uçlar `@middt/ui-core` / `Middt.Framework.Client` istemcilerinden veya doğrudan HTTP ile çağrılır (Postman koleksiyonları `postman/` altında):
 
 | Özellik | REST Ucu | Açıklama |
 |---|---|---|
 | **Sürüm Listesi & Fark (Diff)** | `GET /api/workflows/{workflow}/versions`<br>`GET /api/workflows/{workflow}/diff?fromVersion=1&toVersion=2` | Akışın tüm sürümlerini listeler; iki sürüm arasındaki eklenen/silinen/değişen durumları, geçişleri ve RFC 6902 JSON Patch farkını döndürür. |
 | **Sürüme Geri Dönme (Rollback)** | `POST /api/workflows/{workflow}/versions/{version}/rollback` | Seçilen eski sürümün tanımını yeni en güncel sürüm (`latestVersion + 1`) olarak yayımlar. |
-| **Yan Etkisiz Simülasyon (Dry-Run)** | `POST /api/workflows/{workflow}/simulate` | Veritabanına kayıt yazmadan ve dış HTTP/mesaj servislerini çağırmadan, verilen başlangıç verisi (`startInput`) ve adım dizisini (`steps`) bellek içi izole kopyada çalıştırır; ziyaret edilen durumları, çalışan görevleri ve nihai `data` durumunu döndürür. |
-| **Birleşik Görev Kutusu (Inbox)** | `GET /api/workflows/inbox` | Oturum açmış kullanıcının tüm iş akışları genelinde onay/aksiyon bekleyen (`subType: "Human"`) ve çalıştırma yetkisine (`roles`, `denyRoles`, `$previousUser`, `rule`) sahip olduğu kayıtları tek listede toplar. |
-| **Operasyon Merkezi & Toplu Retry** | `GET /api/workflows/operations`<br>`POST /api/workflows/operations/retry-batch` | `Faulted` durumundaki kayıtları, açık `WorkflowIncidents` hatalarını ve bekleyen `WorkflowJobs` işlerini tek ekranda özetler; seçilen kayıtları (isteğe bağlı yeni `input` verisiyle) topluca yeniden dener. |
-| **Taşınabilir Paket (Bundle Export/Import)** | `GET /api/workflows/bundle`<br>`POST /api/workflows/bundle/import` | İş akışlarını, ekran tasarımlarını (`Layouts`) ve AI ajan/araç/MCP tanımlarını SHA-256 bütünlük özetiyle (`checksum`) tek pakette dışa/içe aktarır (`dryRun: true` ile CI/CD doğrulaması destekler). |
-| **Veri Saklama Temizliği (Purge)** | `POST /api/workflows/maintenance/purge` | Tamamlanmış (`Completed`, `Cancelled`, `Faulted`) eski kayıtları saklama süresi (`olderThanDays`) ve parti sınırı (`batchSize`) ile temizler (`dryRun` destekli). |
+| **Yan Etkisiz Simülasyon (Dry-Run)** | `POST /api/workflows/{workflow}/simulate` | Veritabanına kayıt yazmadan ve dış HTTP/mesaj servislerini çağırmadan, verilen başlangıç verisi (`startInput`) ve adım dizisini (`steps`: `[{ "transition": "…", "input": { … } }]`) bellek içi izole kopyada çalıştırır; ziyaret edilen durumları, çalışan görevleri ve nihai `data` durumunu döndürür. `definition` ile kaydedilmemiş bir taslak da simüle edilebilir. **`taskMocks`**: `{ "<görev key veya task adı>": { … } }` sözlüğü; eşleşen görev çalıştırılmaz, verilen nesne görevin `into` alanına (yoksa `data` köküne birleştirilerek) yazılır — dış servis yanıtlarını sahte veriyle test etmek için. |
+| **Birleşik Görev Kutusu (Inbox)** | `GET /api/workflows/inbox?assignment=mine\|unassigned\|claimed\|all&workflow=&page=&pageSize=` | Oturum açmış kullanıcının tüm iş akışları genelinde onay/aksiyon bekleyen (`subType: "Human"`) ve çalıştırma yetkisine (`roles`, `denyRoles`, `$previousUser`, `rule`) sahip olduğu kayıtları tek listede toplar. |
+| **Operasyon Özeti & Toplu Retry** | `GET /api/workflows/operations?workflow=`<br>`POST /api/workflows/operations/retry-batch` | `Faulted` durumundaki kayıtları, açık `WorkflowIncidents` hatalarını ve bekleyen `WorkflowJobs` işlerini tek yanıtta özetler; seçilen kayıtları (isteğe bağlı yeni `input` verisiyle) topluca yeniden dener. |
+| **Taşınabilir Paket (Bundle Export/Import)** | `GET /api/workflows/bundle`<br>`POST /api/workflows/bundle/import` | **Yalnızca iş akışı tanımlarını** (tüm sürümler) SHA-256 bütünlük özetiyle (`checksum`) tek pakette dışa/içe aktarır (`dryRun: true` ile CI/CD doğrulaması destekler). Ekran tasarımları `POST /api/ui/layouts/seed`, ajan/araç/MCP tanımları `POST /api/agents/catalog` ile ayrıca taşınır. |
+| **Veri Saklama Temizliği (Purge)** | `POST /api/workflows/maintenance/purge` | Tamamlanmış (`Completed`, `Cancelled`; `Faulted` **silinmez**) ve `retentionDays` (varsayılan `90`) gününden eski kayıtları, tarihçe, incident, job, ajan oturumu/çalışma/araç çağrısı satırlarıyla birlikte siler (`workflow` ile tek akışa sınırlanabilir, `dryRun` destekli; `ui-admin` rolü gerekir). |
 | **Gerçek Zamanlı Olay Akışı (SSE)** | `GET /api/workflows/events`<br>`GET /api/workflows/{workflow}/instances/{id}/events` | İş akışı durum geçişlerini, arka plan (`background: true`) görev tamamlamalarını, zamanlayıcıları ve gelen `Event` mesajlarını `text/event-stream` (`event: workflow-event`) olarak anlık yayınlar. |
+
+#### 6.4.1. Kayıt (Instance) REST API Özeti
+
+Tüm uçlar `/api/workflows` altındadır, oturum açmış kullanıcı ister ve tanımın `roles` / `instanceAccess` kurallarına göre süzülür. Yanıt zarfı `{ result, messageList, count, data }`; hatalar RFC 9457 ProblemDetails.
+
+| Uç | Açıklama |
+|---|---|
+| `GET /` · `GET /tasks` | Kullanıcının görebildiği akış tanımları (menü) · görev kataloğu (tasarımcı parametre formları). |
+| `POST /definitions` · `POST /validate` | Bir veya birden çok tanımı yayımlar (`ui-admin` veya `idp-admin`; aynı `key` + `version` yerinde güncellenir) · kaydetmeden doğrular. |
+| `GET /{wf}?version=` · `GET /{wf}/definition` · `PUT /{wf}/definition` | Tanım özeti (durumlar, geçişler, şema) · ham JSON · yeni sürüm olarak kaydet (`ui-admin`). |
+| `POST /{wf}/instances` | Yeni kayıt başlatır (`{ "key": "...", "data": { … } }`; aynı `key` varsa mevcut kayıt döner, `201`/`200`). |
+| `GET /{wf}/instances?page=&pageSize=&state=&status=&search=&createdFrom=&createdTo=&<alan>=&<alan>_min=&<alan>_max=` | Sayfalı liste; `x-search` alanları ve `_min` / `_max` / `_from` / `_to` / `_gte` / `_lte` son ekleriyle filtre. |
+| `GET /{wf}/instances/{id}` | Kayıt detayı (`ETag` / `If-None-Match` → `304`). |
+| `GET /{wf}/instances/{id}/view` | Durum ekranının statik HTML çıktısı (`view.layout`, `IWorkflowViewRenderer`). |
+| `GET /{wf}/instances/{id}/history` · `/incidents` · `/agent-runs` · `/events` | Tarihçe (`full` / `delta` modları yeniden oynatılır) · açık hatalar · AI ajan çalışmaları · SSE akışı. |
+| `POST\|PATCH /{wf}/instances/{id}/transitions/{t}?async=true` | Geçişi çalıştırır (gövde: form verisi; `jsonPatch` geçişlerde `{ "patch": [ … ] }` veya çıplak dizi); `async=true` ile kuyruğa alır ve `202` döner. |
+| `POST /{wf}/instances/{id}/retry` | `Faulted` kaydı bekleyen komutuyla (isteğe bağlı yeni `input`) yeniden dener. |
+| `POST /{wf}/instances/{id}/claim` · `/unclaim` · `/assign` | İnsan görevi sahipliği (bkz. 3.5.1). |
+| `POST /{wf}/instances/{id}/messages/{m}` · `POST /{wf}/messages/{m}?key=` | `Event` geçişini kayıt `id`'si veya iş anahtarıyla tetikler; teslim edilemeyen mesaj `Message` işi olarak tamponlanır. |
+| `POST /{wf}/migrate` | Çalışan kayıtların sürüm göçü (`ui-admin` / `idp-admin`; bkz. 3.5.1). |
 
 ### 6.5. Gerçek Zamanlı İş Akışı Güncellemeleri (Canlı SSE — Server-Sent Events)
 
@@ -2074,11 +2229,12 @@ Hem Blazor (`WorkflowInstanceDetail`) hem de Angular (`MiddtWorkflowInstanceDeta
 - Mockoon Handlebars şablonlarını (`{{body 'amount' 0}}`, `{{urlParam 'entity'}}`, `{{faker 'string.alphanumeric' length=8 casing='upper'}}`, `{{now}}`) destekler.
 
 ### 7.2. Başlangıç Verileri (`demo/Middt.Demo.Workflows/Seeds/initial-instances.json`)
-Uygulama ilk kez ayağa kalktığında listelerin boş gelmemesi için `Seeds/initial-instances.json` içine başlangıç kayıtları eklenir:
+Uygulama ilk kez ayağa kalktığında listelerin boş gelmemesi için `Seeds/initial-instances.json` içine başlangıç kayıtları eklenir (`middt-demo-workflows` servisi `POST /api/workflows/{workflow}/instances` ile yükler):
 ```json
 [
   {
     "workflow": "risk-limit-eval",
+    "key": "RLE-2026-0001",
     "data": {
       "customerKey": "CUST-12345678901",
       "amount": 250000,
@@ -2088,6 +2244,7 @@ Uygulama ilk kez ayağa kalktığında listelerin boş gelmemesi için `Seeds/in
   }
 ]
 ```
+- **`key`** *(isteğe bağlı)*: İş anahtarı. Verilirse kayıt bu anahtarla başlatılır ve aynı anahtar zaten varsa **tekrar oluşturulmaz** (idempotent). `key` verilmeyen girdiler için ise o akışta en az bir kayıt varsa tüm grup atlanır.
 
 ---
 
@@ -2254,5 +2411,5 @@ docker compose up -d --build
 
 ### Altın Kurallar
 - **`http` Görevleri ve Araçları**: Her zaman `http://` veya `https://` ile başlayan **tam URL** yazın (`http://mockoon:3000/api/v1/...`). Şema ve host kısmında `{{ }}` değişkeni kullanmayın (SSRF koruması).
-- **AI Yönlendirme Geçişleri**: `aiAgent` görevinin bulunduğu durumdaki `Automatic` geçişlere mutlaka anlamlı `title` ve `description` yazın; geçiş kurallarında `instance.agents.<taskKey>.selectedTransition == "<transition-key>"` kontrolü kullanın ve bir geçişi `"default": true` olarak işaretleyin.
+- **AI Yönlendirme Geçişleri**: `agent` görevinin bulunduğu durumdaki `Automatic` geçişlere mutlaka anlamlı `title` ve `description` yazın; ajanın seçimi (`nextTransition`) kurallardan önce uygulanır, bu yüzden `rule` yalnızca ajan seçim yapmadığında devreye giren yedek koşuldur. Seçimi `allowedTransitions` ile kısıtlayın ve bir geçişi `"default": true` olarak işaretleyin.
 - **Temiz İş Verisi (`instance.data`)**: AI ajanlarının çıktılarını ve araç çağrılarını `data` içine kopyalamayın; ekran tasarımlarında doğrudan `instance.agents.<taskKey>` ve `instance.toolCalls` üzerinden okuyun.
